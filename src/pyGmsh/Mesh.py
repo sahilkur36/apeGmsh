@@ -1,0 +1,1572 @@
+from __future__ import annotations
+
+import math
+from enum import IntEnum
+from pathlib import Path
+from typing import Callable, TYPE_CHECKING
+
+import gmsh
+import numpy as np
+import pandas as pd
+from numpy import ndarray
+
+if TYPE_CHECKING:
+    from pyGmsh._core import pyGmsh
+
+# ---------------------------------------------------------------------------
+# Type aliases  (mirror Model.py for consistency)
+# ---------------------------------------------------------------------------
+Tag      = int
+DimTag   = tuple[int, int]
+TagsLike = Tag | list[Tag] | DimTag | list[DimTag]
+
+
+# ---------------------------------------------------------------------------
+# Algorithm constants
+# ---------------------------------------------------------------------------
+
+class Algorithm2D(IntEnum):
+    """2-D meshing algorithm selector — use with ``Mesh.set_algorithm``."""
+    MESH_ADAPT             = 1
+    AUTOMATIC              = 2
+    INITIAL_MESH_ONLY      = 3
+    DELAUNAY               = 5
+    FRONTAL_DELAUNAY       = 6
+    BAMG                   = 7
+    FRONTAL_DELAUNAY_QUADS = 8
+    PACKING_PARALLELOGRAMS = 9
+    QUASI_STRUCTURED_QUAD  = 11
+
+
+class Algorithm3D(IntEnum):
+    """3-D meshing algorithm selector — use with ``Mesh.set_algorithm``."""
+    DELAUNAY          = 1
+    INITIAL_MESH_ONLY = 3
+    FRONTAL           = 4
+    MMG3D             = 7
+    R_TREE            = 9
+    HXT               = 10
+
+
+class OptimizeMethod:
+    """Mesh optimisation method names — use with ``Mesh.optimize``."""
+    DEFAULT                    = ""
+    NETGEN                     = "Netgen"
+    HIGH_ORDER                 = "HighOrder"
+    HIGH_ORDER_ELASTIC         = "HighOrderElastic"
+    HIGH_ORDER_FAST_CURVING    = "HighOrderFastCurving"
+    LAPLACE_2D                 = "Laplace2D"
+    RELOCATE_2D                = "Relocate2D"
+    RELOCATE_3D                = "Relocate3D"
+    QUAD_QUASI_STRUCTURED      = "QuadQuasiStructured"
+    UNTANGLE_MESH_GEOMETRY     = "UntangleMeshGeometry"
+
+
+# ---------------------------------------------------------------------------
+# FieldHelper — fluent wrapper around gmsh.model.mesh.field
+# ---------------------------------------------------------------------------
+
+class FieldHelper:
+    """
+    Fluent wrapper around ``gmsh.model.mesh.field``.
+
+    Accessed via ``g.mesh.field``.  Two usage levels:
+
+    **Raw control** (full flexibility)::
+
+        f = g.mesh.field.add("Distance")
+        g.mesh.field.set_numbers(f, "CurvesList", [1, 2, 3])
+        g.mesh.field.set_background(f)
+
+    **Convenience builders** (common fields with named parameters)::
+
+        dist  = g.mesh.field.distance(curves=[1, 2])
+        thr   = g.mesh.field.threshold(dist, size_min=0.05, size_max=0.5,
+                                         dist_min=0.1, dist_max=1.0)
+        g.mesh.field.set_background(thr)
+    """
+
+    def __init__(self, parent_mesh: Mesh) -> None:
+        self._mesh = parent_mesh
+
+    def _log(self, msg: str) -> None:
+        if self._mesh._parent._verbose:
+            print(f"[Field] {msg}")
+
+    # ------------------------------------------------------------------
+    # Raw control
+    # ------------------------------------------------------------------
+
+    def add(self, field_type: str) -> int:
+        """Create a new field of the given type and return its tag."""
+        tag = gmsh.model.mesh.field.add(field_type)
+        self._mesh._directives.append({
+            'kind': 'field_add', 'field_type': field_type, 'field_tag': tag,
+        })
+        self._log(f"add({field_type!r}) → field tag {tag}")
+        return tag
+
+    def set_number(self, tag: int, name: str, value: float) -> FieldHelper:
+        """Set a scalar parameter on a field."""
+        gmsh.model.mesh.field.setNumber(tag, name, value)
+        return self
+
+    def set_numbers(self, tag: int, name: str, values: list[float]) -> FieldHelper:
+        """Set a list parameter on a field."""
+        gmsh.model.mesh.field.setNumbers(tag, name, values)
+        return self
+
+    def set_string(self, tag: int, name: str, value: str) -> FieldHelper:
+        """Set a string parameter on a field."""
+        gmsh.model.mesh.field.setString(tag, name, value)
+        return self
+
+    def set_background(self, tag: int) -> FieldHelper:
+        """Register a field as the global background mesh size."""
+        gmsh.model.mesh.field.setAsBackgroundMesh(tag)
+        self._mesh._directives.append({
+            'kind': 'field_background', 'field_tag': tag,
+        })
+        self._log(f"set_background(field={tag})")
+        return self
+
+    def set_boundary_layer_field(self, tag: int) -> FieldHelper:
+        """Register a BoundaryLayer field to be applied during meshing."""
+        gmsh.model.mesh.field.setAsBoundaryLayer(tag)
+        self._log(f"set_boundary_layer_field(field={tag})")
+        return self
+
+    # ------------------------------------------------------------------
+    # Convenience builders
+    # ------------------------------------------------------------------
+
+    def distance(
+        self,
+        *,
+        curves  : list[int] | None = None,
+        surfaces: list[int] | None = None,
+        points  : list[int] | None = None,
+        sampling: int              = 100,
+    ) -> int:
+        """
+        Create a ``Distance`` field measuring the shortest distance to
+        specified curves, surfaces, or points.
+
+        Returns
+        -------
+        int  field tag — pass to ``threshold`` or ``set_background``.
+        """
+        tag = gmsh.model.mesh.field.add("Distance")
+        if curves:
+            gmsh.model.mesh.field.setNumbers(tag, "CurvesList",   curves)
+        if surfaces:
+            gmsh.model.mesh.field.setNumbers(tag, "SurfacesList", surfaces)
+        if points:
+            gmsh.model.mesh.field.setNumbers(tag, "PointsList",   points)
+        gmsh.model.mesh.field.setNumber(tag, "Sampling", sampling)
+        self._log(
+            f"distance(curves={curves!r}, surfaces={surfaces!r}, "
+            f"points={points!r}) → field {tag}"
+        )
+        return tag
+
+    def threshold(
+        self,
+        distance_field : int,
+        *,
+        size_min       : float,
+        size_max       : float,
+        dist_min       : float,
+        dist_max       : float,
+        sigmoid        : bool = False,
+        stop_at_dist_max: bool = False,
+    ) -> int:
+        """
+        Create a ``Threshold`` field that smoothly ramps element size from
+        ``size_min`` (within ``dist_min``) to ``size_max`` (beyond
+        ``dist_max``), driven by a prior Distance field.
+
+        Parameters
+        ----------
+        distance_field   : tag of the Distance field
+        size_min/max     : element sizes at closest / farthest distance
+        dist_min/max     : distances at which ramp begins / ends
+        sigmoid          : use sigmoid instead of linear transition
+        stop_at_dist_max : keep size_max beyond dist_max (no further growth)
+        """
+        tag = gmsh.model.mesh.field.add("Threshold")
+        gmsh.model.mesh.field.setNumber(tag, "InField",        distance_field)
+        gmsh.model.mesh.field.setNumber(tag, "SizeMin",        size_min)
+        gmsh.model.mesh.field.setNumber(tag, "SizeMax",        size_max)
+        gmsh.model.mesh.field.setNumber(tag, "DistMin",        dist_min)
+        gmsh.model.mesh.field.setNumber(tag, "DistMax",        dist_max)
+        gmsh.model.mesh.field.setNumber(tag, "Sigmoid",        int(sigmoid))
+        gmsh.model.mesh.field.setNumber(tag, "StopAtDistMax",  int(stop_at_dist_max))
+        self._log(
+            f"threshold(in={distance_field}, "
+            f"size=[{size_min},{size_max}], "
+            f"dist=[{dist_min},{dist_max}]) → field {tag}"
+        )
+        return tag
+
+    def math_eval(self, expression: str) -> int:
+        """
+        Create a ``MathEval`` field using a mathematical expression in
+        ``x``, ``y``, ``z``.
+
+        Example
+        -------
+        ``g.mesh.field.math_eval("0.1 + 0.01*Sqrt(x^2+y^2)")``
+        """
+        tag = gmsh.model.mesh.field.add("MathEval")
+        gmsh.model.mesh.field.setString(tag, "F", expression)
+        self._log(f"math_eval({expression!r}) → field {tag}")
+        return tag
+
+    def box(
+        self,
+        *,
+        x_min    : float,
+        y_min    : float,
+        z_min    : float,
+        x_max    : float,
+        y_max    : float,
+        z_max    : float,
+        size_in  : float,
+        size_out : float,
+        thickness: float = 0.0,
+    ) -> int:
+        """
+        Create a ``Box`` field: ``size_in`` inside the box,
+        ``size_out`` outside, with an optional smooth ``thickness`` band
+        at the boundary.
+        """
+        tag = gmsh.model.mesh.field.add("Box")
+        gmsh.model.mesh.field.setNumber(tag, "VIn",  size_in)
+        gmsh.model.mesh.field.setNumber(tag, "VOut", size_out)
+        gmsh.model.mesh.field.setNumber(tag, "XMin", x_min)
+        gmsh.model.mesh.field.setNumber(tag, "YMin", y_min)
+        gmsh.model.mesh.field.setNumber(tag, "ZMin", z_min)
+        gmsh.model.mesh.field.setNumber(tag, "XMax", x_max)
+        gmsh.model.mesh.field.setNumber(tag, "YMax", y_max)
+        gmsh.model.mesh.field.setNumber(tag, "ZMax", z_max)
+        if thickness > 0.0:
+            gmsh.model.mesh.field.setNumber(tag, "Thickness", thickness)
+        self._log(
+            f"box(size_in={size_in}, size_out={size_out}, "
+            f"x=[{x_min},{x_max}], y=[{y_min},{y_max}], "
+            f"z=[{z_min},{z_max}]) → field {tag}"
+        )
+        return tag
+
+    def minimum(self, field_tags: list[int]) -> int:
+        """
+        Create a ``Min`` field that takes the element-wise minimum of
+        several fields.  Use this to combine multiple refinement zones.
+
+        Example
+        -------
+        ::
+
+            f1 = g.mesh.field.box(...)
+            f2 = g.mesh.field.threshold(...)
+            bg = g.mesh.field.minimum([f1, f2])
+            g.mesh.field.set_background(bg)
+        """
+        tag = gmsh.model.mesh.field.add("Min")
+        gmsh.model.mesh.field.setNumbers(tag, "FieldsList", field_tags)
+        self._log(f"minimum({field_tags}) → field {tag}")
+        return tag
+
+    def boundary_layer(
+        self,
+        *,
+        curves     : list[int] | None = None,
+        points     : list[int] | None = None,
+        size_near  : float,
+        ratio      : float            = 1.2,
+        n_layers   : int              = 5,
+        thickness  : float | None     = None,
+        fan_points : list[int] | None = None,
+    ) -> int:
+        """
+        Create a ``BoundaryLayer`` field for wall-resolved viscous meshes.
+
+        Parameters
+        ----------
+        curves     : curve tags along which the BL grows
+        points     : point tags at which the BL is anchored
+        size_near  : first-layer thickness (wall-normal element size)
+        ratio      : growth ratio between successive layers (>1 = expanding)
+        n_layers   : number of BL layers (used when ``thickness`` is None)
+        thickness  : total BL thickness — if provided, overrides ``n_layers``
+        fan_points : point tags where the BL fans into a corner patch
+
+        Note
+        ----
+        The Gmsh ``BoundaryLayer`` field does not support a ``SurfacesList``
+        option.  3-D boundary layers are controlled via ``CurvesList`` and
+        ``PointsList`` only.
+        """
+        tag = gmsh.model.mesh.field.add("BoundaryLayer")
+        if curves:
+            gmsh.model.mesh.field.setNumbers(tag, "CurvesList",    curves)
+        if points:
+            gmsh.model.mesh.field.setNumbers(tag, "PointsList",    points)
+        if fan_points:
+            gmsh.model.mesh.field.setNumbers(tag, "FanPointsList", fan_points)
+        gmsh.model.mesh.field.setNumber(tag, "Size",     size_near)
+        gmsh.model.mesh.field.setNumber(tag, "Ratio",    ratio)
+        gmsh.model.mesh.field.setNumber(tag, "NbLayers", n_layers)
+        if thickness is not None:
+            gmsh.model.mesh.field.setNumber(tag, "Thickness", thickness)
+        self._log(
+            f"boundary_layer(size={size_near}, ratio={ratio}, "
+            f"layers={n_layers}) → field {tag}"
+        )
+        return tag
+
+
+# ---------------------------------------------------------------------------
+# Mesh  — main composite class
+# ---------------------------------------------------------------------------
+
+class Mesh:
+    """
+    Meshing composite attached to a ``pyGmsh`` instance as ``self.mesh``.
+
+    Wraps ``gmsh.model.mesh`` with a clean, method-chaining API organised
+    into logical sections:
+
+    * **Generation**      — ``generate``, ``set_order``, ``refine``,
+      ``optimize``
+    * **Size control**    — ``set_global_size``, ``set_size``,
+      ``set_size_callback``; and ``self.field`` (``FieldHelper``)
+    * **Structured**      — ``set_transfinite_curve``,
+      ``set_transfinite_surface``, ``set_transfinite_volume``,
+      ``set_transfinite_automatic``
+    * **Quad / recombine**— ``set_recombine``, ``recombine``,
+      ``set_smoothing``, ``set_algorithm``
+    * **Embedding**       — ``embed``
+    * **Periodicity**     — ``set_periodic``
+    * **STL / discrete**  — ``import_stl``, ``classify_surfaces``,
+      ``create_geometry``
+    * **Editing**         — ``clear``, ``reverse``, ``relocate_nodes``,
+      ``remove_duplicate_nodes``, ``remove_duplicate_elements``,
+      ``affine_transform``
+    * **Partitioning**    — ``partition``, ``unpartition``,
+      ``compute_renumbering``, ``renumber_nodes``, ``renumber_elements``
+    * **Queries**         — ``get_nodes``, ``get_elements``,
+      ``get_element_qualities``, ``get_element_properties``,
+      ``quality_report``
+    * **IO**              — ``save``
+
+    All methods that do not return data return ``self`` so they can be
+    chained::
+
+        (g.mesh
+           .set_global_size(0.5)
+           .generate(3)
+           .optimize(OptimizeMethod.NETGEN, niter=3)
+           .save("result.msh"))
+
+    Parameters
+    ----------
+    parent : pyGmsh
+        Owning instance — used to read ``_verbose``.
+    """
+
+    def __init__(self, parent: pyGmsh) -> None:
+        self._parent = parent
+        self.field   = FieldHelper(self)
+
+        # Directive log — records every write-only mesh setting that
+        # cannot be read back from gmsh (transfinite, setSize, recombine,
+        # fields, per-entity algorithm, smoothing).  Used by
+        # ``Inspect.print_summary()`` to show what's been applied.
+        self._directives: list[dict] = []
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _log(self, msg: str) -> None:
+        if self._parent._verbose:
+            print(f"[Mesh] {msg}")
+
+    def _as_dimtags(
+        self,
+        tags       : TagsLike,
+        default_dim: int = 0,
+    ) -> list[DimTag]:
+        """Normalise int / tuple / list inputs into ``[(dim, tag), ...]``."""
+        if isinstance(tags, int):
+            return [(default_dim, tags)]
+        if (
+            isinstance(tags, tuple)
+            and len(tags) == 2
+            and all(isinstance(x, int) for x in tags)
+        ):
+            return [tags]
+        out: list[DimTag] = []
+        for item in tags:
+            if isinstance(item, int):
+                out.append((default_dim, item))
+            elif isinstance(item, (tuple, list)) and len(item) == 2:
+                out.append((int(item[0]), int(item[1])))
+            else:
+                raise TypeError(f"Cannot convert {item!r} to a (dim, tag) pair.")
+        return out
+
+    # ------------------------------------------------------------------
+    # Generation
+    # ------------------------------------------------------------------
+
+    def generate(self, dim: int = 3) -> Mesh:
+        """
+        Generate a mesh up to the given dimension.
+
+        Parameters
+        ----------
+        dim : 1 = edges only, 2 = surface mesh, 3 = volume mesh (default)
+        """
+        gmsh.model.mesh.generate(dim)
+        self._log(f"generate(dim={dim})")
+        return self
+
+    def set_order(self, order: int) -> Mesh:
+        """
+        Elevate elements to high order.
+
+        Parameters
+        ----------
+        order : 1 = linear, 2 = quadratic, 3 = cubic, …
+        """
+        gmsh.model.mesh.setOrder(order)
+        self._log(f"set_order({order})")
+        return self
+
+    def refine(self) -> Mesh:
+        """Uniformly refine by splitting every element once."""
+        gmsh.model.mesh.refine()
+        self._log("refine()")
+        return self
+
+    def optimize(
+        self,
+        method  : str  = OptimizeMethod.DEFAULT,
+        *,
+        force   : bool = False,
+        niter   : int  = 1,
+        dim_tags: list[DimTag] | None = None,
+    ) -> Mesh:
+        """
+        Optimise mesh quality.
+
+        Parameters
+        ----------
+        method   : one of ``OptimizeMethod.*`` constants
+        force    : apply optimisation even to already-valid elements
+        niter    : number of passes
+        dim_tags : limit to specific entities (``None`` = all)
+
+        Example
+        -------
+        ::
+
+            g.mesh.generate(3).optimize(OptimizeMethod.NETGEN, niter=5)
+        """
+        gmsh.model.mesh.optimize(method, force=force, niter=niter,
+                                  dimTags=dim_tags or [])
+        self._log(f"optimize(method={method!r}, niter={niter})")
+        return self
+
+    # ------------------------------------------------------------------
+    # Global / point size control
+    # ------------------------------------------------------------------
+
+    def set_global_size(
+        self,
+        max_size: float,
+        min_size: float = 0.0,
+    ) -> Mesh:
+        """
+        Set the global element-size band.
+
+        Parameters
+        ----------
+        max_size : upper bound assigned to ``Mesh.MeshSizeMax``.  Acts as a
+                   ceiling on every size source (per-point ``lc`` values,
+                   fields, extend-from-boundary, …).
+        min_size : lower bound assigned to ``Mesh.MeshSizeMin``.  Defaults
+                   to ``0.0`` — i.e. no floor, so per-point refinements
+                   (``set_size(..., 100)``) are free to produce elements
+                   smaller than ``max_size``.  Raise it only when you want
+                   to prevent Gmsh from going finer than a given threshold.
+
+        Notes
+        -----
+        Earlier versions of this method clamped both bounds to the same
+        value, which silently *overrode* per-point refinements.  The new
+        default (``min_size=0``) avoids that trap.  Call with two args when
+        you truly want a band, e.g. ``set_global_size(6000, 200)``.
+
+        Example
+        -------
+        ::
+
+            m1.mesh.set_global_size(6000)            # ceiling only
+            m1.mesh.set_global_size(6000, 200)       # band [200, 6000]
+        """
+        gmsh.option.setNumber("Mesh.MeshSizeMax", max_size)
+        gmsh.option.setNumber("Mesh.MeshSizeMin", min_size)
+        self._log(f"set_global_size(max={max_size}, min={min_size})")
+        return self
+
+    def set_size_sources(
+        self,
+        *,
+        from_points          : bool | None = None,
+        from_curvature       : bool | None = None,
+        extend_from_boundary : bool | None = None,
+    ) -> Mesh:
+        """
+        Control *which* size sources Gmsh consults when meshing.
+
+        Gmsh combines several size sources at each node and takes the
+        minimum.  When ``from_points`` is on (Gmsh default), every BRep
+        point carries its own characteristic length — imported CAD files
+        typically bake in small ``lc`` values that silently override
+        :meth:`set_global_size`.  Disable the sources you do not want.
+
+        Parameters
+        ----------
+        from_points : when ``True`` (default in Gmsh), per-point ``lc``
+                      values affect the mesh.  Set ``False`` to ignore
+                      them — useful after IGES/DXF import.
+        from_curvature : when ``True``, Gmsh adapts element size to
+                         curvature.  Default off.
+        extend_from_boundary : when ``True`` (default in Gmsh), sizes on
+                               boundary entities propagate inward.
+
+        Returns
+        -------
+        self — for method chaining
+
+        Example
+        -------
+        ::
+
+            # Make set_global_size(6000) actually honoured after IGES import
+            (g.mesh
+               .set_size_sources(from_points=False,
+                                 from_curvature=False,
+                                 extend_from_boundary=False)
+               .set_global_size(6000)
+               .generate(dim=2))
+        """
+        if from_points is not None:
+            gmsh.option.setNumber("Mesh.MeshSizeFromPoints", int(bool(from_points)))
+        if from_curvature is not None:
+            gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", int(bool(from_curvature)))
+        if extend_from_boundary is not None:
+            gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary",
+                                  int(bool(extend_from_boundary)))
+        self._log(
+            f"set_size_sources(from_points={from_points}, "
+            f"from_curvature={from_curvature}, "
+            f"extend_from_boundary={extend_from_boundary})"
+        )
+        return self
+
+    def set_size_global(
+        self,
+        *,
+        min_size: float | None = None,
+        max_size: float | None = None,
+    ) -> Mesh:
+        """
+        Set the global mesh-size bounds.
+
+        Unlike :meth:`set_global_size` (which sets *both* limits to the
+        same value), this method lets you control the minimum and maximum
+        independently — useful when you want Gmsh's size field to
+        interpolate between a range.
+
+        Parameters
+        ----------
+        min_size : lower bound on element size.  ``None`` leaves the
+                   current Gmsh default unchanged.
+        max_size : upper bound on element size.  ``None`` leaves the
+                   current Gmsh default unchanged.
+
+        Example
+        -------
+        ::
+
+            # fiber-section mesh with a size band
+            g.mesh.set_size_global(min_size=15, max_size=25)
+
+            # only cap the maximum — leave minimum at Gmsh default
+            g.mesh.set_size_global(max_size=50)
+        """
+        if min_size is not None:
+            gmsh.option.setNumber("Mesh.MeshSizeMin", min_size)
+        if max_size is not None:
+            gmsh.option.setNumber("Mesh.MeshSizeMax", max_size)
+        self._log(f"set_size_global(min={min_size}, max={max_size})")
+        return self
+
+    def set_size(
+        self,
+        tags: TagsLike,
+        size: float,
+        *,
+        dim : int = 0,
+    ) -> Mesh:
+        """
+        Assign a target element size to specific points.
+
+        ``gmsh.model.mesh.setSize`` is currently effective only for
+        dimension-0 entities (points).  Passing ``dim > 0`` will not raise,
+        but Gmsh will silently ignore the call.  Use a ``MathEval`` or
+        ``Distance`` mesh field (``g.mesh.distance()`` / ``g.mesh.threshold()``)
+        to control sizing on curves, surfaces, or volumes.
+
+        Parameters
+        ----------
+        tags : point tags (dim=0)
+        size : target element size
+        dim  : entity dimension — keep at 0 (default)
+
+        Example
+        -------
+        ::
+
+            # refine around a set of corner points
+            g.mesh.set_size([p1, p2, p3], 0.05)
+        """
+        dimtags = self._as_dimtags(tags, dim)
+        gmsh.model.mesh.setSize(dimtags, size)
+        self._directives.append({
+            'kind': 'set_size', 'dim': dim,
+            'tags': [t for _, t in dimtags], 'size': size,
+        })
+        self._log(f"set_size(dim={dim}, size={size})")
+        return self
+
+    def set_size_all_points(self, size: float) -> Mesh:
+        """
+        Assign the same characteristic length to *every* BRep point in
+        the model.
+
+        Typical use — normalising per-point ``lc`` values after an
+        IGES/STEP/DXF import, where the imported points carry small
+        characteristic lengths that would otherwise override
+        :meth:`set_global_size`.
+
+        Note
+        ----
+        This method only has an effect if ``Mesh.MeshSizeFromPoints`` is
+        enabled (the Gmsh default).  If you've called
+        ``set_size_sources(from_points=False)`` the per-point sizes set
+        here will be ignored at mesh time.
+
+        Parameters
+        ----------
+        size : characteristic length assigned to every point
+
+        Returns
+        -------
+        self — for method chaining
+
+        Example
+        -------
+        ::
+
+            (g.mesh
+               .set_size_all_points(6000)   # overwrite imported IGES lc
+               .set_global_size(6000)
+               .generate(dim=2))
+        """
+        pts = gmsh.model.getEntities(dim=0)
+        if pts:
+            gmsh.model.mesh.setSize(pts, size)
+        self._directives.append({
+            'kind': 'set_size_all_points', 'size': size,
+            'n_points': len(pts),
+        })
+        self._log(f"set_size_all_points(size={size}, n={len(pts)})")
+        return self
+
+    def set_size_callback(
+        self,
+        func: Callable[[float, float, float, float, int, int], float],
+    ) -> Mesh:
+        """
+        Register a Python callback that returns the desired element size at
+        any point in the model.
+
+        Callback signature
+        ------------------
+        ``func(dim, tag, x, y, z, lc) -> float``
+
+        Gmsh passes ``dim``/``tag`` of the entity being sampled first,
+        then the XYZ coordinates, then ``lc`` (current size estimate).
+        Return a positive float.
+
+        Example
+        -------
+        ::
+
+            def my_size(dim, tag, x, y, z, lc):
+                return max(0.05, 0.01 * math.sqrt(x**2 + y**2))
+
+            g.mesh.set_size_callback(my_size)
+        """
+        gmsh.model.mesh.setSizeCallback(func)
+        self._directives.append({
+            'kind': 'set_size_callback',
+            'func_name': getattr(func, '__name__', '<callable>'),
+        })
+        self._log("set_size_callback(<callable>)")
+        return self
+
+    # ------------------------------------------------------------------
+    # Structured / transfinite meshing
+    # ------------------------------------------------------------------
+
+    def set_transfinite_curve(
+        self,
+        tag      : int,
+        n_nodes  : int,
+        *,
+        mesh_type: str   = "Progression",
+        coef     : float = 1.0,
+    ) -> Mesh:
+        """
+        Set a transfinite constraint on a curve.
+
+        Parameters
+        ----------
+        tag       : curve tag
+        n_nodes   : number of nodes along the curve (endpoints included)
+        mesh_type : ``"Progression"`` (geometric) or ``"Bump"`` (clustered
+                    at both ends)
+        coef      : progression ratio; >1 clusters nodes toward the start
+
+        Example
+        -------
+        ::
+
+            # 20 nodes, mildly clustered at start
+            g.mesh.set_transfinite_curve(edge_tag, 20, coef=1.3)
+        """
+        gmsh.model.mesh.setTransfiniteCurve(tag, n_nodes,
+                                             meshType=mesh_type, coef=coef)
+        self._directives.append({
+            'kind': 'transfinite_curve', 'tag': tag,
+            'n_nodes': n_nodes, 'mesh_type': mesh_type, 'coef': coef,
+        })
+        self._log(
+            f"set_transfinite_curve(tag={tag}, n={n_nodes}, "
+            f"type={mesh_type!r}, coef={coef})"
+        )
+        return self
+
+    def set_transfinite_surface(
+        self,
+        tag        : int,
+        *,
+        arrangement: str            = "Left",
+        corners    : list[int] | None = None,
+    ) -> Mesh:
+        """
+        Set a transfinite constraint on a surface (mapped/structured quad).
+
+        Parameters
+        ----------
+        tag         : surface tag
+        arrangement : triangle split pattern — ``"Left"``, ``"Right"``,
+                      ``"AlternateLeft"``, or ``"AlternateRight"``
+        corners     : 3 or 4 corner point tags (needed for non-trivial
+                      topology, e.g. triangular faces)
+
+        Note
+        ----
+        All four bounding curves must also have transfinite constraints
+        (via ``set_transfinite_curve``) and compatible node counts.
+        """
+        gmsh.model.mesh.setTransfiniteSurface(tag, arrangement=arrangement,
+                                               cornerTags=corners or [])
+        self._directives.append({
+            'kind': 'transfinite_surface', 'tag': tag,
+            'arrangement': arrangement,
+            'corners': corners or [],
+        })
+        self._log(
+            f"set_transfinite_surface(tag={tag}, "
+            f"arrangement={arrangement!r})"
+        )
+        return self
+
+    def set_transfinite_volume(
+        self,
+        tag    : int,
+        *,
+        corners: list[int] | None = None,
+    ) -> Mesh:
+        """
+        Set a transfinite constraint on a volume (mapped hex-style).
+
+        Parameters
+        ----------
+        tag     : volume tag
+        corners : optional list of 8 corner point tags
+        """
+        gmsh.model.mesh.setTransfiniteVolume(tag, cornerTags=corners or [])
+        self._directives.append({
+            'kind': 'transfinite_volume', 'tag': tag,
+            'corners': corners or [],
+        })
+        self._log(f"set_transfinite_volume(tag={tag})")
+        return self
+
+    def set_transfinite_automatic(
+        self,
+        dim_tags    : list[DimTag] | None = None,
+        *,
+        corner_angle: float = 2.35,
+        recombine   : bool  = True,
+    ) -> Mesh:
+        """
+        Let gmsh automatically detect and set transfinite constraints on
+        compatible 3- and 4-sided surfaces/volumes.
+
+        Parameters
+        ----------
+        dim_tags     : entities to consider (``[]`` = all)
+        corner_angle : maximum angle (radians) to classify a vertex as a
+                       transfinite corner (default ≈ 135°)
+        recombine    : also set recombination on detected surfaces
+        """
+        gmsh.model.mesh.setTransfiniteAutomatic(
+            dimTags=dim_tags or [],
+            cornerAngle=corner_angle,
+            recombine=recombine,
+        )
+        self._directives.append({
+            'kind': 'transfinite_automatic',
+            'dim_tags': dim_tags or [],
+            'corner_angle': corner_angle,
+            'recombine': recombine,
+        })
+        self._log(
+            f"set_transfinite_automatic("
+            f"corner_angle={math.degrees(corner_angle):.1f}°, "
+            f"recombine={recombine})"
+        )
+        return self
+
+    # ------------------------------------------------------------------
+    # Recombination / quad meshing
+    # ------------------------------------------------------------------
+
+    def set_recombine(
+        self,
+        tag  : int,
+        *,
+        dim  : int   = 2,
+        angle: float = 45.0,
+    ) -> Mesh:
+        """
+        Request quad recombination for a surface (dim=2) or volume (dim=3).
+
+        Parameters
+        ----------
+        tag   : surface or volume tag
+        dim   : entity dimension
+        angle : template angle threshold (degrees) for the recombination
+                algorithm — lower values are more strict
+        """
+        gmsh.model.mesh.setRecombine(dim, tag, angle)
+        self._directives.append({
+            'kind': 'recombine', 'dim': dim, 'tag': tag, 'angle': angle,
+        })
+        self._log(f"set_recombine(dim={dim}, tag={tag}, angle={angle}°)")
+        return self
+
+    def recombine(self) -> Mesh:
+        """Globally recombine all triangular elements into quads."""
+        gmsh.model.mesh.recombine()
+        self._log("recombine()")
+        return self
+
+    def set_smoothing(self, tag: int, val: int, *, dim: int = 2) -> Mesh:
+        """
+        Set the number of Laplacian smoothing passes for a surface.
+
+        Parameters
+        ----------
+        tag : surface tag
+        val : number of smoothing iterations
+        """
+        gmsh.model.mesh.setSmoothing(dim, tag, val)
+        self._directives.append({
+            'kind': 'smoothing', 'dim': dim, 'tag': tag, 'val': val,
+        })
+        self._log(f"set_smoothing(dim={dim}, tag={tag}, val={val})")
+        return self
+
+    def set_algorithm(
+        self,
+        tag      : int,
+        algorithm: int,
+        *,
+        dim      : int = 2,
+    ) -> Mesh:
+        """
+        Choose the meshing algorithm for a surface (dim=2) or globally for
+        all volumes (dim=3).
+
+        Parameters
+        ----------
+        tag       : surface tag (dim=2); ignored for dim=3
+        algorithm : use ``Algorithm2D.*`` (dim=2) or ``Algorithm3D.*`` (dim=3)
+        dim       : entity dimension — must be 2 or 3
+
+        Note
+        ----
+        ``gmsh.model.mesh.setAlgorithm`` only supports dim=2 (per-surface
+        selection).  For dim=3, the algorithm is applied globally via
+        ``gmsh.option.setNumber("Mesh.Algorithm3D", ...)``.
+
+        Example
+        -------
+        ::
+
+            g.mesh.set_algorithm(surf_tag, Algorithm2D.FRONTAL_DELAUNAY_QUADS)
+            g.mesh.set_algorithm(0, Algorithm3D.HXT, dim=3)
+        """
+        if dim == 2:
+            gmsh.model.mesh.setAlgorithm(2, tag, int(algorithm))
+            self._directives.append({
+                'kind': 'algorithm', 'dim': 2, 'tag': tag,
+                'algorithm': int(algorithm),
+            })
+            self._log(f"set_algorithm(dim=2, tag={tag}, alg={algorithm!r})")
+        elif dim == 3:
+            gmsh.option.setNumber("Mesh.Algorithm3D", int(algorithm))
+            self._directives.append({
+                'kind': 'algorithm', 'dim': 3, 'tag': tag,
+                'algorithm': int(algorithm),
+            })
+            self._log(f"set_algorithm(dim=3, alg={algorithm!r})  [global option]")
+        else:
+            raise ValueError(f"set_algorithm: dim must be 2 or 3, got {dim!r}")
+        return self
+
+    def set_compound(self, dim: int, tags: list[int]) -> Mesh:
+        """Merge entities so they are meshed together as a single compound."""
+        gmsh.model.mesh.setCompound(dim, tags)
+        self._log(f"set_compound(dim={dim}, tags={tags})")
+        return self
+
+    def remove_constraints(
+        self,
+        dim_tags: list[DimTag] | None = None,
+    ) -> Mesh:
+        """Remove all meshing constraints from the given (or all) entities."""
+        gmsh.model.mesh.removeConstraints(dimTags=dim_tags or [])
+        self._log("remove_constraints()")
+        return self
+
+    # ------------------------------------------------------------------
+    # Embedding
+    # ------------------------------------------------------------------
+
+    def embed(
+        self,
+        tags  : int | list[int],
+        in_tag: int,
+        *,
+        dim   : int = 0,
+        in_dim: int = 3,
+    ) -> Mesh:
+        """
+        Embed lower-dimensional entities inside a higher-dimensional entity
+        so the mesh is conforming along them.
+
+        Parameters
+        ----------
+        tags   : tags of entities to embed
+        in_tag : tag of the containing entity
+        dim    : dimension of entities to embed (0=pts, 1=curves, 2=surfs)
+        in_dim : dimension of the container (must be > dim)
+
+        Example
+        -------
+        ::
+
+            # force mesh nodes along a crack surface inside a volume
+            g.mesh.embed(crack_surf_tag, body_tag, dim=2, in_dim=3)
+
+            # force mesh nodes on a point cloud inside a surface
+            g.mesh.embed([p1, p2, p3], surf_tag, dim=0, in_dim=2)
+        """
+        tag_list = tags if isinstance(tags, list) else [tags]
+        gmsh.model.mesh.embed(dim, tag_list, in_dim, in_tag)
+        self._log(
+            f"embed(dim={dim}, tags={tag_list}, "
+            f"in_dim={in_dim}, in_tag={in_tag})"
+        )
+        return self
+
+    # ------------------------------------------------------------------
+    # Periodicity
+    # ------------------------------------------------------------------
+
+    def set_periodic(
+        self,
+        tags       : list[int],
+        master_tags: list[int],
+        transform  : list[float],
+        *,
+        dim        : int = 2,
+    ) -> Mesh:
+        """
+        Declare periodic mesh correspondence between entities (typically
+        opposite faces of a periodic domain).
+
+        Parameters
+        ----------
+        tags        : slave entity tags
+        master_tags : master entity tags
+        transform   : 16-element row-major 4×4 affine matrix mapping
+                      master → slave coordinates
+        dim         : entity dimension (1 = curves, 2 = surfaces)
+
+        Example
+        -------
+        ::
+
+            # translate surface 2 to surface 1 by Δx = 10
+            g.mesh.set_periodic(
+                [2], [1],
+                [1,0,0,10,  0,1,0,0,  0,0,1,0,  0,0,0,1]
+            )
+        """
+        gmsh.model.mesh.setPeriodic(dim, tags, master_tags, transform)
+        self._log(
+            f"set_periodic(dim={dim}, tags={tags}, master={master_tags})"
+        )
+        return self
+
+    # ------------------------------------------------------------------
+    # STL / discrete geometry
+    # ------------------------------------------------------------------
+
+    def import_stl(self) -> Mesh:
+        """
+        Classify an STL mesh previously loaded into the gmsh model via
+        ``gmsh.merge`` as a discrete surface mesh.
+
+        Typically followed by ``classify_surfaces`` and ``create_geometry``.
+        """
+        gmsh.model.mesh.importStl()
+        self._log("import_stl()")
+        return self
+
+    def classify_surfaces(
+        self,
+        angle              : float,
+        *,
+        boundary           : bool  = True,
+        for_reparametrization: bool = False,
+        curve_angle        : float = math.pi,
+        export_discrete    : bool  = True,
+    ) -> Mesh:
+        """
+        Partition a discrete STL mesh into surface patches based on
+        dihedral angle.  First step in the STL → geometry → mesh pipeline.
+
+        Parameters
+        ----------
+        angle                : dihedral angle threshold (radians) for edge
+                               classification — edges sharper than this are
+                               treated as patch boundaries
+        boundary             : also reconstruct bounding curves
+        for_reparametrization: prepare the classification for surface
+                               reparametrization
+        curve_angle          : threshold for curve classification (default π)
+        export_discrete      : export the resulting discrete geometry
+
+        Example
+        -------
+        ::
+
+            gmsh.merge("scan.stl")
+            (g.mesh
+               .import_stl()
+               .classify_surfaces(math.radians(30))
+               .create_geometry()
+               .generate(2))
+        """
+        gmsh.model.mesh.classifySurfaces(
+            angle,
+            boundary=boundary,
+            forReparametrization=for_reparametrization,
+            curveAngle=curve_angle,
+            exportDiscrete=export_discrete,
+        )
+        self._log(
+            f"classify_surfaces(angle={math.degrees(angle):.1f}°, "
+            f"boundary={boundary})"
+        )
+        return self
+
+    def create_geometry(
+        self,
+        dim_tags: list[DimTag] | None = None,
+    ) -> Mesh:
+        """
+        Create a proper CAD-like geometry from classified discrete surfaces.
+        Must be called after ``classify_surfaces``.
+        """
+        gmsh.model.mesh.createGeometry(dimTags=dim_tags or [])
+        self._log("create_geometry()")
+        return self
+
+    # ------------------------------------------------------------------
+    # Mesh editing
+    # ------------------------------------------------------------------
+
+    def clear(self, dim_tags: list[DimTag] | None = None) -> Mesh:
+        """
+        Clear mesh data (nodes + elements).
+
+        Parameters
+        ----------
+        dim_tags : limit deletion to specific entities (``None`` = all)
+        """
+        gmsh.model.mesh.clear(dimTags=dim_tags or [])
+        self._log(f"clear(dim_tags={dim_tags})")
+        return self
+
+    def reverse(self, dim_tags: list[DimTag] | None = None) -> Mesh:
+        """Reverse the orientation of mesh elements in the given entities."""
+        gmsh.model.mesh.reverse(dimTags=dim_tags or [])
+        self._log("reverse()")
+        return self
+
+    def relocate_nodes(self, *, dim: int = -1, tag: int = -1) -> Mesh:
+        """
+        Project mesh nodes back onto their underlying geometry.  Useful
+        after high-order elevation or after modifying geometry post-mesh.
+        """
+        gmsh.model.mesh.relocateNodes(dim=dim, tag=tag)
+        self._log(f"relocate_nodes(dim={dim}, tag={tag})")
+        return self
+
+    def remove_duplicate_nodes(self, verbose: bool = True) -> Mesh:
+        """
+        Merge nodes that share the same position within tolerance.
+
+        Parameters
+        ----------
+        verbose : if True (default), print how many nodes were merged
+                  (or a 'nothing to do' notice when the mesh was already clean).
+        """
+        before = len(gmsh.model.mesh.getNodes()[0])
+        gmsh.model.mesh.removeDuplicateNodes()
+        after  = len(gmsh.model.mesh.getNodes()[0])
+        removed = before - after
+        if verbose:
+            if removed > 0:
+                print(f"remove_duplicate_nodes: merged {removed} "
+                      f"node(s) ({before} → {after})")
+            else:
+                print(f"remove_duplicate_nodes: no duplicates found "
+                      f"({before} nodes unchanged)")
+        self._log(f"remove_duplicate_nodes() removed={removed}")
+        return self
+
+    def remove_duplicate_elements(self, verbose: bool = True) -> Mesh:
+        """
+        Remove elements with identical node connectivity.
+
+        Parameters
+        ----------
+        verbose : if True (default), print how many elements were removed
+                  (or a 'nothing to do' notice when the mesh was already clean).
+        """
+        def _count() -> int:
+            _, tags, _ = gmsh.model.mesh.getElements()
+            return sum(len(t) for t in tags)
+
+        before = _count()
+        gmsh.model.mesh.removeDuplicateElements()
+        after  = _count()
+        removed = before - after
+        if verbose:
+            if removed > 0:
+                print(f"remove_duplicate_elements: removed {removed} "
+                      f"element(s) ({before} → {after})")
+            else:
+                print(f"remove_duplicate_elements: no duplicates found "
+                      f"({before} elements unchanged)")
+        self._log(f"remove_duplicate_elements() removed={removed}")
+        return self
+
+    def affine_transform(
+        self,
+        matrix  : list[float],
+        dim_tags: list[DimTag] | None = None,
+    ) -> Mesh:
+        """
+        Apply an affine transformation to mesh nodes (12 coefficients,
+        row-major 4×3 matrix — translation in last column).
+
+        Parameters
+        ----------
+        matrix   : 12 floats ``[a b c d  e f g h  i j k l]``
+                   representing ``x' = ax+by+cz+d``, etc.
+        dim_tags : limit to specific entities (``None`` = all)
+        """
+        gmsh.model.mesh.affineTransform(matrix, dimTags=dim_tags or [])
+        self._log("affine_transform()")
+        return self
+
+    # ------------------------------------------------------------------
+    # Partitioning / renumbering
+    # ------------------------------------------------------------------
+
+    def partition(
+        self,
+        n_parts     : int,
+        element_tags: list[int] | None = None,
+        partitions  : list[int] | None = None,
+    ) -> Mesh:
+        """
+        Partition the mesh into ``n_parts`` sub-domains (e.g. for MPI runs).
+
+        Parameters
+        ----------
+        n_parts      : number of partitions
+        element_tags : elements to partition (``None`` = all)
+        partitions   : pre-assigned partition IDs per element (``None`` = auto)
+        """
+        gmsh.model.mesh.partition(
+            n_parts,
+            elementTags=element_tags or [],
+            partitions=partitions    or [],
+        )
+        self._log(f"partition(n_parts={n_parts})")
+        return self
+
+    def unpartition(self) -> Mesh:
+        """Remove the partition structure and restore a monolithic mesh."""
+        gmsh.model.mesh.unpartition()
+        self._log("unpartition()")
+        return self
+
+    def compute_renumbering(
+        self,
+        method      : str            = "RCMK",
+        element_tags: list[int] | None = None,
+    ) -> tuple[ndarray, ndarray]:
+        """
+        Compute an optimised node renumbering (e.g. RCMK bandwidth reduction).
+
+        Returns
+        -------
+        (old_tags, new_tags) : two int ndarrays of equal length
+        """
+        old, new = gmsh.model.mesh.computeRenumbering(
+            method=method, elementTags=element_tags or []
+        )
+        self._log(
+            f"compute_renumbering(method={method!r}) → {len(old)} nodes"
+        )
+        return np.array(old, dtype=np.int64), np.array(new, dtype=np.int64)
+
+    def renumber_nodes(
+        self,
+        old_tags: list[int],
+        new_tags: list[int],
+    ) -> Mesh:
+        """Apply a pre-computed node renumbering."""
+        gmsh.model.mesh.renumberNodes(oldTags=old_tags, newTags=new_tags)
+        self._log(f"renumber_nodes({len(old_tags)} nodes)")
+        return self
+
+    def renumber_elements(
+        self,
+        old_tags: list[int],
+        new_tags: list[int],
+    ) -> Mesh:
+        """Apply a pre-computed element renumbering."""
+        gmsh.model.mesh.renumberElements(oldTags=old_tags, newTags=new_tags)
+        self._log(f"renumber_elements({len(old_tags)} elements)")
+        return self
+
+    # ------------------------------------------------------------------
+    # Queries  (return data — no chaining)
+    # ------------------------------------------------------------------
+
+    def get_nodes(
+        self,
+        *,
+        dim              : int  = -1,
+        tag              : int  = -1,
+        include_boundary : bool = False,
+        return_parametric: bool = False,
+    ) -> dict:
+        """
+        Query mesh nodes.
+
+        Parameters
+        ----------
+        dim              : restrict to entities of this dimension (-1 = all)
+        tag              : restrict to a single entity (-1 = all)
+        include_boundary : include nodes on the boundary of the entity
+        return_parametric: also return parametric (UV) coordinates
+
+        Returns
+        -------
+        dict
+            ``'tags'``              : ndarray(N,)   — node tags
+            ``'coords'``            : ndarray(N, 3) — XYZ coordinates
+            ``'parametric_coords'`` : ndarray       — only if requested
+        """
+        node_tags, coords, param = gmsh.model.mesh.getNodes(
+            dim=dim, tag=tag,
+            includeBoundary=include_boundary,
+            returnParametricCoord=return_parametric,
+        )
+        result: dict = {
+            'tags'  : np.array(node_tags, dtype=np.int64),
+            'coords': np.array(coords).reshape(-1, 3),
+        }
+        if return_parametric and len(param):
+            result['parametric_coords'] = np.array(param)
+        self._log(f"get_nodes → {len(node_tags)} nodes")
+        return result
+
+    def get_elements(
+        self,
+        *,
+        dim: int = -1,
+        tag: int = -1,
+    ) -> dict:
+        """
+        Query mesh elements.
+
+        Parameters
+        ----------
+        dim : restrict to this dimension (-1 = all)
+        tag : restrict to a single entity  (-1 = all)
+
+        Returns
+        -------
+        dict
+            ``'types'``     : list[int]         — gmsh element type codes
+            ``'tags'``      : list[ndarray]     — element tags per type
+            ``'node_tags'`` : list[ndarray]     — connectivity per type
+        """
+        elem_types, elem_tags, node_tags = gmsh.model.mesh.getElements(
+            dim=dim, tag=tag
+        )
+        result = {
+            'types'    : list(elem_types),
+            'tags'     : [np.array(t, dtype=np.int64) for t in elem_tags],
+            'node_tags': [np.array(n, dtype=np.int64) for n in node_tags],
+        }
+        total = sum(len(t) for t in result['tags'])
+        self._log(
+            f"get_elements → {total} elements "
+            f"({len(elem_types)} types)"
+        )
+        return result
+
+    def get_element_properties(self, element_type: int) -> dict:
+        """
+        Return metadata for a given gmsh element type code.
+
+        Returns
+        -------
+        dict
+            ``'name'``            : str   — human-readable type name
+            ``'dim'``             : int   — topological dimension
+            ``'order'``           : int   — polynomial order
+            ``'n_nodes'``         : int   — nodes per element
+            ``'n_primary_nodes'`` : int   — corner nodes (excluding mid-side)
+            ``'local_coords'``    : ndarray — node positions in ref element
+        """
+        name, dim, order, n_nodes, local_coords, n_primary = \
+            gmsh.model.mesh.getElementProperties(element_type)
+        d = max(dim, 1)
+        return {
+            'name'           : name,
+            'dim'            : dim,
+            'order'          : order,
+            'n_nodes'        : n_nodes,
+            'n_primary_nodes': n_primary,
+            'local_coords'   : np.array(local_coords).reshape(-1, d),
+        }
+
+    def get_fem_data(self, dim: int = 2) -> dict:
+        """
+        One-call extraction of all mesh data needed to build a FEM model.
+
+        Bundles nodes, elements, connectivity, tag mappings, and the set of
+        nodes actually connected to elements (orphan-free).  The returned
+        arrays are plain numpy / Python — no solver dependency.
+
+        Must be called **after** ``generate()``.
+
+        Parameters
+        ----------
+        dim : element dimension to extract (2 = triangles/quads,
+              3 = tets/hexes).  Nodes are always returned for the full mesh.
+
+        Returns
+        -------
+        dict with keys:
+
+        ``'node_tags'``    : ndarray(N,)        — Gmsh node IDs
+        ``'node_coords'``  : ndarray(N, 3)      — XYZ coordinates
+        ``'tag_to_idx'``   : dict[int, int]     — ``{gmsh_tag: array_index}``
+        ``'connectivity'`` : ndarray(nElem, npe) — element→node-tag matrix
+        ``'elem_tags'``    : list[int]           — Gmsh element tags (flat)
+        ``'used_tags'``    : set[int]            — node tags that appear in
+                                                   at least one element
+                                                   (use to skip orphan nodes)
+
+        Example
+        -------
+        ::
+
+            fem = g.mesh.get_fem_data(dim=2)
+            for gtag in fem['used_tags']:
+                idx = fem['tag_to_idx'][gtag]
+                x, y, z = fem['node_coords'][idx]
+        """
+        # --- nodes (full mesh) ---
+        nodes       = self.get_nodes()
+        node_tags   = nodes['tags']
+        node_coords = nodes['coords']
+        tag_to_idx  = {int(t): i for i, t in enumerate(node_tags)}
+
+        # --- elements of requested dimension ---
+        elems = self.get_elements(dim=dim)
+
+        conn_blocks: list[ndarray] = []
+        elem_tags: list[int] = []
+        for etype, etags, enodes in zip(
+            elems['types'], elems['tags'], elems['node_tags']
+        ):
+            props  = self.get_element_properties(etype)
+            npe    = props['n_nodes']
+            conn_blocks.append(enodes.reshape(-1, npe).astype(int))
+            elem_tags.extend(etags.astype(int).tolist())
+
+        connectivity = np.vstack(conn_blocks) if conn_blocks else np.empty(
+            (0, 0), dtype=int
+        )
+        used_tags = set(connectivity.flatten())
+
+        self._log(
+            f"get_fem_data(dim={dim}) → {len(node_tags)} nodes, "
+            f"{connectivity.shape[0]} elements, "
+            f"{len(used_tags)} used nodes"
+        )
+
+        return {
+            'node_tags'   : node_tags,
+            'node_coords' : node_coords,
+            'tag_to_idx'  : tag_to_idx,
+            'connectivity': connectivity,
+            'elem_tags'   : elem_tags,
+            'used_tags'   : used_tags,
+        }
+
+    def get_numbered_mesh(
+        self,
+        dim: int = 2,
+        *,
+        method: str = "simple",
+        base: int = 1,
+    ):
+        """
+        Extract FEM data and renumber for solver consumption.
+
+        Convenience wrapper that calls ``get_fem_data`` then
+        :class:`Numberer.renumber()`.
+
+        Parameters
+        ----------
+        dim : int
+            Element dimension (2 for shells/quads, 3 for solids).
+        method : ``"simple"`` or ``"rcm"``
+            ``"simple"``  contiguous IDs, preserving order.
+            ``"rcm"``  bandwidth-optimised (Reverse Cuthill-McKee).
+        base : int
+            Starting ID (1 for OpenSees/Abaqus, 0 for C/Python).
+
+        Returns
+        -------
+        NumberedMesh
+            Solver-ready mesh with contiguous IDs and bidirectional
+            maps (Gmsh tag ↔ solver ID).
+
+        Example
+        -------
+        ::
+
+            mesh = g.mesh.get_numbered_mesh(dim=2, method="rcm")
+
+            for i in range(mesh.n_nodes):
+                ops.node(int(mesh.node_ids[i]),
+                         *mesh.node_coords[i])
+
+            for i in range(mesh.n_elems):
+                ops.element('ShellMITC4', int(mesh.elem_ids[i]),
+                            *[int(n) for n in mesh.connectivity[i]],
+                            sec_tag)
+
+            # Post-processing: solver ID → Gmsh tag
+            gmsh_tag = mesh.solver_to_gmsh_node[42]
+        """
+        from .Numberer import Numberer
+        fem = self.get_fem_data(dim=dim)
+        numb = Numberer(fem)
+        result = numb.renumber(method=method, base=base)
+        self._log(f"get_numbered_mesh({method}): {result.summary()}")
+        return result
+
+    def get_element_qualities(
+        self,
+        element_tags: list[int] | ndarray,
+        quality_name: str = "minSICN",
+    ) -> ndarray:
+        """
+        Compute quality metrics for the given elements.
+
+        Parameters
+        ----------
+        element_tags : element tags to evaluate
+        quality_name : metric — ``"minSICN"`` (signed inverse condition
+                       number), ``"minSIGE"`` (signed inverse gradient
+                       error), ``"gamma"`` (inscribed/circumscribed ratio),
+                       ``"minSJ"`` (minimum scaled Jacobian)
+
+        Returns
+        -------
+        ndarray
+            Quality values, one per element.
+        """
+        tags = list(element_tags) if not isinstance(element_tags, list) else element_tags
+        q = gmsh.model.mesh.getElementQualities(tags, qualityName=quality_name)
+        return np.asarray(q)
+                 
