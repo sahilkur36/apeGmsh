@@ -161,7 +161,7 @@ class MeshViewer(BaseViewer):
         mesh_composite: "Mesh",
         *,
         dims: list[int] | None = None,
-        point_size: float = 6.0,
+        point_size: float = 10.0,
         line_width: float = 3.0,
         surface_opacity: float = 1.0,
         show_surface_edges: bool = True,
@@ -456,8 +456,14 @@ class MeshViewer(BaseViewer):
                 point_size=self._node_marker_size,
                 render_points_as_spheres=True,
                 pickable=True,
-                opacity=0.8,
+                opacity=1.0,
             )
+            # Depth offset so spheres render on top of mesh faces
+            try:
+                self._node_actor.GetMapper().SetResolveCoincidentTopologyToPolygonOffset()
+                self._node_actor.GetMapper().SetRelativeCoincidentTopologyPolygonOffsetParameters(-1.0, -1.0)
+            except Exception:
+                pass
             self._register_actor(self._node_actor, ("nodes",))
 
         # --- Opt-2: build KD-tree for nearest-node picking ---

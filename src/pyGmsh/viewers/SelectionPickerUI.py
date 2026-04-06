@@ -7,10 +7,10 @@ Qt (pyvistaqt) front-end for :class:`SelectionPicker`.
 Inherits from :class:`BaseViewerWindow` (shared window shell, toolbar,
 console, prefs, camera controls) and adds BRep-selection-specific UI:
 
-* **Browser tab**: physical-groups + unassigned-entities tree.
+* **Browser tab**: physical-groups + unassigned-entities tree, with
+  integrated group management controls at the bottom.
 * **View tab**: entity label overlays (dim toggles, font, names/tags).
 * **Filter tab**: dimension filter, entity-label filter, text filter.
-* **Physical Groups dock**: group list + name input + action buttons.
 * **Entity Info dock**: BRep topology tree for hovered entity.
 * **Toolbar extras**: new/rename/delete group, hide/isolate/show all.
 * **Prefs extras**: selection color, label font family/size/color.
@@ -94,9 +94,13 @@ class SelectionPickerWindow(BaseViewerWindow):
         # Q -> close window
         sc_q = QtWidgets.QShortcut(QtGui.QKeySequence("Q"), window)
         sc_q.activated.connect(window.close)
-        # Esc -> deselect all picks (clear working set)
+        # Esc / Space -> deselect (two-stage: revert to applied, then clear)
         sc_esc = QtWidgets.QShortcut(QtGui.QKeySequence("Esc"), window)
         sc_esc.activated.connect(self._action_deselect_all)
+        sc_space = QtWidgets.QShortcut(
+            QtGui.QKeySequence(QtCore.Qt.Key_Space), window,
+        )
+        sc_space.activated.connect(self._action_deselect_all)
         # Tab -> cycle overlapping entities (Revit-style).
         sc_tab = QtWidgets.QShortcut(
             QtGui.QKeySequence(QtCore.Qt.Key_Tab), window,
@@ -118,22 +122,17 @@ class SelectionPickerWindow(BaseViewerWindow):
         ]
 
     def _build_docks(self):
-        """Return extra docks: Physical Groups + Entity Info."""
-        QtWidgets = self._QtWidgets
-
-        pg_dock = self._build_committed_groups_dock()
-
-        info_dock = QtWidgets.QDockWidget("Entity Info")
+        """Return extra docks: Entity Info only."""
+        info_dock = self._QtWidgets.QDockWidget("Entity Info")
         info_dock.setFeatures(
-            QtWidgets.QDockWidget.DockWidgetMovable
-            | QtWidgets.QDockWidget.DockWidgetFloatable
-            | QtWidgets.QDockWidget.DockWidgetClosable
+            self._QtWidgets.QDockWidget.DockWidgetMovable
+            | self._QtWidgets.QDockWidget.DockWidgetFloatable
+            | self._QtWidgets.QDockWidget.DockWidgetClosable
         )
         info_dock.setWidget(self._build_info_tab())
         self._info_dock = info_dock
         info_dock.hide()
-
-        return [pg_dock, info_dock]
+        return [info_dock]
 
     def _build_toolbar_extra(self, bar) -> None:
         """Add BRep-specific buttons BEFORE the generic camera buttons.
@@ -217,9 +216,10 @@ class SelectionPickerWindow(BaseViewerWindow):
     def _refresh_statusbar(self) -> None:
         """Selection-specific status: active group + pick breakdown."""
         picker = self._picker
-        active = picker._active_group or "(none)"
+        active = picker.active_group or "(none)"
+        tags = picker.tags
         counts = {0: 0, 1: 0, 2: 0, 3: 0}
-        for d, _ in picker._picks:
+        for d, _ in tags:
             counts[d] = counts.get(d, 0) + 1
         bits = [
             f"{n} {_DIM_NAMES[d].lower()}"
@@ -227,7 +227,7 @@ class SelectionPickerWindow(BaseViewerWindow):
         ]
         breakdown = ", ".join(bits) or "no picks"
         self._statusbar.showMessage(
-            f"active={active}   picks: {len(picker._picks)} ({breakdown})"
+            f"active={active}   picks: {len(tags)} ({breakdown})"
         )
 
     def _on_hover_changed_ui(self) -> None:
@@ -267,26 +267,72 @@ class SelectionPickerWindow(BaseViewerWindow):
         ]
 
     # ==================================================================
-    # Browser tab (model tree)
+    # Browser tab (model tree + group management)
     # ==================================================================
 
     def _build_browser_tab(self):
-        """Tab 1 -- Project Browser (model tree)."""
+        """Tab 1 -- Project Browser (model tree) with integrated group
+        management controls at the bottom."""
         QtWidgets = self._QtWidgets
         QtCore = self._QtCore
 
-        tree = QtWidgets.QTreeWidget()
-        tree.setHeaderLabels(["Entity / group", "Info"])
-        tree.setColumnWidth(0, 200)
-        tree.setAlternatingRowColors(True)
-        tree.setRootIsDecorated(True)
-        tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        panel = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(panel)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
 
-        tree.itemClicked.connect(self._on_tree_item_clicked)
-        tree.customContextMenuRequested.connect(self._on_tree_context_menu)
+        # --- Tree (takes most space) ---
+        self._tree = QtWidgets.QTreeWidget()
+        self._tree.setHeaderLabels(["Entity / group", "Info"])
+        self._tree.setColumnWidth(0, 200)
+        self._tree.setAlternatingRowColors(True)
+        self._tree.setRootIsDecorated(True)
+        self._tree.setContextMenuPolicy(QtCore.Qt.CustomContextMenu)
+        self._tree.customContextMenuRequested.connect(self._on_tree_context_menu)
+        self._tree.itemClicked.connect(self._on_tree_item_clicked)
+        self._tree.itemDoubleClicked.connect(self._on_tree_item_dblclicked)
+        layout.addWidget(self._tree, stretch=1)  # tree expands
 
-        self._tree = tree
-        return tree
+        # --- Group management section (fixed at bottom) ---
+        # Name input
+        name_row = QtWidgets.QHBoxLayout()
+        name_row.addWidget(QtWidgets.QLabel("Name:"))
+        self._group_name_edit = QtWidgets.QLineEdit()
+        self._group_name_edit.setPlaceholderText("group name\u2026")
+        name_row.addWidget(self._group_name_edit)
+        layout.addLayout(name_row)
+
+        # Buttons row 1
+        row1 = QtWidgets.QHBoxLayout()
+        row1.setSpacing(4)
+        btn_apply = QtWidgets.QPushButton("Apply")
+        btn_apply.setToolTip("Create / overwrite group with current picks")
+        btn_apply.clicked.connect(self._grp_apply)
+        row1.addWidget(btn_apply)
+        btn_modify = QtWidgets.QPushButton("Modify")
+        btn_modify.setToolTip("Load group members into picks for editing")
+        btn_modify.clicked.connect(self._grp_modify)
+        row1.addWidget(btn_modify)
+        layout.addLayout(row1)
+
+        # Buttons row 2
+        row2 = QtWidgets.QHBoxLayout()
+        row2.setSpacing(4)
+        btn_select = QtWidgets.QPushButton("Select")
+        btn_select.setToolTip("Preview group members (load into picks)")
+        btn_select.clicked.connect(self._grp_select)
+        row2.addWidget(btn_select)
+        btn_deselect = QtWidgets.QPushButton("Deselect")
+        btn_deselect.setToolTip("Clear all current picks")
+        btn_deselect.clicked.connect(self._action_deselect_all)
+        row2.addWidget(btn_deselect)
+        btn_delete = QtWidgets.QPushButton("Delete")
+        btn_delete.setToolTip("Delete the named group")
+        btn_delete.clicked.connect(self._grp_delete)
+        row2.addWidget(btn_delete)
+        layout.addLayout(row2)
+
+        return panel
 
     # ==================================================================
     # View tab (entity labels)
@@ -540,167 +586,6 @@ class SelectionPickerWindow(BaseViewerWindow):
             cb.blockSignals(False)
 
     # ==================================================================
-    # Physical Groups dock (committed groups)
-    # ==================================================================
-
-    def _build_committed_groups_dock(self):
-        """Right-side dock showing physical groups + name input + action
-        buttons."""
-        QtWidgets = self._QtWidgets
-
-        dock = QtWidgets.QDockWidget("Physical Groups")
-        dock.setFeatures(
-            QtWidgets.QDockWidget.DockWidgetMovable
-            | QtWidgets.QDockWidget.DockWidgetFloatable
-        )
-
-        container = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(container)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(4)
-
-        # Group list
-        self._committed_list = QtWidgets.QListWidget()
-        self._committed_list.setAlternatingRowColors(True)
-        self._committed_list.currentTextChanged.connect(
-            self._on_committed_list_selected,
-        )
-        self._committed_list.itemDoubleClicked.connect(
-            self._on_committed_list_dblclick,
-        )
-        layout.addWidget(self._committed_list)
-
-        # Name input
-        name_row = QtWidgets.QHBoxLayout()
-        name_row.addWidget(QtWidgets.QLabel("Name:"))
-        self._group_name_edit = QtWidgets.QLineEdit()
-        self._group_name_edit.setPlaceholderText("group name\u2026")
-        name_row.addWidget(self._group_name_edit)
-        layout.addLayout(name_row)
-
-        # Action buttons -- two rows
-        row1 = QtWidgets.QHBoxLayout()
-        row1.setSpacing(4)
-
-        btn_apply = QtWidgets.QPushButton("Apply")
-        btn_apply.setToolTip("Create / overwrite group with current picks")
-        btn_apply.clicked.connect(self._grp_apply)
-        row1.addWidget(btn_apply)
-
-        btn_modify = QtWidgets.QPushButton("Modify")
-        btn_modify.setToolTip("Load group members into picks for editing")
-        btn_modify.clicked.connect(self._committed_modify)
-        row1.addWidget(btn_modify)
-        layout.addLayout(row1)
-
-        row2 = QtWidgets.QHBoxLayout()
-        row2.setSpacing(4)
-
-        btn_select = QtWidgets.QPushButton("Select")
-        btn_select.setToolTip("Add group members to current picks")
-        btn_select.clicked.connect(self._committed_select)
-        row2.addWidget(btn_select)
-
-        btn_deselect = QtWidgets.QPushButton("Deselect")
-        btn_deselect.setToolTip("Clear all current picks")
-        btn_deselect.clicked.connect(self._action_deselect_all)
-        row2.addWidget(btn_deselect)
-
-        btn_delete = QtWidgets.QPushButton("Delete")
-        btn_delete.setToolTip("Delete this group")
-        btn_delete.clicked.connect(self._committed_delete)
-        row2.addWidget(btn_delete)
-        layout.addLayout(row2)
-
-        dock.setWidget(container)
-        return dock
-
-    def _on_committed_list_selected(self, text: str) -> None:
-        """Populate name field when clicking a group in the list."""
-        if not text:
-            return
-        # Strip the " (N Surfaces)" suffix
-        name = text.split("  (")[0]
-        self._group_name_edit.setText(name)
-
-    def _on_committed_list_dblclick(self, item) -> None:
-        """Double-click a group -> run the Select command for it."""
-        name = item.data(self._QtCore.Qt.UserRole)
-        if not name:
-            return
-        self._group_name_edit.setText(name)
-        self._grp_select()
-
-    def _refresh_committed_table(self) -> None:
-        """Rebuild the physical-groups list from Gmsh + staged."""
-        if not hasattr(self, "_committed_list"):
-            return
-        lst = self._committed_list
-        cur = lst.currentItem()
-        cur_name = cur.data(self._QtCore.Qt.UserRole) if cur else ""
-        lst.clear()
-        groups = self._collect_groups()
-        for gname in sorted(groups.keys()):
-            members = groups[gname]
-            if not members:
-                continue
-            n = len(members)
-            dims = sorted(set(d for d, _ in members))
-            dim_str = ", ".join(
-                _DIM_NAMES.get(d, str(d)) for d in dims
-            )
-            item = self._QtWidgets.QListWidgetItem(
-                f"{gname}  ({n} {dim_str})"
-            )
-            item.setData(self._QtCore.Qt.UserRole, gname)
-            lst.addItem(item)
-        # Restore selection
-        for i in range(lst.count()):
-            if lst.item(i).data(self._QtCore.Qt.UserRole) == cur_name:
-                lst.setCurrentRow(i)
-                break
-
-    def _committed_selected_name(self) -> str | None:
-        """Return the group name from the currently-selected list item."""
-        lst = self._committed_list
-        cur = lst.currentItem()
-        if cur is None:
-            self._statusbar.showMessage(
-                "Select a group in the Physical Groups panel first.", 3000,
-            )
-            return None
-        return cur.data(self._QtCore.Qt.UserRole)
-
-    def _committed_select(self) -> None:
-        name = self._committed_selected_name()
-        if not name:
-            return
-        from pyGmsh.viewers.SelectionPicker import _load_physical_group_members
-        members = self._picker._staged_groups.get(name)
-        if members is None:
-            members = _load_physical_group_members(name)
-        if members:
-            self._picker.select_dimtags(members, replace=False)
-            self.log(f"Selected {len(members)} entities from '{name}'")
-
-    def _committed_modify(self) -> None:
-        name = self._committed_selected_name()
-        if not name:
-            return
-        self._picker.set_active_group(name)
-        self._group_name_edit.setText(name)
-        self._populate_tree()
-        self._refresh_statusbar()
-        self.log(f"Editing group '{name}'")
-
-    def _committed_delete(self) -> None:
-        name = self._committed_selected_name()
-        if not name:
-            return
-        self._delete_group(name)
-        self._refresh_committed_table()
-
-    # ==================================================================
     # Entity Info dock
     # ==================================================================
 
@@ -836,32 +721,14 @@ class SelectionPickerWindow(BaseViewerWindow):
                 pass
 
         # Overlay staged groups (explicit edits this session)
-        for name, members in self._picker._staged_groups.items():
+        for name, members in self._picker.staged_groups.items():
             groups[name] = list(members)
 
         # Active group always reflects the *current* working picks
-        if self._picker._active_group is not None:
-            groups[self._picker._active_group] = list(self._picker._picks)
+        if self._picker.is_editing:
+            groups[self._picker.active_group] = list(self._picker.tags)
 
         return groups
-
-    def _refresh_group_list(self) -> None:
-        """Repopulate the group list widget from Gmsh + staged groups."""
-        lst = self._committed_list
-        lst.blockSignals(True)
-        cur = lst.currentItem()
-        cur_text = cur.text().split("  (")[0] if cur else ""
-        lst.clear()
-        groups = self._collect_groups()
-        for gname in sorted(groups.keys()):
-            n = len(groups[gname])
-            lst.addItem(f"{gname}  ({n})")
-        # Restore selection
-        for i in range(lst.count()):
-            if lst.item(i).text().startswith(cur_text + "  ("):
-                lst.setCurrentRow(i)
-                break
-        lst.blockSignals(False)
 
     def _grp_name(self) -> str:
         return self._group_name_edit.text().strip()
@@ -872,36 +739,38 @@ class SelectionPickerWindow(BaseViewerWindow):
         if not name:
             self._statusbar.showMessage("Enter a group name first.", 3000)
             return
-        if self._group_name_taken(name):
+        if self._picker.group_exists(name):
             if not self._confirm_overwrite(name):
                 return
-        self._picker._staged_groups[name] = list(self._picker._picks)
-        self._picker._active_group = name
+        self._picker.apply_group(name)
         self._populate_tree()
-        self._refresh_group_list()
         self._refresh_statusbar()
-        self.log(f"Applied group '{name}' ({len(self._picker._picks)} entities)")
+        self.log(f"Applied '{name}' ({len(self._picker.tags)} entities)")
 
     def _grp_modify(self) -> None:
-        """Modify: load the named group's members into picks."""
+        """Modify: overwrite the named group with the current picks."""
         name = self._grp_name()
         if not name:
             self._statusbar.showMessage("Enter a group name first.", 3000)
             return
-        self._picker.set_active_group(name)
+        if not self._picker.tags:
+            self._statusbar.showMessage("Nothing selected to assign.", 3000)
+            return
+        self._picker.apply_group(name)
         self._populate_tree()
-        self._refresh_group_list()
         self._refresh_statusbar()
-        self.log(f"Editing group '{name}' ({len(self._picker._picks)} members loaded)")
+        self.log(f"Modified '{name}' ({len(self._picker.tags)} entities)")
 
     def _grp_select(self) -> None:
-        """Select: add all members of the named group to picks."""
+        """Select: preview the named group's members (load into picks).
+
+        Does NOT set the group as active for editing.
+        """
+        from pyGmsh.viewers.SelectionPicker import _load_physical_group_members
         name = self._grp_name()
         if not name:
             return
-        from pyGmsh.viewers.SelectionPicker import _load_physical_group_members
-        # Check staged first, then Gmsh
-        members = self._picker._staged_groups.get(name)
+        members = self._picker.staged_groups.get(name)
         if members is None:
             members = _load_physical_group_members(name)
         if not members:
@@ -909,8 +778,8 @@ class SelectionPickerWindow(BaseViewerWindow):
                 f"Group '{name}' is empty or does not exist.", 3000,
             )
             return
-        self._picker.select_dimtags(members, replace=False)
-        self.log(f"Selected {len(members)} entities from '{name}'")
+        self._picker.select_dimtags(members, replace=True)
+        self.log(f"Previewing group '{name}' ({len(members)} entities)")
 
     def _grp_delete(self) -> None:
         """Delete: remove the named group."""
@@ -918,18 +787,11 @@ class SelectionPickerWindow(BaseViewerWindow):
         if not name:
             return
         self._delete_group(name)
-        self._refresh_group_list()
 
     def _group_name_taken(self, name: str) -> bool:
         """True if *name* already refers to a group -- either staged in
         this session with non-empty members, or present in Gmsh."""
-        staged = self._picker._staged_groups
-        if name in staged and staged[name]:
-            return True
-        from pyGmsh.viewers.SelectionPicker import _load_physical_group_members
-        if _load_physical_group_members(name):
-            return True
-        return False
+        return self._picker.group_exists(name)
 
     def _confirm_overwrite(self, name: str) -> bool:
         """Prompt before overwriting an existing group."""
@@ -965,14 +827,14 @@ class SelectionPickerWindow(BaseViewerWindow):
         self.log(f"Created group '{name}'")
 
     def _action_rename_active(self) -> None:
-        active = self._picker._active_group
+        active = self._picker.active_group
         if not active:
             self._statusbar.showMessage("No active group to rename.", 3000)
             return
         self._rename_group(active)
 
     def _action_delete_active(self) -> None:
-        active = self._picker._active_group
+        active = self._picker.active_group
         if not active:
             self._statusbar.showMessage("No active group to delete.", 3000)
             return
@@ -991,45 +853,32 @@ class SelectionPickerWindow(BaseViewerWindow):
         if self._group_name_taken(new_name):
             if not self._confirm_overwrite(new_name):
                 return
-        staged = self._picker._staged_groups
-        members = staged.pop(old_name, None)
-        if self._picker._active_group == old_name:
-            staged[new_name] = list(self._picker._picks)
-            self._picker._active_group = new_name
-        elif members is not None:
-            staged[new_name] = members
-        else:
-            from pyGmsh.viewers.SelectionPicker import _load_physical_group_members
-            staged[new_name] = _load_physical_group_members(old_name)
-        # Mark old name as empty so _flush_staged deletes it on close
-        staged[old_name] = []
+        self._picker.rename_group(old_name, new_name)
         self._populate_tree()
         self._refresh_statusbar()
         self.log(f"Renamed '{old_name}' -> '{new_name}'")
 
     def _delete_group(self, name: str) -> None:
-        # Stage empty -> deleted on close
-        self._picker._staged_groups[name] = []
-        if self._picker._active_group == name:
-            self._picker._active_group = None
-            self._picker._picks = []
-            self._picker._pick_history = []
-            self._picker._recolor_all()
+        self._picker.delete_group(name)
         self._populate_tree()
         self.log(f"Deleted group '{name}'")
         self._refresh_statusbar()
 
     def _action_deselect_all(self) -> None:
-        """Esc -- clear the entire working set (deselect all picks)."""
-        if not self._picker._picks:
-            return
-        old = list(self._picker._picks)
-        self._picker._picks.clear()
-        self._picker._pick_history.clear()
-        for dt in old:
-            self._picker._recolor(dt)
-        self._picker._update_status()
-        self._picker._fire_pick_changed()
+        """Esc / Space -- two-stage deselect.
+
+        **Stage 1**: if picks differ from the last Apply, revert to the
+        applied group members.
+
+        **Stage 2**: if picks already match the applied state (or no
+        group is active), clear all picks and deactivate the group.
+
+        Every applied group takes exactly 2 presses to fully clear.
+        Unapplied selections clear in 1 press.  No cycling.
+        """
+        if not self._picker.revert():
+            self._picker.clear()
+        self._populate_tree()
 
     # ==================================================================
     # Tree management
@@ -1045,7 +894,7 @@ class SelectionPickerWindow(BaseViewerWindow):
 
         groups = self._collect_groups()
         assigned: set[DimTag] = {dt for mems in groups.values() for dt in mems}
-        active = self._picker._active_group
+        active = self._picker.active_group
         registry = self._picker._model._registry
 
         # ---- Physical groups root ----
@@ -1106,12 +955,6 @@ class SelectionPickerWindow(BaseViewerWindow):
 
         # Apply pick coloring in the fresh tree
         self._refresh_tree_picks()
-
-        # Keep the Groups tab list in sync
-        if hasattr(self, "_group_list"):
-            self._refresh_group_list()
-        # Keep the bottom-dock table in sync
-        self._refresh_committed_table()
 
     def _build_instances_root(self) -> None:
         """Append an 'Instances' root showing each Assembly instance and
@@ -1185,18 +1028,11 @@ class SelectionPickerWindow(BaseViewerWindow):
         kind = data[0]
         if kind == "entity":
             dt = (int(data[1]), int(data[2]))
-            if self._picker._active_group is None:
-                self._statusbar.showMessage(
-                    "No active group \u2014 click or create a group first.",
-                    4000,
-                )
-                return
             self._picker._toggle_pick(dt)
         elif kind == "group":
             gname = data[1]
-            self._picker.set_active_group(gname)
-            self._populate_tree()
-            self._refresh_statusbar()
+            self._group_name_edit.setText(gname)  # populate name field
+            # Don't call set_active_group -- that's what Modify is for
         elif kind == "instance":
             label = data[1]
             dts = self._instance_dimtags(label)
@@ -1205,6 +1041,18 @@ class SelectionPickerWindow(BaseViewerWindow):
             label, dim = data[1], int(data[2])
             dts = self._instance_dimtags(label, dim=dim)
             self._picker.select_dimtags(dts, replace=True)
+
+    def _on_tree_item_dblclicked(self, item, _column):
+        """Double-clicking a group header previews its members."""
+        QtCore = self._QtCore
+        data = item.data(0, QtCore.Qt.UserRole)
+        if data is None:
+            return
+        kind = data[0]
+        if kind == "group":
+            gname = data[1]
+            self._group_name_edit.setText(gname)
+            self._grp_select()
 
     def _instance_dimtags(
         self, label: str, *, dim: int | None = None,
@@ -1238,14 +1086,19 @@ class SelectionPickerWindow(BaseViewerWindow):
         if kind == "group":
             gname = data[1]
             menu = QtWidgets.QMenu(self._tree)
-            act_active = menu.addAction("Set as active")
+            act_select = menu.addAction("Select")
+            act_modify = menu.addAction("Modify (assign current picks)")
+            menu.addSeparator()
             act_rename = menu.addAction("Rename\u2026")
             act_delete = menu.addAction("Delete")
             chosen = menu.exec_(self._tree.mapToGlobal(pos))
-            if chosen == act_active:
-                self._picker.set_active_group(gname)
-                self._populate_tree()
-                self._refresh_statusbar()
+            if chosen is None:
+                return
+            self._group_name_edit.setText(gname)
+            if chosen == act_select:
+                self._grp_select()
+            elif chosen == act_modify:
+                self._grp_modify()
             elif chosen == act_rename:
                 self._rename_group(gname)
             elif chosen == act_delete:
@@ -1307,12 +1160,12 @@ class SelectionPickerWindow(BaseViewerWindow):
         QtGui = self._QtGui
         self._syncing = True
         try:
-            picks = set(self._picker._picks)
+            picks = set(self._picker.tags)
             pick_brush = QtGui.QBrush(
                 QtGui.QColor(self._picker._pick_color)
             )
             idle_brush = QtGui.QBrush()  # default
-            active = self._picker._active_group
+            active = self._picker.active_group
             if active is not None and active in self._tree_items_by_group:
                 header = self._tree_items_by_group[active]
                 header.setText(1, f"{len(picks)} entities")
@@ -1446,11 +1299,12 @@ class SelectionPickerWindow(BaseViewerWindow):
 
     def _log_pick_changed(self) -> None:
         """Console-log the pick state after each change."""
-        n = len(self._picker._picks)
+        tags = self._picker.tags
+        n = len(tags)
         if n == 0:
             self.log("Selection cleared")
         else:
-            last = self._picker._picks[-1] if self._picker._picks else None
+            last = tags[-1] if tags else None
             self.log(f"Picks: {n} total (last: {last})")
 
 

@@ -330,6 +330,93 @@ class SelectionPicker(BaseViewer):
                 continue
             _write_physical_group(gname, members)
 
+    # ------------------------------------------------------------------
+    # Selection state machine
+    # ------------------------------------------------------------------
+    # These methods encapsulate every pick-state transition.  The UI
+    # should call ONLY these — never mutate _picks / _active_group /
+    # _staged_groups / _pick_history directly.
+
+    def clear(self) -> None:
+        """Clear all picks and deactivate the active group."""
+        old = list(self._picks)
+        self._picks.clear()
+        self._pick_history.clear()
+        self._active_group = None
+        for dt in old:
+            self._recolor(dt)
+        self._update_status()
+        self._fire_pick_changed()
+
+    def apply_group(self, name: str) -> None:
+        """Stage the current picks as *name* and set it as active."""
+        self._staged_groups[name] = list(self._picks)
+        self._active_group = name
+        self._fire_pick_changed()
+
+    def revert(self) -> bool:
+        """Revert to the last-applied group members.
+
+        Returns ``True`` if the revert changed something (there were
+        uncommitted edits).  Returns ``False`` if there's nothing to
+        revert (no active group, or picks already match the applied
+        state) — the caller can then decide to ``clear()`` instead.
+        """
+        if not self._active_group:
+            return False
+        saved = self._staged_groups.get(self._active_group)
+        if not saved or self._picks == list(saved):
+            return False
+        old = list(self._picks)
+        self._picks = list(saved)
+        self._pick_history = list(saved)
+        for dt in set(old) ^ set(self._picks):
+            self._recolor(dt)
+        self._update_status()
+        self._fire_pick_changed()
+        return True
+
+    def rename_group(self, old_name: str, new_name: str) -> None:
+        """Rename a staged group.  Keeps current picks if it's active."""
+        members = self._staged_groups.pop(old_name, [])
+        if not members:
+            members = _load_physical_group_members(old_name)
+        self._staged_groups[new_name] = members
+        # Mark old name for deletion on flush
+        self._staged_groups[old_name] = []
+        if self._active_group == old_name:
+            self._active_group = new_name
+
+    def delete_group(self, name: str) -> None:
+        """Mark a group for deletion.  Clears picks if it was active."""
+        self._staged_groups[name] = []
+        if self._active_group == name:
+            self.clear()
+
+    def group_exists(self, name: str) -> bool:
+        """Check whether *name* is already taken (staged or in Gmsh)."""
+        if name in self._staged_groups and self._staged_groups[name]:
+            return True
+        for d, pg_tag in gmsh.model.getPhysicalGroups():
+            try:
+                if gmsh.model.getPhysicalName(d, pg_tag) == name:
+                    return True
+            except Exception:
+                pass
+        return False
+
+    @property
+    def is_editing(self) -> bool:
+        """True when a group is set as the active editing target."""
+        return self._active_group is not None
+
+    @property
+    def staged_groups(self) -> dict[str, list[DimTag]]:
+        """Snapshot of all staged groups (read-only copy)."""
+        return dict(self._staged_groups)
+
+    # ------------------------------------------------------------------
+
     def to_physical(self, name: str | None = None) -> int | None:
         """
         Write the current picks as a Gmsh physical group.
@@ -353,7 +440,6 @@ class SelectionPicker(BaseViewer):
         for d, t in self._picks:
             by_dim.setdefault(d, []).append(t)
 
-        _suffix = {0: "p", 1: "c", 2: "s", 3: "v"}
         if len(by_dim) == 1:
             d = next(iter(by_dim))
             pg = gmsh.model.addPhysicalGroup(d, by_dim[d])
@@ -362,7 +448,7 @@ class SelectionPicker(BaseViewer):
 
         last_pg = None
         for d, ts in by_dim.items():
-            full = f"{group_name}_{_suffix[d]}"
+            full = f"{group_name}{_SUFFIX_BY_DIM[d]}"
             last_pg = gmsh.model.addPhysicalGroup(d, ts)
             gmsh.model.setPhysicalName(d, last_pg, full)
         return last_pg
@@ -756,6 +842,20 @@ class SelectionPicker(BaseViewer):
         """Ctrl+drag counterpart to ``_do_box_select``: REMOVES every
         currently-picked entity whose projected centroid falls inside
         the rubber-band rectangle."""
+        # DPI scaling (same as _do_box_select)
+        try:
+            rw = self._plotter.render_window
+            vw, vh = rw.GetSize()
+            aw, ah = rw.GetActualSize()
+            sx_ratio = aw / vw if vw else 1.0
+            sy_ratio = ah / vh if vh else 1.0
+        except Exception:
+            sx_ratio = sy_ratio = 1.0
+        bx0 = x0 * sx_ratio
+        bx1 = x1 * sx_ratio
+        by0 = y0 * sy_ratio
+        by1 = y1 * sy_ratio
+
         removed = 0
         for dt in list(self._picks):
             actor = self._id_to_actor.get(dt)
@@ -765,7 +865,7 @@ class SelectionPicker(BaseViewer):
             if pt is None:
                 continue
             sx, sy = pt
-            hit = x0 <= sx <= x1 and y0 <= sy <= y1
+            hit = bx0 <= sx <= bx1 and by0 <= sy <= by1
             if hit:
                 self._picks.remove(dt)
                 self._pick_history = [

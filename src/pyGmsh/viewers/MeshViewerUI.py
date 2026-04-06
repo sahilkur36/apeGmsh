@@ -93,9 +93,8 @@ class MeshViewerWindow(BaseViewerWindow):
         # base observer callbacks.
         super().__init__(viewer, title=title, maximized=maximized)
 
-        # Wire mesh-specific callbacks
+        # Wire mesh-specific callbacks (info dock refreshes on pick, not hover)
         viewer._on_pick_changed.append(self._refresh_info_dock)
-        viewer._on_hover_changed.append(self._refresh_info_dock)
 
         # Populate the mesh browser tree after the window is built.
         self._populate_mesh_browser()
@@ -252,8 +251,9 @@ class MeshViewerWindow(BaseViewerWindow):
     # ------------------------------------------------------------------
 
     def _on_hover_changed_ui(self) -> None:
-        """Called when the hover entity changes -- refresh the info dock."""
-        self._refresh_info_dock()
+        """Called when the hover entity changes.
+        Skip expensive info refresh on hover — only update on pick."""
+        pass
 
     # ------------------------------------------------------------------
     # Help rows
@@ -786,17 +786,53 @@ class MeshViewerWindow(BaseViewerWindow):
         tree.resizeColumnToContents(1)
 
     def _refresh_info_mesh_level(self, tree, v) -> None:
-        """Populate info tree for mesh-level (node) picking."""
+        """Populate info tree for mesh-level picking."""
         QtWidgets = self._QtWidgets
 
-        selected_nodes = getattr(v, "_selected_nodes", [])
-        if not selected_nodes:
-            QtWidgets.QTreeWidgetItem(tree, ["(no node selected)", ""])
+        # Show selected elements first
+        selected_elems = getattr(v, "_selected_elems", [])
+        if selected_elems:
+            elem_tag = selected_elems[-1]
+            elem_data = getattr(v, "_elem_data", {})
+            info = elem_data.get(elem_tag, {})
+            QtWidgets.QTreeWidgetItem(tree, ["Element tag", str(elem_tag)])
+            QtWidgets.QTreeWidgetItem(
+                tree, ["Type", info.get("type_name", "unknown")],
+            )
+            brep_dt = info.get("brep_dt")
+            if brep_dt:
+                QtWidgets.QTreeWidgetItem(
+                    tree, ["BRep entity", f"({brep_dt[0]}, {brep_dt[1]})"],
+                )
+                gname = getattr(v, "_brep_to_group", {}).get(brep_dt, "")
+                if gname:
+                    QtWidgets.QTreeWidgetItem(tree, ["Physical group", gname])
+            nodes = info.get("nodes", [])
+            if nodes:
+                nodes_item = QtWidgets.QTreeWidgetItem(
+                    tree, ["Nodes", f"{len(nodes)} node(s)"],
+                )
+                for nt in nodes:
+                    node_coords = getattr(v, "_node_coords", None)
+                    node_tag_to_idx = getattr(v, "_node_tag_to_idx", {})
+                    idx = node_tag_to_idx.get(nt)
+                    if idx is not None and node_coords is not None:
+                        c = node_coords[idx]
+                        QtWidgets.QTreeWidgetItem(
+                            nodes_item,
+                            [f"N{nt}", f"({c[0]:.4g}, {c[1]:.4g}, {c[2]:.4g})"],
+                        )
+                    else:
+                        QtWidgets.QTreeWidgetItem(nodes_item, [f"N{nt}", ""])
             return
 
-        # Show the last selected node's details
-        node_tag = selected_nodes[-1]
+        # Fall back to node info
+        selected_nodes = getattr(v, "_selected_nodes", [])
+        if not selected_nodes:
+            QtWidgets.QTreeWidgetItem(tree, ["(no selection)", ""])
+            return
 
+        node_tag = selected_nodes[-1]
         QtWidgets.QTreeWidgetItem(tree, ["Node tag", str(node_tag)])
 
         # Coordinates
@@ -814,75 +850,56 @@ class MeshViewerWindow(BaseViewerWindow):
                 tree, ["Coordinates", "(unavailable)"],
             )
 
-        # Connected elements
-        try:
-            elem_types, elem_tags, _ = gmsh.model.mesh.getElements()
-            connected = []
-            for i, et in enumerate(elem_types):
-                props = gmsh.model.mesh.getElementProperties(et)
-                npe = props[3]
-                _, all_node_tags = gmsh.model.mesh.getElementsByType(et)
-                for e_idx in range(len(all_node_tags) // npe):
-                    e_nodes = all_node_tags[e_idx * npe : (e_idx + 1) * npe]
-                    if node_tag in e_nodes:
-                        connected.append(int(elem_tags[i][e_idx]))
-            if connected:
-                conn_item = QtWidgets.QTreeWidgetItem(
-                    tree,
-                    ["Connected elements", f"{len(connected)} element(s)"],
-                )
-                for eid in connected[:20]:  # cap display at 20
-                    QtWidgets.QTreeWidgetItem(
-                        conn_item, [f"Elem {eid}", ""],
-                    )
-                if len(connected) > 20:
-                    QtWidgets.QTreeWidgetItem(
-                        conn_item, [f"... +{len(connected) - 20} more", ""],
-                    )
-            else:
+        # Connected elements — use cached _elem_data (fast lookup)
+        elem_data = getattr(v, "_elem_data", {})
+        connected = [
+            etag for etag, info in elem_data.items()
+            if node_tag in info.get("nodes", [])
+        ]
+        if connected:
+            conn_item = QtWidgets.QTreeWidgetItem(
+                tree,
+                ["Connected elements", f"{len(connected)} element(s)"],
+            )
+            for eid in connected[:20]:
+                info = elem_data.get(eid, {})
+                etype = info.get("type_name", "")
                 QtWidgets.QTreeWidgetItem(
-                    tree, ["Connected elements", "none"],
+                    conn_item, [f"Elem {eid}", etype],
                 )
-        except Exception:
+            if len(connected) > 20:
+                QtWidgets.QTreeWidgetItem(
+                    conn_item, [f"... +{len(connected) - 20} more", ""],
+                )
+        else:
             QtWidgets.QTreeWidgetItem(
-                tree, ["Connected elements", "(error)"],
+                tree, ["Connected elements", "none"],
             )
 
-        # Physical group membership
-        try:
-            phys_groups = gmsh.model.getPhysicalGroups()
-            memberships: list[str] = []
-            # Determine which entity owns this node
-            for dim, tag in gmsh.model.getEntities():
-                try:
-                    node_tags_ent, _, _ = gmsh.model.mesh.getNodes(dim, tag)
-                    if node_tag in node_tags_ent:
-                        for pdim, ptag in phys_groups:
-                            if pdim == dim:
-                                ents = gmsh.model.getEntitiesForPhysicalGroup(
-                                    pdim, ptag,
-                                )
-                                if tag in ents:
-                                    name = gmsh.model.getPhysicalName(
-                                        pdim, ptag,
-                                    )
-                                    label = name if name else f"({pdim},{ptag})"
-                                    memberships.append(label)
-                except Exception:
-                    pass
-            if memberships:
-                pg_item = QtWidgets.QTreeWidgetItem(
-                    tree,
-                    ["Physical groups", f"{len(memberships)} group(s)"],
-                )
-                for m in memberships:
-                    QtWidgets.QTreeWidgetItem(pg_item, [m, ""])
-            else:
-                QtWidgets.QTreeWidgetItem(
-                    tree, ["Physical groups", "none"],
-                )
-        except Exception:
-            pass
+        # Physical group membership — use cached mappings
+        brep_to_group = getattr(v, "_brep_to_group", {})
+        elem_to_brep = getattr(v, "_elem_to_brep", {})
+        memberships: list[str] = []
+        # Find groups via connected elements' parent BRep
+        seen_groups: set[str] = set()
+        for etag in connected:
+            brep_dt = elem_to_brep.get(etag)
+            if brep_dt is not None:
+                gname = brep_to_group.get(brep_dt)
+                if gname and gname not in seen_groups:
+                    seen_groups.add(gname)
+                    memberships.append(gname)
+        if memberships:
+            pg_item = QtWidgets.QTreeWidgetItem(
+                tree,
+                ["Physical groups", f"{len(memberships)} group(s)"],
+            )
+            for m in memberships:
+                QtWidgets.QTreeWidgetItem(pg_item, [m, ""])
+        else:
+            QtWidgets.QTreeWidgetItem(
+                tree, ["Physical groups", "none"],
+            )
 
     def _refresh_info_brep_level(self, tree, v) -> None:
         """Populate info tree for BRep-level (patch) picking."""
