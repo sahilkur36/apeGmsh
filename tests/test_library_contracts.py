@@ -72,14 +72,14 @@ class LibraryContractTests(unittest.TestCase):
         fake_g2o.msh2ops = lambda path: calls.append(path)
         sys.modules["gmsh2opensees"] = fake_g2o
 
-        mod = importlib.import_module("pyGmsh.Gmsh2OpenSees")
-        wrapper = mod.Gmsh2OpenSees(types.SimpleNamespace(_active=True))
+        mod = importlib.import_module("pyGmsh.solvers.Gmsh2OpenSees")
+        wrapper = mod.Gmsh2OpenSees(types.SimpleNamespace(is_active=True, _verbose=False))
         wrapper.transfer()
 
         self.assertEqual(calls, ["gmsh2ops"])
 
     def test_equal_dof_uses_instance_scope_without_manual_maps(self) -> None:
-        mod = importlib.import_module("pyGmsh.Assembly")
+        mod = importlib.import_module("pyGmsh.core.Assembly")
         asm = mod.Assembly("demo")
         asm.instances = {
             "left": mod.Instance(
@@ -113,7 +113,7 @@ class LibraryContractTests(unittest.TestCase):
         self.assertEqual(pairs, [(2, 3)])
 
     def test_rigid_body_master_is_chosen_from_master_instance(self) -> None:
-        mod = importlib.import_module("pyGmsh.Assembly")
+        mod = importlib.import_module("pyGmsh.core.Assembly")
         asm = mod.Assembly("demo")
         asm.instances = {
             "master": mod.Instance(
@@ -146,7 +146,7 @@ class LibraryContractTests(unittest.TestCase):
         self.assertEqual(records[0].master_node, 1)
 
     def test_public_constraint_api_accepts_entity_filters(self) -> None:
-        mod = importlib.import_module("pyGmsh.Assembly")
+        mod = importlib.import_module("pyGmsh.core.Assembly")
         asm = mod.Assembly("demo")
         asm.instances = {
             "solid": mod.Instance(

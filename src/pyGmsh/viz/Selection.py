@@ -37,8 +37,8 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
-    from pyGmsh.Model import Model
+    from pyGmsh._session import _SessionBase
+    from pyGmsh.core.Model import Model
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ class Selection:
     def __init__(
         self,
         dimtags : Iterable[DimTag],
-        parent  : pyGmsh,
+        parent: _SessionBase,
     ) -> None:
         # Deduplicate while preserving order
         seen: set[DimTag] = set()
@@ -343,7 +343,7 @@ class SelectionComposite:
     the synced kernel state.
     """
 
-    def __init__(self, parent: pyGmsh, model: Model) -> None:
+    def __init__(self, parent: _SessionBase, model: Model) -> None:
         self._parent = parent
         self._model  = model
 
@@ -433,7 +433,7 @@ class SelectionComposite:
         SelectionPicker — with ``.selection``, ``.tags``,
         ``.active_group``, and ``.to_physical(name)`` available after close.
         """
-        from pyGmsh.SelectionPicker import SelectionPicker
+        from pyGmsh.viewers.SelectionPicker import SelectionPicker
         p = SelectionPicker(
             parent=self._parent, model=self._model,
             physical_group=physical_group, dims=dims, **kwargs,
@@ -579,7 +579,7 @@ def _apply_filters(
     dimtags : list[DimTag],
     *,
     dim     : int,
-    parent  : pyGmsh,
+    parent: _SessionBase,
     # — filters —
     tags           : Sequence[Tag] | None = None,
     exclude_tags   : Sequence[Tag] | None = None,
@@ -671,7 +671,7 @@ def _apply_filters(
     # ---- spatial: at_point -------------------------------------------
     if at_point is not None:
         px, py, pz, atol = at_point
-        q = np.array([px, py, pz])
+        np.array([px, py, pz])
         def _at_point(dt: DimTag) -> bool:
             x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(*dt)
             return (x0 - atol <= px <= x1 + atol and

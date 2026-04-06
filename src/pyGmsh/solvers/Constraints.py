@@ -66,9 +66,8 @@ where C is the constraint transformation matrix.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
-from typing import Any, Sequence
+from typing import Sequence
 
 import numpy as np
 from numpy import ndarray

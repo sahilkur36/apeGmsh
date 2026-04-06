@@ -54,7 +54,6 @@ Design notes
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
@@ -62,7 +61,7 @@ from typing import Any, TYPE_CHECKING
 import gmsh
 import numpy as np
 
-from ._optional import MissingOptionalDependency
+from .._session import _SessionBase
 
 if TYPE_CHECKING:
     from .Part import Part
@@ -97,7 +96,7 @@ class Instance:
     bbox: tuple[float, float, float, float, float, float] | None = None
 
 
-from .Constraints import (
+from ..solvers.Constraints import (
     ConstraintDef, ConstraintRecord, ConstraintResolver,
     # Level 1
     EqualDOFDef, RigidLinkDef, PenaltyDef,
@@ -114,7 +113,7 @@ from .Constraints import (
 # Assembly class
 # ======================================================================
 
-class Assembly:
+class Assembly(_SessionBase):
     """
     Multi-part assembly manager.
 
@@ -124,10 +123,19 @@ class Assembly:
         Assembly name (used as the Gmsh model name).
     """
 
+    _COMPOSITES = (
+        ("inspect",   ".viz.Inspect",           "Inspect",        False),
+        ("model",     ".core.Model",            "Model",          False),
+        ("mesh",      ".mesh.Mesh",             "Mesh",           False),
+        ("physical",  ".mesh.PhysicalGroups",   "PhysicalGroups", False),
+        ("partition", ".mesh.Partition",        "Partition",      False),
+        ("view",      ".mesh.View",             "View",           False),
+        ("g2o",       ".solvers.Gmsh2OpenSees", "Gmsh2OpenSees",  False),
+        ("plot",      ".viz.Plot",              "Plot",           True),
+    )
+
     def __init__(self, name: str = "Assembly") -> None:
-        self.name: str = name
-        self._verbose: bool = False
-        self._active: bool = False
+        super().__init__(name=name, verbose=False)
 
         # Instance storage (insertion order preserved)
         self.instances: dict[str, Instance] = {}
@@ -137,25 +145,6 @@ class Assembly:
         self.constraint_defs: list[ConstraintDef] = []
         # Resolved records (post-mesh, populated by resolve_constraints)
         self.constraint_records: list[ConstraintRecord] = []
-
-        # Composites — created in begin(), None until then
-        self.mesh:      "Mesh | None"           = None
-        self.physical:  "PhysicalGroups | None"  = None
-        self.view:      "View | None"            = None
-        self.plot:      "Plot | None"            = None
-        self.inspect:   "Inspect | None"         = None
-        self.model:     "Model | None"           = None
-        self.g2o:       "Gmsh2OpenSees | None"   = None
-        self.partition: "Partition | None"        = None
-
-    # ------------------------------------------------------------------
-    # Composite parent interface (required by all composites)
-    # ------------------------------------------------------------------
-
-    @property
-    def model_name(self) -> str:
-        """Composites access ``self._parent.model_name``."""
-        return self.name
 
     @staticmethod
     def _compute_bbox(
@@ -337,72 +326,6 @@ class Assembly:
         if selected_entities is not None:
             return self._collect_surface_faces(selected_entities)
         return instance_face_map.get(label, np.empty((0, 0), dtype=int))
-
-    # ------------------------------------------------------------------
-    # Session lifecycle
-    # ------------------------------------------------------------------
-
-    def begin(self, *, verbose: bool = False) -> "Assembly":
-        """
-        Open a fresh Gmsh session for the assembly.
-
-        Creates all composites directly — no intermediate pyGmsh
-        wrapper.  Returns ``self`` for chaining.
-        """
-        if self._active:
-            raise RuntimeError(f"Assembly '{self.name}' session is already open.")
-
-        from .Inspect        import Inspect
-        from .Model          import Model
-        from .Mesh           import Mesh
-        from .PhysicalGroups import PhysicalGroups
-        from .Partition      import Partition
-        from .View           import View
-        from .Gmsh2OpenSees  import Gmsh2OpenSees
-
-        self._verbose = verbose
-
-        gmsh.initialize()
-        gmsh.model.add(self.name)
-
-        if verbose:
-            print(f"Gmsh version: {gmsh.__version__}")
-
-        # Create composites — each receives `self` as parent
-        self.inspect   = Inspect(self)
-        self.model     = Model(self)
-        self.mesh      = Mesh(self)
-        self.physical  = PhysicalGroups(self)
-        self.partition = Partition(self)
-        self.view      = View(self)
-        self.g2o       = Gmsh2OpenSees(self)
-
-        try:
-            from .Plot import Plot
-            self.plot = Plot(self)
-        except ImportError as exc:
-            self.plot = MissingOptionalDependency(
-                "Plotting support",
-                "matplotlib",
-                extra="plot",
-                cause=exc,
-            )
-
-        self._active = True
-        return self
-
-    def end(self) -> None:
-        """Close the assembly's Gmsh session."""
-        if self._active:
-            gmsh.finalize()
-            self._active = False
-
-    def __enter__(self) -> "Assembly":
-        return self.begin()
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        self.end()
-        return False
 
     # ------------------------------------------------------------------
     # Instance management

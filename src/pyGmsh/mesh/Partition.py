@@ -4,11 +4,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import gmsh
-import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
+    from pyGmsh._session import _SessionBase
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -55,11 +54,11 @@ class Partition:
 
     Parameters
     ----------
-    parent : pyGmsh
+    parent : _SessionBase
         The owning instance.
     """
 
-    def __init__(self, parent: pyGmsh) -> None:
+    def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
 
     # ------------------------------------------------------------------

@@ -10,7 +10,7 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
+    from pyGmsh._session import _SessionBase
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -347,11 +347,11 @@ class OpenSees:
 
     Parameters
     ----------
-    parent : pyGmsh
+    parent : _SessionBase
         The owning instance.
     """
 
-    def __init__(self, parent: pyGmsh) -> None:
+    def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
         self._ndm: int = 3
         self._ndf: int = 3

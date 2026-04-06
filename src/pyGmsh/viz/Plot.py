@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import gmsh
@@ -13,7 +12,7 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 from numpy import ndarray
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
+    from pyGmsh._session import _SessionBase
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -65,7 +64,7 @@ class Plot:
 
     Parameters
     ----------
-    parent : pyGmsh
+    parent : _SessionBase
         The owning instance — used for ``model_name`` and ``_verbose``.
     """
 
@@ -75,7 +74,7 @@ class Plot:
     COLOR_SURFACES = '#5B8DB8'
     COLOR_MESH     = '#3A7CB8'
 
-    def __init__(self, parent: pyGmsh) -> None:
+    def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
         self._fig: plt.Figure | None = None
         self._ax:  Axes3D | None     = None

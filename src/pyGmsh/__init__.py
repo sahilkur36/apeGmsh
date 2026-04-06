@@ -31,16 +31,21 @@ Two usage modes:
        asm.end()
 """
 
+from pyGmsh._session import _SessionBase
 from pyGmsh._core import pyGmsh
-from pyGmsh.Part import Part
-from pyGmsh.Assembly import Assembly
-from pyGmsh.Numberer import Numberer, NumberedMesh
-from pyGmsh.Selection import Selection, SelectionComposite
-from pyGmsh.SelectionPicker import SelectionPicker
-from pyGmsh.SelectionPickerUI import SelectionPickerWindow
-import pyGmsh.Constraints as Constraints
+from pyGmsh.core.Part import Part
+from pyGmsh.core.Assembly import Assembly
+from pyGmsh.solvers.Numberer import Numberer, NumberedMesh
+from pyGmsh.viz.Selection import Selection, SelectionComposite
+from pyGmsh.viewers.BaseViewer import BaseViewer
+from pyGmsh.viewers.SelectionPicker import SelectionPicker
+from pyGmsh.viewers.SelectionPickerUI import SelectionPickerWindow
+from pyGmsh.viewers.MeshViewer import MeshViewer
+from pyGmsh.viewers.MeshViewerUI import MeshViewerWindow
+import pyGmsh.solvers.Constraints as Constraints
 
 __all__ = [
+    "_SessionBase",
     "pyGmsh",
     "Part",
     "Assembly",
@@ -48,7 +53,10 @@ __all__ = [
     "NumberedMesh",
     "Selection",
     "SelectionComposite",
+    "BaseViewer",
     "SelectionPicker",
     "SelectionPickerWindow",
+    "MeshViewer",
+    "MeshViewerWindow",
     "Constraints",
 ]

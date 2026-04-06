@@ -7,7 +7,7 @@ import numpy as np
 from numpy import ndarray
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
+    from pyGmsh._session import _SessionBase
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -39,11 +39,11 @@ class View:
 
     Parameters
     ----------
-    parent : pyGmsh
+    parent : _SessionBase
         Owning instance — used for ``model_name`` and ``_verbose``.
     """
 
-    def __init__(self, parent: pyGmsh) -> None:
+    def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
         self._views: dict[Tag, str] = {}          # view_tag → name
 

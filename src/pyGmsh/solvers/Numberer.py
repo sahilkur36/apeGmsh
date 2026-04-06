@@ -47,7 +47,6 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Any
 
 import numpy as np
 from numpy import ndarray
@@ -405,9 +404,9 @@ class Numberer:
         inv_perm[perm] = np.arange(n_nodes)
 
         # ── Apply permutation ─────────────────────────────────────
-        new_node_ids = inv_perm + base              # contiguous IDs
+        inv_perm + base              # contiguous IDs
         new_coords   = coords[perm]                 # reordered coords
-        new_gmsh_order = gmsh_tags[perm]            # Gmsh tags in new order
+        gmsh_tags[perm]            # Gmsh tags in new order
 
         # Rewrite connectivity with new IDs
         new_conn = np.zeros_like(conn_tmp)

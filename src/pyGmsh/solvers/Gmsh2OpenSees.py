@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
+    from pyGmsh._session import _SessionBase
 
 
 # ---------------------------------------------------------------------------
@@ -82,18 +82,12 @@ class Gmsh2OpenSees:
     # ------------------------------------------------------------------
     # Constructor
     # ------------------------------------------------------------------
-    def __init__(self, ctx: pyGmsh) -> None:
-        self._ctx = ctx
+    def __init__(self, parent: "_SessionBase") -> None:
+        self._parent = parent
 
     def _is_session_active(self) -> bool:
-        """Support both standalone pyGmsh and Assembly/Part style contexts."""
-        if hasattr(self._ctx, "is_active"):
-            return bool(self._ctx.is_active)
-        if hasattr(self._ctx, "_initialized"):
-            return bool(self._ctx._initialized)
-        if hasattr(self._ctx, "_active"):
-            return bool(self._ctx._active)
-        return False
+        """Check whether the owning session is open."""
+        return self._parent.is_active
 
     # ------------------------------------------------------------------
     # Availability check

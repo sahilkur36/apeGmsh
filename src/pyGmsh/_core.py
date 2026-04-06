@@ -1,82 +1,81 @@
 from __future__ import annotations
-from pathlib import Path
 
-import gmsh
-from ._optional      import MissingOptionalDependency
+from ._session import _SessionBase
 
 
-class pyGmsh:
-    def __init__(self,
-                 *,
-                 model_name: str = "ModelName",
-                 verbose: bool = False) -> None:
-        from .Inspect        import Inspect
-        from .Model          import Model
-        from .Mesh           import Mesh
-        from .PhysicalGroups import PhysicalGroups
-        from .Partition      import Partition
-        from .View           import View
-        from .Gmsh2OpenSees  import Gmsh2OpenSees
-        from .OpenSees       import OpenSees
+class pyGmsh(_SessionBase):
+    """Standalone single-model Gmsh session with all composites.
 
-        self.model_name = model_name
-        self._verbose = verbose
-        self._initialized: bool = False
-        self.inspect   = Inspect(self)
-        self.model     = Model(self)
-        self.mesh      = Mesh(self)
-        self.physical  = PhysicalGroups(self)
-        self.partition = Partition(self)
-        self.view      = View(self)
-        self.g2o       = Gmsh2OpenSees(self)
-        self.opensees  = OpenSees(self)
+    Parameters
+    ----------
+    model_name : str
+        Name passed to ``gmsh.model.add()``.
+    verbose : bool
+        If True, composites print diagnostic messages.
+    """
 
-        try:
-            from .Plot import Plot
-            self.plot = Plot(self)
-        except ImportError as exc:
-            self.plot = MissingOptionalDependency(
-                "Plotting support",
-                "matplotlib",
-                extra="plot",
-                cause=exc,
-            )
+    _COMPOSITES = (
+        ("inspect",   ".viz.Inspect",           "Inspect",        False),
+        ("model",     ".core.Model",            "Model",          False),
+        ("mesh",      ".mesh.Mesh",             "Mesh",           False),
+        ("physical",  ".mesh.PhysicalGroups",   "PhysicalGroups", False),
+        ("partition", ".mesh.Partition",        "Partition",      False),
+        ("view",      ".mesh.View",             "View",           False),
+        ("g2o",       ".solvers.Gmsh2OpenSees", "Gmsh2OpenSees",  False),
+        ("opensees",  ".solvers.OpenSees",      "OpenSees",       False),
+        ("plot",      ".viz.Plot",              "Plot",           True),
+    )
 
-    def __enter__(self) -> pyGmsh:
-        if self._initialized:
-            return self
-        gmsh.initialize()
-        gmsh.model.add(self.model_name)
-        self._initialized = True
-        if self._verbose:
-            print(f"Gmsh version: {gmsh.__version__}")
-        return self
+    def __init__(
+        self,
+        *,
+        model_name: str = "ModelName",
+        verbose: bool = False,
+    ) -> None:
+        super().__init__(name=model_name, verbose=verbose)
 
-    def initialize(self) -> pyGmsh:
-        return self.__enter__()
+    # ------------------------------------------------------------------
+    # model_name setter (backward compat: g.model_name = "foo")
+    # ------------------------------------------------------------------
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        if self._initialized:
-            gmsh.finalize()
-            self._initialized = False
-        return False  # Do not suppress exceptions
+    @_SessionBase.model_name.getter
+    def model_name(self) -> str:
+        return self.name
 
-    def finalize(self) -> None:
-        """Manual finalize, in case context manager is not used."""
-        if self._initialized:
-            gmsh.finalize()
-            self._initialized = False
+    @model_name.setter
+    def model_name(self, value: str) -> None:
+        self.name = value
+
+    # ------------------------------------------------------------------
+    # Backward-compatible aliases
+    # ------------------------------------------------------------------
 
     @property
-    def is_active(self) -> bool:
-        """Return True when the wrapped Gmsh session is open."""
-        return self._initialized
+    def _initialized(self) -> bool:
+        """Legacy alias — use ``is_active`` instead."""
+        return self._active
+
+    @_initialized.setter
+    def _initialized(self, value: bool) -> None:
+        self._active = value
+
+    def initialize(self) -> "pyGmsh":
+        """Alias for ``begin()``."""
+        return self.begin()
+
+    def finalize(self) -> None:
+        """Alias for ``end()``."""
+        self.end()
+
+    # ------------------------------------------------------------------
+    # Convenience delegates
+    # ------------------------------------------------------------------
 
     def remove_duplicates(
         self,
         *,
         tolerance: float | None = None,
-        sync     : bool         = True,
+        sync: bool = True,
     ) -> None:
         """Delegate to ``self.model.remove_duplicates()``."""
         self.model.remove_duplicates(tolerance=tolerance, sync=sync)
@@ -84,12 +83,9 @@ class pyGmsh:
     def make_conformal(
         self,
         *,
-        dims     : list[int] | None = None,
-        tolerance: float | None     = None,
-        sync     : bool             = True,
+        dims: list[int] | None = None,
+        tolerance: float | None = None,
+        sync: bool = True,
     ) -> None:
         """Delegate to ``self.model.make_conformal()``."""
         self.model.make_conformal(dims=dims, tolerance=tolerance, sync=sync)
-
-
-

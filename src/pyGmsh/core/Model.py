@@ -9,7 +9,7 @@ import pandas as pd
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
+    from pyGmsh._session import _SessionBase
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -62,16 +62,16 @@ class Model:
 
     Parameters
     ----------
-    parent : pyGmsh
+    parent : _SessionBase
         Owning instance — used to read ``_verbose``.
     """
 
-    def __init__(self, parent: pyGmsh) -> None:
+    def __init__(self, parent: _SessionBase) -> None:
         self._parent   = parent
         # (dim, tag) → {label, kind}
         self._registry : dict[DimTag, dict] = {}
         # Entity-selection sub-composite (model.selection.select_points(...))
-        from pyGmsh.Selection import SelectionComposite
+        from pyGmsh.viz.Selection import SelectionComposite
         self.selection = SelectionComposite(parent=parent, model=self)
 
     # ------------------------------------------------------------------

@@ -6,7 +6,7 @@ import gmsh
 import pandas as pd
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
+    from pyGmsh._session import _SessionBase
 
 # ---------------------------------------------------------------------------
 # Type aliases
@@ -51,11 +51,11 @@ class PhysicalGroups:
 
     Parameters
     ----------
-    parent : pyGmsh
+    parent : _SessionBase
         The owning instance — used for ``_verbose``.
     """
 
-    def __init__(self, parent: pyGmsh) -> None:
+    def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
 
     # ------------------------------------------------------------------
@@ -96,7 +96,7 @@ class PhysicalGroups:
         pg_tag = gmsh.model.addPhysicalGroup(dim, tags, tag=tag)
         if name:
             gmsh.model.setPhysicalName(dim, pg_tag, name)
-        label = f"{_DIM_LABEL.get(dim, str(dim))} {tags}"
+        f"{_DIM_LABEL.get(dim, str(dim))} {tags}"
         self._log(
             f"add(dim={dim}, entities={tags}) → pg_tag={pg_tag}"
             + (f", name={name!r}" if name else "")

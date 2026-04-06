@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
+    pass
 
 # ---------------------------------------------------------------------------
 # VTK cell type codes (subset relevant to structural FEM)
@@ -398,8 +398,8 @@ class VTKExport:
             steps.append({
                 "time": freq,
                 "point_data": {
-                    f"ModeShape": phi3,
-                    f"Magnitude": mag,
+                    "ModeShape": phi3,
+                    "Magnitude": mag,
                 },
             })
 

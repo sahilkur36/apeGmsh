@@ -2,16 +2,14 @@ from __future__ import annotations
 
 import math
 from enum import IntEnum
-from pathlib import Path
 from typing import Callable, TYPE_CHECKING
 
 import gmsh
 import numpy as np
-import pandas as pd
 from numpy import ndarray
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
+    from pyGmsh._session import _SessionBase
 
 # ---------------------------------------------------------------------------
 # Type aliases  (mirror Model.py for consistency)
@@ -372,11 +370,11 @@ class Mesh:
 
     Parameters
     ----------
-    parent : pyGmsh
+    parent : _SessionBase
         Owning instance — used to read ``_verbose``.
     """
 
-    def __init__(self, parent: pyGmsh) -> None:
+    def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
         self.field   = FieldHelper(self)
 
@@ -1538,7 +1536,7 @@ class Mesh:
             # Post-processing: solver ID → Gmsh tag
             gmsh_tag = mesh.solver_to_gmsh_node[42]
         """
-        from .Numberer import Numberer
+        from ..solvers.Numberer import Numberer
         fem = self.get_fem_data(dim=dim)
         numb = Numberer(fem)
         result = numb.renumber(method=method, base=base)
@@ -1569,4 +1567,21 @@ class Mesh:
         tags = list(element_tags) if not isinstance(element_tags, list) else element_tags
         q = gmsh.model.mesh.getElementQualities(tags, qualityName=quality_name)
         return np.asarray(q)
+
+    # ------------------------------------------------------------------
+    # Interactive mesh viewer
+    # ------------------------------------------------------------------
+
+    def viewer(self, **kwargs):
+        """Open the interactive mesh viewer.
+
+        The viewer supports dual-level picking (mesh nodes vs BRep patches),
+        color modes (partition, quality, element type, physical group),
+        node/element label overlays, renumbering, and selection sets.
+
+        Parameters are forwarded to :class:`MeshViewer`.
+        """
+        from ..viewers.MeshViewer import MeshViewer
+        mv = MeshViewer(self._parent, self, **kwargs)
+        return mv.show()
                  

@@ -77,8 +77,10 @@ from typing import Any
 
 import gmsh
 
+from .._session import _SessionBase
 
-class Part:
+
+class Part(_SessionBase):
     """
     An isolated geometry unit — no meshing, no physical groups.
 
@@ -91,79 +93,16 @@ class Part:
     # Supported CAD export extensions
     _VALID_EXT = {'.step', '.stp', '.iges', '.igs'}
 
+    _COMPOSITES = (
+        ("model",   ".Model",   "Model",   False),
+        ("inspect", ".viz.Inspect",   "Inspect", False),
+        ("plot",    ".viz.Plot",      "Plot",    True),
+    )
+
     def __init__(self, name: str) -> None:
-        self.name: str = name
-        self._verbose: bool = False
+        super().__init__(name=name, verbose=False)
         self.file_path: Path | None = None       # set by save()
         self.properties: dict[str, Any] = {}     # user metadata
-        self._active: bool = False
-
-        # Composites — created in begin(), None until then
-        self.model:   "Model | None"   = None
-        self.inspect: "Inspect | None" = None
-        self.plot:    "Plot | None"    = None
-
-    # ------------------------------------------------------------------
-    # Composite parent interface (required by all composites)
-    # ------------------------------------------------------------------
-
-    @property
-    def model_name(self) -> str:
-        """Composites access ``self._parent.model_name``."""
-        return self.name
-
-    # ------------------------------------------------------------------
-    # Session lifecycle
-    # ------------------------------------------------------------------
-
-    def begin(self, *, verbose: bool = False) -> "Part":
-        """
-        Open an isolated Gmsh session for this Part.
-
-        Only geometry composites (Model, Inspect) are created —
-        meshing, physical groups, etc. live in the Assembly.
-
-        Returns ``self`` so you can chain::
-
-            part = Part("web").begin()
-            part.model.add_point(0, 0, 0)
-        """
-        if self._active:
-            raise RuntimeError(f"Part '{self.name}' session is already open.")
-
-        from .Model   import Model
-        from .Inspect import Inspect
-        from .Plot    import Plot
-
-        self._verbose = verbose
-
-        gmsh.initialize()
-        gmsh.model.add(self.name)
-
-        if verbose:
-            print(f"Gmsh version: {gmsh.__version__}")
-
-        # Only geometry composites — Part is a modeler, not a mesher
-        self.model   = Model(self)
-        self.inspect = Inspect(self)
-        self.plot    = Plot(self)
-
-        self._active = True
-        return self
-
-    def end(self) -> None:
-        """Close the Gmsh session for this Part."""
-        if self._active:
-            gmsh.finalize()
-            self._active = False
-
-    # Context manager support
-    def __enter__(self) -> "Part":
-        return self.begin()
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
-        self.end()
-        return False
 
     # ------------------------------------------------------------------
     # Export
@@ -226,11 +165,6 @@ class Part:
     # ------------------------------------------------------------------
     # Convenience
     # ------------------------------------------------------------------
-
-    @property
-    def is_active(self) -> bool:
-        """True if the Gmsh session is currently open."""
-        return self._active
 
     @property
     def has_file(self) -> bool:

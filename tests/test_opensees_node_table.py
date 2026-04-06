@@ -29,7 +29,7 @@ class OpenSeesNodeTableTests(unittest.TestCase):
             sys.modules["gmsh"] = self._saved_gmsh
 
     def test_node_table_includes_fix_and_load_columns(self) -> None:
-        mod = __import__("pyGmsh.OpenSees", fromlist=["OpenSees"])
+        mod = __import__("pyGmsh.solvers.OpenSees", fromlist=["OpenSees"])
         bridge = mod.OpenSees(types.SimpleNamespace(_verbose=False, model_name="demo"))
         bridge._built = True
         bridge._ndf = 3

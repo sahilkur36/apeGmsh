@@ -1,5 +1,4 @@
 from __future__ import annotations
-from pathlib import Path
 
 import gmsh
 import numpy as np
@@ -9,7 +8,7 @@ from numpy import ndarray
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pyGmsh._core import pyGmsh
+    from pyGmsh._session import _SessionBase
 
 class Inspect:
     """
@@ -20,11 +19,11 @@ class Inspect:
 
     Parameters
     ----------
-    parent : pyGmsh
+    parent : _SessionBase
         The owning pyGmsh instance (provides ``_verbose``).
     """
 
-    def __init__(self, parent: pyGmsh) -> None:
+    def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
 
     # ------------------------------------------------------------------
