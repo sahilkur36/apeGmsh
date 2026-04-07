@@ -214,7 +214,7 @@ for i in range(mesh.n_nodes):
 ops.nDMaterial("ElasticIsotropic", 1, E, nu)
 
 for i in range(mesh.n_elems):
-    eid = int(mesh.elem_ids[i])
+    eid = int(mesh.element_ids[i])
     n1, n2, n3 = [int(n) for n in mesh.connectivity[i]]
     ops.element("tri31", eid, n1, n2, n3, thk, "PlaneStrain", 1)
 ```

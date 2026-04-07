@@ -33,3 +33,12 @@ pygmsh-viewer = "pyGmshViewer.__main__:main"
 [tool.setuptools.packages.find]
 where = ["src", "."]
 include = ["pyGmsh*", "pyGmshViewer*"]
+
+[tool.setuptools.package-data]
+pyGmsh = ["py.typed"]
+
+[tool.pyright]
+pythonVersion = "3.10"
+typeCheckingMode = "basic"
+reportMissingImports = true
+reportMissingTypeStubs = false

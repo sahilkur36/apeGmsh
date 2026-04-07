@@ -156,12 +156,12 @@ for i in range(mesh.n_nodes):
 ops.section('ElasticMembranePlateSection', 1, E, nu, b, 0.0)
 
 for i in range(mesh.n_elems):
-    eid = int(mesh.elem_ids[i])
+    eid = int(mesh.element_ids[i])
     conn = [int(n) for n in mesh.connectivity[i]]
     ops.element('ShellMITC4', eid, *conn, 1)
 
 max_solver_nid = int(mesh.node_ids.max())
-max_solver_eid = int(mesh.elem_ids.max())
+max_solver_eid = int(mesh.element_ids.max())
 
 # --- Frame nodes ---
 master_tag = max_solver_nid + 1

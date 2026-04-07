@@ -38,8 +38,9 @@ loop = g.model.add_curve_loop([l1, l2, l3, l4])
 surf = g.model.add_plane_surface(loop)
 
 g.mesh.generate(2)
-mesh = g.mesh.get_numbered_mesh(dim=2)
-print(mesh.summary())
+g.mesh.renumber_mesh(method="simple", base=1)
+fem = g.mesh.get_fem_data(dim=2)
+print(fem.summary())
 
 g.finalize()
 ```
@@ -71,9 +72,10 @@ asm.add_part(flange, label="bot_flange")
 
 asm.fragment_all()
 asm.mesh.generate(dim=2)
-mesh = asm.mesh.get_numbered_mesh(dim=2)
+asm.mesh.renumber_mesh(method="rcm", base=1)
+fem = asm.mesh.get_fem_data(dim=2)
 
-# mesh.node_ids, mesh.node_coords, mesh.connectivity → feed to any solver
+# fem.node_ids, fem.node_coords, fem.connectivity → feed to any solver
 asm.end()
 ```
 
@@ -100,14 +102,14 @@ The STEP file is the only contract between Part and Assembly -- they are fully d
 | `Partition`      | `.partition`     | Mesh partitioning                        |
 | `Gmsh2OpenSees`  | `.g2o`           | One-liner mesh transfer to OpenSees      |
 
-### Numberer
+### Renumbering & FEM Data
 
-The `Numberer` remaps non-contiguous Gmsh tags to contiguous 1-based solver IDs with bidirectional maps (`gmsh_to_solver_node`, `solver_to_gmsh_node`, etc.). Supports simple sequential numbering and RCM bandwidth optimisation.
+`renumber_mesh()` remaps non-contiguous Gmsh tags to contiguous 1-based solver IDs directly in the Gmsh model. After renumbering, `get_fem_data()` returns a `FEMData` object with solver-ready IDs, coordinates, and connectivity. Supports simple sequential numbering and RCM bandwidth optimisation.
 
 ```python
-mesh = g.mesh.get_numbered_mesh(dim=2, method="rcm")
-# mesh.node_ids, mesh.elem_ids, mesh.connectivity
-# mesh.gmsh_to_solver_node, mesh.solver_to_gmsh_node
+g.mesh.renumber_mesh(method="rcm", base=1)
+fem = g.mesh.get_fem_data(dim=2)
+# fem.node_ids, fem.element_ids, fem.node_coords, fem.connectivity
 ```
 
 ### Constraints

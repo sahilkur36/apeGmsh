@@ -137,10 +137,10 @@ class Inspect:
                         0.5 * (bounds[0][i] + bounds[1][i]) for i in range(2)
                     ]
 
-                    area          : float   = gmsh.model.occ.getMass(2, tag)
-                    center        : ndarray = np.array(gmsh.model.occ.getCenterOfMass(2, tag))
-                    normal        : ndarray = np.array(gmsh.model.getNormal(tag, u_mid_2d))
-                    curvature     : float   = gmsh.model.getCurvature(2, tag, u_mid_2d)
+                    area           = float(gmsh.model.occ.getMass(2, tag))
+                    center         = np.array(gmsh.model.occ.getCenterOfMass(2, tag))
+                    normal         = np.array(gmsh.model.getNormal(tag, u_mid_2d))
+                    curvature      = float(gmsh.model.getCurvature(2, tag, u_mid_2d))
                     k1, k2, d1, d2          = gmsh.model.getPrincipalCurvatures(tag, u_mid_2d)
 
                     entry['area']                 = area

@@ -353,10 +353,11 @@ class Mesh:
       ``remove_duplicate_nodes``, ``remove_duplicate_elements``,
       ``affine_transform``
     * **Partitioning**    — ``partition``, ``unpartition``,
-      ``compute_renumbering``, ``renumber_nodes``, ``renumber_elements``
+      ``compute_renumbering``, ``renumber_nodes``, ``renumber_elements``,
+      ``renumber_mesh``
     * **Queries**         — ``get_nodes``, ``get_elements``,
-      ``get_element_qualities``, ``get_element_properties``,
-      ``quality_report``
+      ``get_fem_data``, ``get_element_qualities``,
+      ``get_element_properties``, ``quality_report``
     * **IO**              — ``save``
 
     All methods that do not return data return ``self`` so they can be
@@ -1308,6 +1309,69 @@ class Mesh:
         self._log(f"renumber_elements({len(old_tags)} elements)")
         return self
 
+    def renumber_mesh(
+        self,
+        dim: int = 2,
+        *,
+        method: str = "simple",
+        base: int = 1,
+        used_only: bool = True,
+    ) -> Mesh:
+        """
+        Renumber nodes and elements in the Gmsh model to contiguous IDs.
+
+        After this call, **all** Gmsh queries (``get_nodes``,
+        ``get_elements``, ``getNodesForPhysicalGroup``, etc.) return
+        solver-ready contiguous IDs directly.
+
+        This is a mutation of the Gmsh model — call it **once**, before
+        extracting FEM data with :meth:`get_fem_data`.
+
+        Parameters
+        ----------
+        dim : int
+            Element dimension used to build adjacency for RCM
+            (2 = shells/quads, 3 = solids).
+        method : ``"simple"`` or ``"rcm"``
+            ``"simple"``  — contiguous IDs preserving relative order.
+            ``"rcm"``  — Reverse Cuthill-McKee bandwidth minimisation.
+        base : int
+            Starting ID (default 1 = OpenSees/Abaqus convention).
+        used_only : bool
+            If True (default), only renumber nodes connected to at
+            least one element (orphan nodes are skipped).
+
+        Returns
+        -------
+        Mesh
+            ``self``, for method chaining.
+
+        Example
+        -------
+        ::
+
+            g.mesh.renumber_mesh(method="rcm", base=1)
+            fem = g.mesh.get_fem_data(dim=2)
+
+            for i in range(fem.info.n_nodes):
+                ops.node(int(fem.node_ids[i]), *fem.node_coords[i])
+
+        Note
+        ----
+        This operation is **irreversible** within the current Gmsh
+        session.
+        """
+        from ..solvers.Numberer import Numberer
+        raw = self._get_raw_fem_data(dim=dim)
+        numb = Numberer(raw)
+        info = numb.renumber(method=method, base=base, used_only=used_only)
+        self._log(
+            f"renumber_mesh(method={method!r}): "
+            f"{info.n_nodes} nodes, {info.n_elems} elements, "
+            f"bandwidth={info.bandwidth}"
+        )
+        return self
+
     # ------------------------------------------------------------------
     # Queries  (return data — no chaining)
     # ------------------------------------------------------------------
@@ -1413,48 +1477,18 @@ class Mesh:
             'local_coords'   : np.array(local_coords).reshape(-1, d),
         }
 
-    def get_fem_data(self, dim: int = 2) -> dict:
+    def _get_raw_fem_data(self, dim: int = 2) -> dict:
         """
-        One-call extraction of all mesh data needed to build a FEM model.
+        Internal helper — extracts raw FEM data as a plain dict.
 
-        Bundles nodes, elements, connectivity, tag mappings, and the set of
-        nodes actually connected to elements (orphan-free).  The returned
-        arrays are plain numpy / Python — no solver dependency.
-
-        Must be called **after** ``generate()``.
-
-        Parameters
-        ----------
-        dim : element dimension to extract (2 = triangles/quads,
-              3 = tets/hexes).  Nodes are always returned for the full mesh.
-
-        Returns
-        -------
-        dict with keys:
-
-        ``'node_tags'``    : ndarray(N,)        — Gmsh node IDs
-        ``'node_coords'``  : ndarray(N, 3)      — XYZ coordinates
-        ``'tag_to_idx'``   : dict[int, int]     — ``{gmsh_tag: array_index}``
-        ``'connectivity'`` : ndarray(nElem, npe) — element→node-tag matrix
-        ``'elem_tags'``    : list[int]           — Gmsh element tags (flat)
-        ``'used_tags'``    : set[int]            — node tags that appear in
-                                                   at least one element
-                                                   (use to skip orphan nodes)
-
-        Example
-        -------
-        ::
-
-            fem = g.mesh.get_fem_data(dim=2)
-            for gtag in fem['used_tags']:
-                idx = fem['tag_to_idx'][gtag]
-                x, y, z = fem['node_coords'][idx]
+        Used by :meth:`renumber_mesh` (which needs raw data before
+        the Gmsh model is renumbered) and by :meth:`get_fem_data`
+        (which packages it into a :class:`FEMData` object).
         """
         # --- nodes (full mesh) ---
         nodes       = self.get_nodes()
         node_tags   = nodes['tags']
         node_coords = nodes['coords']
-        tag_to_idx  = {int(t): i for i, t in enumerate(node_tags)}
 
         # --- elements of requested dimension ---
         elems = self.get_elements(dim=dim)
@@ -1472,75 +1506,124 @@ class Mesh:
         connectivity = np.vstack(conn_blocks) if conn_blocks else np.empty(
             (0, 0), dtype=int
         )
-        used_tags = set(connectivity.flatten())
 
-        self._log(
-            f"get_fem_data(dim={dim}) → {len(node_tags)} nodes, "
-            f"{connectivity.shape[0]} elements, "
-            f"{len(used_tags)} used nodes"
-        )
+        # --- used_tags from ALL dimensions (not just target dim) ---
+        # Nodes on lower-dim entities (columns, supports) are connected
+        # to line/point elements even when they don't appear in the
+        # target-dim connectivity.  Counting only target-dim elements
+        # would incorrectly classify them as orphans and drop them
+        # during renumbering / FEM extraction.
+        _, _, all_node_tags = gmsh.model.mesh.getElements(dim=-1, tag=-1)
+        used_tags: set[int] = set()
+        for enodes in all_node_tags:
+            used_tags.update(int(n) for n in enodes)
 
         return {
             'node_tags'   : node_tags,
             'node_coords' : node_coords,
-            'tag_to_idx'  : tag_to_idx,
             'connectivity': connectivity,
             'elem_tags'   : elem_tags,
             'used_tags'   : used_tags,
         }
 
-    def get_numbered_mesh(
-        self,
-        dim: int = 2,
-        *,
-        method: str = "simple",
-        base: int = 1,
-    ):
+    def get_fem_data(self, dim: int = 2):
         """
-        Extract FEM data and renumber for solver consumption.
+        Extract solver-ready FEM data as a :class:`FEMData` object.
 
-        Convenience wrapper that calls ``get_fem_data`` then
-        :class:`Numberer.renumber()`.
+        Returns node IDs, coordinates, element IDs, connectivity,
+        mesh statistics (``.info``), and physical group data
+        (``.physical``) — everything needed to build a solver model.
+
+        If :meth:`renumber_mesh` was called first, all IDs are
+        contiguous and solver-ready.  Otherwise they are the raw
+        (potentially non-contiguous) Gmsh tags.
+
+        Must be called **after** ``generate()``.
 
         Parameters
         ----------
         dim : int
-            Element dimension (2 for shells/quads, 3 for solids).
-        method : ``"simple"`` or ``"rcm"``
-            ``"simple"``  contiguous IDs, preserving order.
-            ``"rcm"``  bandwidth-optimised (Reverse Cuthill-McKee).
-        base : int
-            Starting ID (1 for OpenSees/Abaqus, 0 for C/Python).
+            Element dimension to extract (2 = triangles/quads,
+            3 = tets/hexes).
 
         Returns
         -------
-        NumberedMesh
-            Solver-ready mesh with contiguous IDs and bidirectional
-            maps (Gmsh tag ↔ solver ID).
+        FEMData
 
         Example
         -------
         ::
 
-            mesh = g.mesh.get_numbered_mesh(dim=2, method="rcm")
+            g.mesh.renumber_mesh(method="rcm", base=1)
+            fem = g.mesh.get_fem_data(dim=2)
 
-            for i in range(mesh.n_nodes):
-                ops.node(int(mesh.node_ids[i]),
-                         *mesh.node_coords[i])
+            # Mesh stats
+            print(fem.info)
+            print(fem.info.n_nodes, fem.info.bandwidth)
 
-            for i in range(mesh.n_elems):
-                ops.element('ShellMITC4', int(mesh.elem_ids[i]),
-                            *[int(n) for n in mesh.connectivity[i]],
-                            sec_tag)
+            # Physical groups (mirrors g.physical API)
+            fem.physical.get_all()
+            base = fem.physical.get_nodes(0, 1)  # {'tags': ..., 'coords': ...}
 
-            # Post-processing: solver ID → Gmsh tag
-            gmsh_tag = mesh.solver_to_gmsh_node[42]
+            # Build solver model
+            for i in range(fem.info.n_nodes):
+                ops.node(int(fem.node_ids[i]),
+                         *fem.node_coords[i])
         """
-        from ..solvers.Numberer import Numberer
-        fem = self.get_fem_data(dim=dim)
-        numb = Numberer(fem)
-        result = numb.renumber(method=method, base=base)
-        self._log(f"get_numbered_mesh({method}): {result.summary()}")
+        from .FEMData import (
+            FEMData, MeshInfo, PhysicalGroupSet, _compute_bandwidth,
+        )
+
+        raw = self._get_raw_fem_data(dim=dim)
+
+        node_tags    = raw['node_tags']
+        node_coords  = raw['node_coords']
+        connectivity = raw['connectivity']
+        elem_tags    = np.asarray(raw['elem_tags'], dtype=int)
+        used_tags    = raw['used_tags']
+
+        # Filter to only nodes that appear in elements
+        mask        = np.isin(node_tags, list(used_tags))
+        node_ids    = np.asarray(node_tags[mask], dtype=int)
+        node_coords = node_coords[mask]
+
+        bw = _compute_bandwidth(connectivity)
+
+        # ── MeshInfo ──────────────────────────────────────────────
+        info = MeshInfo(
+            n_nodes=len(node_ids),
+            n_elems=len(elem_tags),
+            bandwidth=bw,
+        )
+
+        # ── Physical groups snapshot ──────────────────────────────
+        pg_data: dict[tuple[int, int], dict] = {}
+        for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
+            name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
+            pg_node_tags, pg_coords = \
+                gmsh.model.mesh.getNodesForPhysicalGroup(pg_dim, pg_tag)
+            pg_data[(pg_dim, pg_tag)] = {
+                'name':        name,
+                'node_ids':    np.array(pg_node_tags, dtype=np.int64),
+                'node_coords': np.array(pg_coords).reshape(-1, 3),
+            }
+
+        physical = PhysicalGroupSet(pg_data)
+
+        # ── Assemble FEMData ──────────────────────────────────────
+        result = FEMData(
+            node_ids=node_ids,
+            node_coords=node_coords,
+            element_ids=elem_tags,
+            connectivity=connectivity,
+            info=info,
+            physical=physical,
+        )
+
+        self._log(
+            f"get_fem_data(dim={dim}) → {result.summary()}"
+        )
+
         return result
 
     def get_element_qualities(
@@ -1568,6 +1651,101 @@ class Mesh:
         q = gmsh.model.mesh.getElementQualities(tags, qualityName=quality_name)
         return np.asarray(q)
 
+    def quality_report(
+        self,
+        *,
+        dim: int = -1,
+        metrics: list[str] | None = None,
+    ) -> pd.DataFrame:
+        """
+        Compute a summary quality report for all mesh elements.
+
+        For each element type and quality metric, reports count, min, max,
+        mean, std, and the percentage of elements below common thresholds.
+
+        Must be called **after** ``generate()``.
+
+        Parameters
+        ----------
+        dim : element dimension to report (-1 = all dimensions present)
+        metrics : quality names to evaluate.  Defaults to
+                  ``["minSICN", "minSIGE", "gamma", "minSJ"]``.
+
+                  * ``minSICN`` — signed inverse condition number
+                  * ``minSIGE`` — signed inverse gradient error
+                  * ``gamma``   — inscribed / circumscribed radius ratio
+                  * ``minSJ``   — minimum scaled Jacobian
+
+        Returns
+        -------
+        pd.DataFrame
+            One row per (element_type, metric) combination with summary
+            statistics.
+
+        Example
+        -------
+        ::
+
+            g.mesh.generate(2)
+            print(g.mesh.quality_report().to_string())
+        """
+        import pandas as pd
+
+        if metrics is None:
+            metrics = ["minSICN", "minSIGE", "gamma", "minSJ"]
+
+        elems = self.get_elements(dim=dim)
+
+        rows: list[dict] = []
+        for etype, etags in zip(elems['types'], elems['tags']):
+            if len(etags) == 0:
+                continue
+            props = self.get_element_properties(etype)
+            etype_name = props.get('name', str(etype))
+
+            for metric in metrics:
+                try:
+                    q = gmsh.model.mesh.getElementQualities(
+                        list(etags.astype(int)), qualityName=metric,
+                    )
+                    q = np.asarray(q)
+                except Exception:
+                    continue  # metric not supported for this element type
+
+                if len(q) == 0:
+                    continue
+
+                row: dict = {
+                    'element_type' : etype_name,
+                    'gmsh_code'    : int(etype),
+                    'metric'       : metric,
+                    'count'        : len(q),
+                    'min'          : float(q.min()),
+                    'max'          : float(q.max()),
+                    'mean'         : float(q.mean()),
+                    'std'          : float(q.std()),
+                    'pct_below_0.1': float((q < 0.1).sum() / len(q) * 100),
+                    'pct_below_0.3': float((q < 0.3).sum() / len(q) * 100),
+                }
+                rows.append(row)
+
+        df = pd.DataFrame(rows)
+        if not df.empty:
+            df = df.set_index(['element_type', 'metric']).sort_index()
+
+        self._log(
+            f"quality_report(dim={dim}) → "
+            f"{len(rows)} metric rows across "
+            f"{df.index.get_level_values('element_type').nunique() if not df.empty else 0} "
+            f"element types"
+        )
+
+        if self._parent._verbose and not df.empty:
+            print("\n--- Mesh Quality Report ---")
+            print(df.to_string())
+
+        return df
+
     # ------------------------------------------------------------------
     # Interactive mesh viewer
     # ------------------------------------------------------------------
@@ -1584,4 +1762,3 @@ class Mesh:
         from ..viewers.MeshViewer import MeshViewer
         mv = MeshViewer(self._parent, self, **kwargs)
         return mv.show()
-                 

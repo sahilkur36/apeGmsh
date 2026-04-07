@@ -7,7 +7,7 @@ deformed shapes, colorbars, and camera control.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum, auto
 from typing import Any
 
@@ -541,6 +541,5 @@ class ViewportRenderer:
     def get_actor(self, name: str) -> MeshActor | None:
         return self._actors.get(name)
 
-    @property
-    def plotter(self) -> pv.Plotter:
-        return self._plotter
+    # ------------------------------------------------------------------
+    # Vector f

@@ -160,6 +160,13 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
     ),
 
     # ── 3-D shell (section-based) ──────────────────────────────────────────
+    "ShellMITC3": _ElemSpec(
+        mat_family="section", needs_transf=False,
+        ndm_ok=frozenset({3}), ndf_ok=frozenset({6}),
+        gmsh_etypes=frozenset({2}),          # gmsh type 2 = 3-node triangle
+        node_reorder={2: (0, 1, 2)},         # identity — verified OK
+        slots=("nodes", "secTag"),
+    ),
     "ShellMITC4": _ElemSpec(
         mat_family="section", needs_transf=False,
         ndm_ok=frozenset({3}), ndf_ok=frozenset({6}),
@@ -437,14 +444,25 @@ class OpenSees:
         )
 
     def _nodes_for_pg(self, pg_name: str, dim: int | None = None) -> list[int]:
-        """Return OpenSees node IDs for all mesh nodes in a physical group."""
+        """Return OpenSees node IDs for all mesh nodes in a physical group.
+
+        After Numberer.renumber() syncs IDs back to the Gmsh model,
+        ``getNodesForPhysicalGroup`` already returns solver-ready IDs.
+        We still filter through ``_node_map`` when it is populated
+        (for backward compatibility with workflows that build their
+        own mapping), but fall back to the raw tags when the map is
+        empty — which is the expected path after renumbering.
+        """
         pg_dim, pg_tag = self._find_pg(pg_name, dim)
         raw, _ = gmsh.model.mesh.getNodesForPhysicalGroup(pg_dim, pg_tag)
-        return [
-            self._node_map[int(t)]
-            for t in raw
-            if int(t) in self._node_map
-        ]
+        if self._node_map:
+            return [
+                self._node_map[int(t)]
+                for t in raw
+                if int(t) in self._node_map
+            ]
+        # Post-renumber path: Gmsh tags ARE the solver IDs
+        return sorted(int(t) for t in raw)
 
     # ------------------------------------------------------------------
     # Stage 1 — Declarations
@@ -935,17 +953,45 @@ class OpenSees:
                         })
                         ops_elem_id += 1
 
-        # ── 3b. Filter to element-connected nodes only ────────────────
+        # ── 3b. Filter to model-active nodes only ─────────────────────
         # Gmsh's getNodes(dim=-1) returns ALL mesh nodes including
         # geometric vertex points that are not part of any element.
-        # These disconnected nodes create a singular stiffness matrix
-        # in OpenSees.  We prune down to only nodes referenced by at
-        # least one element, then renumber sequentially.
+        # We prune down to nodes referenced by at least one element
+        # OR by a boundary-condition / load physical group, then
+        # renumber sequentially.
         reverse_map = {v: k for k, v in self._node_map.items()}
         connected_gmsh: set[int] = set()
         for row in elem_rows:
             for oid in row['nodes']:
                 connected_gmsh.add(reverse_map[oid])
+
+        # Also keep nodes needed by boundary conditions and loads —
+        # these may sit on physical groups (e.g. base supports at
+        # dim=0) that have no assigned OpenSees element.
+        all_gmsh_tags = set(self._node_map.keys())
+        for pg_name, bc in self._bcs.items():
+            pg_dim, pg_tag = self._find_pg(pg_name, bc.get("dim"))
+            raw_pg, _ = gmsh.model.mesh.getNodesForPhysicalGroup(
+                pg_dim, pg_tag
+            )
+            connected_gmsh.update(
+                int(t) for t in raw_pg if int(t) in all_gmsh_tags
+            )
+
+        for loads in self._load_patterns.values():
+            for load_def in loads:
+                if load_def["type"] != "nodal":
+                    continue
+                pg_name = load_def["pg_name"]
+                pg_dim, pg_tag = self._find_pg(
+                    pg_name, load_def.get("dim")
+                )
+                raw_pg, _ = gmsh.model.mesh.getNodesForPhysicalGroup(
+                    pg_dim, pg_tag
+                )
+                connected_gmsh.update(
+                    int(t) for t in raw_pg if int(t) in all_gmsh_tags
+                )
 
         n_total   = len(self._node_map)
         n_pruned  = n_total - len(connected_gmsh)

@@ -398,8 +398,12 @@ class SelectionPickerWindow(BaseViewerWindow):
         self._view_label_actors.clear()
 
         registry = self._picker._model._registry
-        use_names = self._label_use_names.isChecked()
-        font_size = self._label_size_spin.value()
+        try:
+            use_names = self._label_use_names.isChecked()
+            font_size = self._label_size_spin.value()
+        except RuntimeError:
+            # Qt widget was deleted (e.g. View tab removed by subclass)
+            return
 
         # Read font prefs (available after prefs tab is built).
         font_family = "arial"

@@ -32,7 +32,8 @@ Workflow
 
     asm.fragment_all()              # conformal mesh at shared interfaces
     asm.mesh.generate(dim=3)        # mesh the whole assembly
-    fem = asm.mesh.get_numbered_mesh(dim=3)
+    asm.mesh.renumber_mesh(method="rcm", base=1)
+    fem = asm.mesh.get_fem_data(dim=3)
     ...
     asm.end()
 
@@ -65,6 +66,14 @@ from .._session import _SessionBase
 
 if TYPE_CHECKING:
     from .Part import Part
+    from ..viz.Inspect import Inspect
+    from .Model import Model
+    from ..mesh.Mesh import Mesh
+    from ..mesh.PhysicalGroups import PhysicalGroups
+    from ..mesh.Partition import Partition
+    from ..mesh.View import View
+    from ..solvers.Gmsh2OpenSees import Gmsh2OpenSees
+    from ..viz.Plot import Plot
 
 
 # ======================================================================
@@ -133,6 +142,16 @@ class Assembly(_SessionBase):
         ("g2o",       ".solvers.Gmsh2OpenSees", "Gmsh2OpenSees",  False),
         ("plot",      ".viz.Plot",              "Plot",           True),
     )
+
+    # -- Static type declarations for composites --
+    inspect: Inspect
+    model: Model
+    mesh: Mesh
+    physical: PhysicalGroups
+    partition: Partition
+    view: View
+    g2o: Gmsh2OpenSees
+    plot: Plot
 
     def __init__(self, name: str = "Assembly") -> None:
         super().__init__(name=name, verbose=False)

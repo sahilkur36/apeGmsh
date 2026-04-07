@@ -73,11 +73,16 @@ Design notes
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 import gmsh
 
 from .._session import _SessionBase
+
+if TYPE_CHECKING:
+    from .Model import Model
+    from ..viz.Inspect import Inspect
+    from ..viz.Plot import Plot
 
 
 class Part(_SessionBase):
@@ -98,6 +103,11 @@ class Part(_SessionBase):
         ("inspect", ".viz.Inspect",   "Inspect", False),
         ("plot",    ".viz.Plot",      "Plot",    True),
     )
+
+    # -- Static type declarations for composites --
+    model: Model
+    inspect: Inspect
+    plot: Plot
 
     def __init__(self, name: str) -> None:
         super().__init__(name=name, verbose=False)

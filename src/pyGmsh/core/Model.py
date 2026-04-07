@@ -945,9 +945,9 @@ class Model:
             for dim in range(4)
             for _, tag in gmsh.model.getEntities(dim)
         }
-        stale = [key for key in self._registry if key not in surviving]
-        for key in stale:
-            del self._registry[key]
+        stale_dts = [dt for dt in self._registry if dt not in surviving]
+        for dt in stale_dts:
+            del self._registry[dt]
 
         after = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
         removed = {d: before[d] - after[d] for d in range(4) if before[d] != after[d]}

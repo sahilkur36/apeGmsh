@@ -77,6 +77,10 @@ class Selection:
 
     __slots__ = ('_dimtags', '_dim', '_parent')
 
+    _dimtags: tuple[DimTag, ...]
+    _dim: int
+    _parent: _SessionBase
+
     def __init__(
         self,
         dimtags : Iterable[DimTag],
@@ -799,5 +803,4 @@ def _entities_of_physical(
             return []
     else:
         pg_tag = int(physical)
-    ents = gmsh.model.getEntitiesForPhysicalGroup(dim, pg_tag)
-    return [(dim, int(t)) for t in ents]
+    ents = gmsh.model.getEntit

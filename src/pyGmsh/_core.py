@@ -1,6 +1,19 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from ._session import _SessionBase
+
+if TYPE_CHECKING:
+    from .viz.Inspect import Inspect
+    from .core.Model import Model
+    from .mesh.Mesh import Mesh
+    from .mesh.PhysicalGroups import PhysicalGroups
+    from .mesh.Partition import Partition
+    from .mesh.View import View
+    from .solvers.Gmsh2OpenSees import Gmsh2OpenSees
+    from .solvers.OpenSees import OpenSees
+    from .viz.Plot import Plot
 
 
 class pyGmsh(_SessionBase):
@@ -26,6 +39,17 @@ class pyGmsh(_SessionBase):
         ("plot",      ".viz.Plot",              "Plot",           True),
     )
 
+    # -- Static type declarations for composites (created at runtime by begin()) --
+    inspect: Inspect
+    model: Model
+    mesh: Mesh
+    physical: PhysicalGroups
+    partition: Partition
+    view: View
+    g2o: Gmsh2OpenSees
+    opensees: OpenSees
+    plot: Plot
+
     def __init__(
         self,
         *,
@@ -38,8 +62,8 @@ class pyGmsh(_SessionBase):
     # model_name setter (backward compat: g.model_name = "foo")
     # ------------------------------------------------------------------
 
-    @_SessionBase.model_name.getter
-    def model_name(self) -> str:
+    @_SessionBase.model_name.getter  # type: ignore[attr-defined]
+    def model_name(self) -> str:  # type: ignore[no-redef]
         return self.name
 
     @model_name.setter
@@ -61,7 +85,7 @@ class pyGmsh(_SessionBase):
 
     def initialize(self) -> "pyGmsh":
         """Alias for ``begin()``."""
-        return self.begin()
+        return self.begin()  # type: ignore[return-value]
 
     def finalize(self) -> None:
         """Alias for ``end()``."""

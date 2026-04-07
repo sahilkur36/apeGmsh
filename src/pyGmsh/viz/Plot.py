@@ -870,12 +870,12 @@ class Plot:
                         n = n_surf_samples
                         for ii in range(n - 1):
                             for jj in range(n - 1):
-                                a = ii * n + jj
-                                b = a + 1
-                                c = (ii + 1) * n + jj
-                                d = c + 1
-                                tris.append(pts[[a, b, d]])
-                                tris.append(pts[[a, d, c]])
+                                v0 = ii * n + jj
+                                v1 = v0 + 1
+                                v2 = (ii + 1) * n + jj
+                                v3 = v2 + 1
+                                tris.append(pts[[v0, v1, v3]])
+                                tris.append(pts[[v0, v3, v2]])
                         collected.append(pts)
                         centroid_pts.append(pts.mean(axis=0))
                     except Exception:
@@ -1114,4 +1114,4 @@ class Plot:
         )
         if show:
             self.show()
-        return self
+       
