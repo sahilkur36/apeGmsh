@@ -637,9 +637,9 @@ class SelectionPicker(BaseViewer):
         """Build the VTK scene using a temporary Gmsh mesh.
 
         Generates a coarse 2D mesh, extracts per-entity triangulation
-        via ``getNodes``/``getElements``, then clears the temp mesh.
-        Orders of magnitude faster than parametric sampling for large
-        BRep models (hundreds of surfaces/curves).
+        via batch ``getNodes``/``getElements`` calls, and suppresses
+        VTK rendering until all actors are added.  Orders of magnitude
+        faster than parametric sampling for large BRep models.
         """
         import pyvista as pv
         plotter = self._plotter
@@ -664,14 +664,13 @@ class SelectionPicker(BaseViewer):
             pass
 
         if not had_mesh:
-            # Save current mesh size settings
             old_min = gmsh.option.getNumber("Mesh.MeshSizeMin")
             old_max = gmsh.option.getNumber("Mesh.MeshSizeMax")
             old_algo = gmsh.option.getNumber("Mesh.Algorithm")
             try:
                 gmsh.option.setNumber("Mesh.MeshSizeMin", diag * 0.005)
                 gmsh.option.setNumber("Mesh.MeshSizeMax", diag * 0.05)
-                gmsh.option.setNumber("Mesh.Algorithm", 6)  # Frontal-Delaunay
+                gmsh.option.setNumber("Mesh.Algorithm", 6)
                 gmsh.model.mesh.generate(2)
             except Exception:
                 pass
@@ -680,27 +679,46 @@ class SelectionPicker(BaseViewer):
                 gmsh.option.setNumber("Mesh.MeshSizeMax", old_max)
                 gmsh.option.setNumber("Mesh.Algorithm", old_algo)
 
-        # ── 3. Batch-fetch all nodes ────────────────────────────────
+        # ── 3. Check mesh was generated ─────────────────────────────
         try:
             all_tags, all_coords_flat, _ = gmsh.model.mesh.getNodes()
         except Exception:
-            # Fallback to parametric path
             self._build_scene_parametric()
             return
-
         if len(all_tags) == 0:
             self._build_scene_parametric()
             return
 
-        all_tags = np.asarray(all_tags, dtype=np.int64)
-        all_coords = np.asarray(all_coords_flat, dtype=np.float64).reshape(-1, 3)
+        # ── 4. Suppress rendering during batch actor creation ───────
+        try:
+            rw = plotter.render_window
+            rw.SetOffScreenRendering(True)
+        except Exception:
+            rw = None
 
-        # Dense tag → index lookup
-        max_tag = int(all_tags.max())
-        tag_to_idx = np.full(max_tag + 1, -1, dtype=np.int64)
-        tag_to_idx[all_tags] = np.arange(len(all_tags), dtype=np.int64)
+        try:
+            self._build_scene_from_mesh_inner(plotter, diag)
+        finally:
+            if rw is not None:
+                try:
+                    rw.SetOffScreenRendering(False)
+                except Exception:
+                    pass
 
-        # ── 4. dim=0 — points as spheres ────────────────────────────
+        # ── 5. Cleanup temp mesh ────────────────────────────────────
+        if not had_mesh:
+            try:
+                gmsh.model.mesh.clear()
+            except Exception:
+                pass
+
+        self._recolor_all()
+
+    def _build_scene_from_mesh_inner(self, plotter, diag: float) -> None:
+        """Inner loop: create per-entity actors from mesh data."""
+        import pyvista as pv
+
+        # ── dim=0 — points as spheres ───────────────────────────────
         if 0 in self._dims:
             base_r = 0.005 * diag
             scale = float(self._point_size)
@@ -714,11 +732,12 @@ class SelectionPicker(BaseViewer):
                     xyz = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)[0]
                     sphere = pv.Sphere(
                         radius=base_r, center=xyz,
-                        theta_resolution=14, phi_resolution=14,
+                        theta_resolution=10, phi_resolution=10,
                     )
                     actor = plotter.add_mesh(
                         sphere, color=_IDLE_POINT,
                         smooth_shading=True, pickable=True,
+                        reset_camera=False,
                     )
                     actor.SetOrigin(xyz[0], xyz[1], xyz[2])
                     actor.SetScale(scale, scale, scale)
@@ -726,7 +745,7 @@ class SelectionPicker(BaseViewer):
                 except Exception:
                     pass
 
-        # ── 5. dim=1 — curves as lines ──────────────────────────────
+        # ── dim=1 — curves as lines ─────────────────────────────────
         if 1 in self._dims:
             for _, tag in gmsh.model.getEntities(dim=1):
                 try:
@@ -738,10 +757,10 @@ class SelectionPicker(BaseViewer):
                     pts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
                     n = len(pts)
                     lines = np.empty((n - 1) * 3, dtype=np.int64)
-                    for i in range(n - 1):
-                        lines[i * 3] = 2
-                        lines[i * 3 + 1] = i
-                        lines[i * 3 + 2] = i + 1
+                    idx = np.arange(n - 1, dtype=np.int64)
+                    lines[0::3] = 2
+                    lines[1::3] = idx
+                    lines[2::3] = idx + 1
                     poly = pv.PolyData(pts)
                     poly.lines = lines
                     actor = plotter.add_mesh(
@@ -749,61 +768,19 @@ class SelectionPicker(BaseViewer):
                         line_width=self._line_width,
                         render_lines_as_tubes=True,
                         pickable=True,
+                        reset_camera=False,
                     )
                     self._register_actor(actor, (1, tag))
                 except Exception:
                     pass
 
-        # ── 6. dim=2 — surfaces as triangles ────────────────────────
+        # ── dim=2 — surfaces as triangles ───────────────────────────
         if 2 in self._dims:
             for _, tag in gmsh.model.getEntities(dim=2):
                 try:
-                    elem_types, elem_tags_list, elem_node_tags_list = (
-                        gmsh.model.mesh.getElements(2, tag)
-                    )
-                    if not elem_types:
+                    mesh = self._mesh_entity_to_polydata(2, tag)
+                    if mesh is None:
                         continue
-
-                    # Get surface-local nodes
-                    ntags, ncoords, _ = gmsh.model.mesh.getNodes(
-                        dim=2, tag=tag, includeBoundary=True,
-                    )
-                    if len(ntags) == 0:
-                        continue
-
-                    local_tags = np.asarray(ntags, dtype=np.int64)
-                    local_pts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
-
-                    # Local tag → local index
-                    local_max = int(local_tags.max())
-                    local_idx = np.full(local_max + 1, -1, dtype=np.int64)
-                    local_idx[local_tags] = np.arange(len(local_tags), dtype=np.int64)
-
-                    all_faces: list[int] = []
-                    for etype, enodes in zip(elem_types, elem_node_tags_list):
-                        etype = int(etype)
-                        # Only use triangles (gmsh type 2, 3 nodes)
-                        # and quads (gmsh type 3, 4 nodes)
-                        if etype == 2:
-                            npe = 3
-                        elif etype == 3:
-                            npe = 4
-                        else:
-                            continue
-                        enodes = np.asarray(enodes, dtype=np.int64)
-                        n_elems = len(enodes) // npe
-                        enodes = enodes.reshape(n_elems, npe)
-                        for row in enodes:
-                            idxs = local_idx[row]
-                            if -1 in idxs:
-                                continue
-                            all_faces.append(npe)
-                            all_faces.extend(idxs.tolist())
-
-                    if not all_faces:
-                        continue
-
-                    mesh = pv.PolyData(local_pts, faces=np.array(all_faces))
                     actor = plotter.add_mesh(
                         mesh, color=_IDLE_SURFACE,
                         opacity=self._surface_opacity,
@@ -812,12 +789,13 @@ class SelectionPicker(BaseViewer):
                         line_width=0.5,
                         smooth_shading=True,
                         pickable=True,
+                        reset_camera=False,
                     )
                     self._register_actor(actor, (2, tag))
                 except Exception:
                     pass
 
-        # ── 7. dim=3 — volumes (combined boundary surfaces) ─────────
+        # ── dim=3 — volumes (combined boundary surfaces) ────────────
         if 3 in self._dims:
             vol_alpha = max(0.05, self._surface_opacity * 0.6)
             for _, vtag in gmsh.model.getEntities(dim=3):
@@ -826,73 +804,81 @@ class SelectionPicker(BaseViewer):
                         [(3, vtag)], combined=False,
                         oriented=False, recursive=False,
                     )
-                    combined_pts: list[np.ndarray] = []
-                    combined_faces: list[int] = []
-                    offset = 0
+                    parts: list[pv.PolyData] = []
                     for bd, btag in boundary:
                         if bd != 2:
                             continue
-                        try:
-                            ntags, ncoords, _ = gmsh.model.mesh.getNodes(
-                                dim=2, tag=btag, includeBoundary=True,
-                            )
-                            if len(ntags) == 0:
-                                continue
-                            ltags = np.asarray(ntags, dtype=np.int64)
-                            lpts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
-                            lmax = int(ltags.max())
-                            lidx = np.full(lmax + 1, -1, dtype=np.int64)
-                            lidx[ltags] = np.arange(len(ltags), dtype=np.int64)
-
-                            etypes, _, enodes_list = gmsh.model.mesh.getElements(2, btag)
-                            for etype, enodes in zip(etypes, enodes_list):
-                                etype = int(etype)
-                                if etype == 2:
-                                    npe = 3
-                                elif etype == 3:
-                                    npe = 4
-                                else:
-                                    continue
-                                enodes = np.asarray(enodes, dtype=np.int64)
-                                n_elems = len(enodes) // npe
-                                enodes = enodes.reshape(n_elems, npe)
-                                for row in enodes:
-                                    idxs = lidx[row]
-                                    if -1 in idxs:
-                                        continue
-                                    combined_faces.append(npe)
-                                    combined_faces.extend(
-                                        (idxs + offset).tolist()
-                                    )
-                            combined_pts.append(lpts)
-                            offset += len(lpts)
-                        except Exception:
-                            continue
-
-                    if not combined_pts:
+                        m = self._mesh_entity_to_polydata(2, btag)
+                        if m is not None:
+                            parts.append(m)
+                    if not parts:
                         continue
-                    all_pts_vol = np.vstack(combined_pts)
-                    mesh = pv.PolyData(
-                        all_pts_vol, faces=np.array(combined_faces),
-                    )
+                    combined = parts[0] if len(parts) == 1 else parts[0].merge(parts[1:])
                     actor = plotter.add_mesh(
-                        mesh, color=_IDLE_VOLUME,
+                        combined, color=_IDLE_VOLUME,
                         opacity=vol_alpha,
                         smooth_shading=True,
                         pickable=True,
+                        reset_camera=False,
                     )
                     self._register_actor(actor, (3, vtag))
                 except Exception:
                     pass
 
-        # ── 8. Cleanup temp mesh ────────────────────────────────────
-        if not had_mesh:
-            try:
-                gmsh.model.mesh.clear()
-            except Exception:
-                pass
+        plotter.reset_camera()
 
-        self._recolor_all()
+    @staticmethod
+    def _mesh_entity_to_polydata(dim: int, tag: int):
+        """Extract a surface's mesh triangulation as a pv.PolyData."""
+        import pyvista as pv
+
+        elem_types, _, elem_node_tags_list = (
+            gmsh.model.mesh.getElements(dim, tag)
+        )
+        if not elem_types:
+            return None
+
+        ntags, ncoords, _ = gmsh.model.mesh.getNodes(
+            dim=dim, tag=tag, includeBoundary=True,
+        )
+        if len(ntags) == 0:
+            return None
+
+        local_tags = np.asarray(ntags, dtype=np.int64)
+        local_pts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
+
+        # Dense local tag → index
+        local_max = int(local_tags.max())
+        local_idx = np.full(local_max + 1, -1, dtype=np.int64)
+        local_idx[local_tags] = np.arange(len(local_tags), dtype=np.int64)
+
+        face_parts: list[np.ndarray] = []
+        for etype, enodes in zip(elem_types, elem_node_tags_list):
+            etype = int(etype)
+            if etype == 2:
+                npe = 3
+            elif etype == 3:
+                npe = 4
+            else:
+                continue
+            enodes = np.asarray(enodes, dtype=np.int64)
+            n_elems = len(enodes) // npe
+            node_mat = enodes.reshape(n_elems, npe)
+            # Vectorized index lookup
+            idx_mat = local_idx[node_mat]
+            # Skip rows with -1
+            valid = np.all(idx_mat >= 0, axis=1)
+            idx_mat = idx_mat[valid]
+            if len(idx_mat) == 0:
+                continue
+            prefix = np.full((len(idx_mat), 1), npe, dtype=np.int64)
+            face_parts.append(np.hstack([prefix, idx_mat]).ravel())
+
+        if not face_parts:
+            return None
+
+        faces = np.concatenate(face_parts)
+        return pv.PolyData(local_pts, faces=faces)
 
     def _build_scene_parametric(self) -> None:
         """Original parametric-sampling scene builder."""
