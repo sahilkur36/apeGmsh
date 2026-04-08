@@ -321,7 +321,7 @@ class SelectionPicker(BaseViewer):
         physical_group: str | None = None,
         dims: list[int] | None = None,
         # --- visual properties ---
-        point_size: float = 1.0,
+        point_size: float = 10.0,
         line_width: float = 6.0,
         surface_opacity: float = 0.35,
         show_surface_edges: bool = False,
@@ -711,7 +711,7 @@ class SelectionPicker(BaseViewer):
         t_build = time.perf_counter()
         n_entities = 0
 
-        # ── dim=0: single glyph actor for all points ───────────────
+        # ── dim=0: flat screen-space dots for all points ────────────
         t_dim = time.perf_counter()
         n_d0 = 0
         if 0 in self._dims:
@@ -732,38 +732,30 @@ class SelectionPicker(BaseViewer):
             if centers:
                 centers_arr = np.array(centers)
                 cloud = pv.PolyData(centers_arr)
-                sphere_src = pv.Sphere(
-                    radius=0.005 * diag * self._point_size,
-                    theta_resolution=10, phi_resolution=10,
-                )
-                glyphs = cloud.glyph(geom=sphere_src, orient=False, scale=False)
-                # Each center produces n_cells_per_sphere cells
-                n_cells_per_pt = glyphs.n_cells // len(centers) if len(centers) else 1
-                entity_tags = np.empty(glyphs.n_cells, dtype=np.int64)
-                colors = np.tile(idle_rgb[0], (glyphs.n_cells, 1))
+                # One vertex cell per point — cell_data maps 1:1
+                entity_tags = np.array(tags_d0, dtype=np.int64)
+                colors = np.tile(idle_rgb[0], (len(tags_d0), 1))
                 cell_to_dt: dict[int, DimTag] = {}
                 for i, tag in enumerate(tags_d0):
-                    start = i * n_cells_per_pt
-                    end = start + n_cells_per_pt
-                    entity_tags[start:end] = tag
                     dt = (0, tag)
-                    self._batch_dt_to_cells[dt] = list(range(start, end))
-                    for ci in range(start, end):
-                        cell_to_dt[ci] = dt
-                glyphs.cell_data["entity_tag"] = entity_tags
-                glyphs.cell_data["colors"] = colors
+                    self._batch_dt_to_cells[dt] = [i]
+                    cell_to_dt[i] = dt
+                cloud.cell_data["entity_tag"] = entity_tags
+                cloud.cell_data["colors"] = colors
                 actor = plotter.add_mesh(
-                    glyphs, scalars="colors", rgb=True,
-                    smooth_shading=True, pickable=True,
+                    cloud, scalars="colors", rgb=True,
+                    point_size=self._point_size,
+                    render_points_as_spheres=True,
+                    style="points",
+                    pickable=True,
                     reset_camera=False,
                 )
                 self._batch_actors[0] = actor
-                self._batch_meshes[0] = glyphs
+                self._batch_meshes[0] = cloud
                 self._batch_cell_to_dt[0] = cell_to_dt
-                # Register the single actor for all dim=0 entities
                 for tag in tags_d0:
                     self._id_to_actor[(0, tag)] = actor
-                self._actor_to_id[id(actor)] = (0, -1)  # sentinel
+                self._actor_to_id[id(actor)] = (0, -1)
         t_d0 = time.perf_counter() - t_dim
         n_entities += n_d0
 
@@ -1097,13 +1089,6 @@ class SelectionPicker(BaseViewer):
                 2: _IDLE_SURFACE, 3: _IDLE_VOLUME,
             }[dt[0]]
             actor.GetProperty().SetColor(_hex_to_rgb(idle))
-        if dt[0] == 0:
-            base = float(self._point_size)
-            if dt in self._picks:
-                s = base * self._PICK_SCALE_BOOST
-            else:
-                s = base
-            actor.SetScale(s, s, s)
         if _render:
             self._plotter.render()
 
@@ -1183,43 +1168,28 @@ class SelectionPicker(BaseViewer):
         t_dim = time.perf_counter()
         n_dim0 = 0
         if 0 in self._dims:
-            # Compute an auto sphere radius as a fraction of the model's
-            # bounding-box diagonal.  Spheres are built at the unit
-            # ``base_r`` and the user's ``point_size`` is applied via
-            # ``actor.SetScale`` -- that keeps the slider in sync with the
-            # displayed size regardless of the initial ``point_size``.
-            try:
-                bb = gmsh.model.getBoundingBox(-1, -1)
-                diag = float(np.linalg.norm(
-                    [bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2]]
-                ))
-                if diag <= 0.0:
-                    diag = 1.0
-            except Exception:
-                diag = 1.0
-            base_r = 0.005 * diag
-            scale = float(self._point_size)
+            centers = []
+            tags_d0 = []
             for _, tag in gmsh.model.getEntities(dim=0):
                 try:
                     xyz = np.array(gmsh.model.getValue(0, tag, []))
-                    sphere = pv.Sphere(
-                        radius=base_r, center=xyz,
-                        theta_resolution=14, phi_resolution=14,
-                    )
-                    actor = plotter.add_mesh(
-                        sphere, color=_IDLE_POINT,
-                        smooth_shading=True,
-                        pickable=True,
-                    )
-                    # SetScale() scales the actor about its origin; our
-                    # spheres are centred at xyz so we need to pin the
-                    # origin to the centre before scaling.
-                    actor.SetOrigin(xyz[0], xyz[1], xyz[2])
-                    actor.SetScale(scale, scale, scale)
-                    self._register_actor(actor, (0, tag))
+                    centers.append(xyz)
+                    tags_d0.append(tag)
                     n_dim0 += 1
                 except Exception:
                     pass
+            if centers:
+                cloud = pv.PolyData(np.array(centers))
+                actor = plotter.add_mesh(
+                    cloud, color=_IDLE_POINT,
+                    point_size=self._point_size,
+                    render_points_as_spheres=True,
+                    style="points",
+                    pickable=True,
+                )
+                # Register each point entity to the single actor
+                for tag in tags_d0:
+                    self._register_actor(actor, (0, tag))
         t_dim0 = time.perf_counter() - t_dim
 
         t_dim = time.perf_counter()

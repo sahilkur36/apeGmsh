@@ -165,7 +165,7 @@ class MeshViewer(SelectionPicker):
         mesh_composite: "Mesh",
         *,
         dims: list[int] | None = None,
-        point_size: float = 1.0,
+        point_size: float = 6.0,
         line_width: float = 3.0,
         surface_opacity: float = 1.0,
         show_surface_edges: bool = True,
@@ -615,17 +615,12 @@ class MeshViewer(SelectionPicker):
         if self._node_coords is not None and len(self._node_coords) > 0:
             node_cloud = pv.PolyData(self._node_coords)
             self._node_cloud = node_cloud
-            glyph_radius = 0.004 * diag * self._node_marker_size
-            sphere_src = pv.Sphere(
-                radius=glyph_radius,
-                theta_resolution=10, phi_resolution=10,
-            )
-            glyphs = node_cloud.glyph(
-                geom=sphere_src, orient=False, scale=False,
-            )
             self._node_actor = plotter.add_mesh(
-                glyphs, color=_NODE_COLOR,
-                smooth_shading=True, pickable=False, opacity=1.0,
+                node_cloud, color=_NODE_COLOR,
+                point_size=self._node_marker_size,
+                render_points_as_spheres=True,
+                style="points",
+                pickable=False, opacity=1.0,
             )
 
         if self._node_coords is not None and len(self._node_coords) > 0:
@@ -898,17 +893,12 @@ class MeshViewer(SelectionPicker):
 
         pts = np.array(picked_positions)
         cloud = pv.PolyData(pts)
-        glyph_radius = 0.006 * self._model_diagonal * self._node_marker_size
-        sphere_src = pv.Sphere(
-            radius=glyph_radius,
-            theta_resolution=12,
-            phi_resolution=12,
-        )
-        glyphs = cloud.glyph(geom=sphere_src, orient=False, scale=False)
         self._node_pick_actor = self._plotter.add_mesh(
-            glyphs,
+            cloud,
             color=_PICK_COLOR,
-            smooth_shading=True,
+            point_size=self._node_marker_size * 1.5,
+            render_points_as_spheres=True,
+            style="points",
             pickable=False,
             opacity=1.0,
         )

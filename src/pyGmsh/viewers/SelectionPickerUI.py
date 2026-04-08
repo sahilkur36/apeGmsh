@@ -24,7 +24,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import gmsh
-import numpy as np
 
 from .BaseViewerUI import BaseViewerWindow
 
@@ -237,90 +236,7 @@ class SelectionPickerWindow(BaseViewerWindow):
 
     def _apply_visual_changes(self) -> None:
         """Reapply colors after a pref change."""
-        picker = self._picker
-
-        # For batched mode: rebuild dim=0 glyph if point size changed
-        if getattr(picker, '_batched', False) and 0 in picker._batch_actors:
-            try:
-                self._rebuild_batched_points()
-            except Exception:
-                pass
-
-        # For non-batched: SetScale updates + opacity/edge refresh
-        picker._recolor_all()
-
-    def _rebuild_batched_points(self) -> None:
-        """Rebuild the batched dim=0 glyph actor with current point_size."""
-        import pyvista as pv
-        picker = self._picker
-        plotter = picker._plotter
-
-        old_actor = picker._batch_actors.get(0)
-        if old_actor is not None:
-            plotter.remove_actor(old_actor)
-
-        # Reuse stored centroids to rebuild
-        centers = []
-        tags = []
-        for dt, xyz in picker._batch_centroids.items():
-            if dt[0] == 0:
-                centers.append(xyz)
-                tags.append(dt[1])
-        if not centers:
-            return
-
-        from .SelectionPicker import _IDLE_POINT, _hex_to_rgb
-        idle_rgb = np.array(
-            [int(c * 255) for c in _hex_to_rgb(_IDLE_POINT)],
-            dtype=np.uint8,
-        )
-
-        try:
-            bb = gmsh.model.getBoundingBox(-1, -1)
-            diag = float(np.linalg.norm(
-                [bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2]]
-            ))
-            if diag <= 0.0:
-                diag = 1.0
-        except Exception:
-            diag = 1.0
-
-        centers_arr = np.array(centers)
-        cloud = pv.PolyData(centers_arr)
-        sphere_src = pv.Sphere(
-            radius=0.005 * diag * picker._point_size,
-            theta_resolution=10, phi_resolution=10,
-        )
-        glyphs = cloud.glyph(geom=sphere_src, orient=False, scale=False)
-
-        n_cells_per_pt = glyphs.n_cells // len(centers) if len(centers) else 1
-        entity_tags = np.empty(glyphs.n_cells, dtype=np.int64)
-        colors = np.tile(idle_rgb, (glyphs.n_cells, 1))
-        cell_to_dt: dict[int, tuple] = {}
-
-        for i, tag in enumerate(tags):
-            start = i * n_cells_per_pt
-            end = start + n_cells_per_pt
-            entity_tags[start:end] = tag
-            dt = (0, tag)
-            picker._batch_dt_to_cells[dt] = list(range(start, end))
-            for ci in range(start, end):
-                cell_to_dt[ci] = dt
-
-        glyphs.cell_data["entity_tag"] = entity_tags
-        glyphs.cell_data["colors"] = colors
-
-        actor = plotter.add_mesh(
-            glyphs, scalars="colors", rgb=True,
-            smooth_shading=True, pickable=True,
-            reset_camera=False,
-        )
-        picker._batch_actors[0] = actor
-        picker._batch_meshes[0] = glyphs
-        picker._batch_cell_to_dt[0] = cell_to_dt
-        for tag in tags:
-            picker._id_to_actor[(0, tag)] = actor
-        picker._actor_to_id[id(actor)] = (0, -1)
+        self._picker._recolor_all()
 
     def _help_extra_rows(self):
         """BRep-specific shortcut rows for the help dialog."""

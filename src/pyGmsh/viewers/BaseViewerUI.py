@@ -418,12 +418,11 @@ class BaseViewerWindow:
 
         viewer = self._viewer
 
-        # Point size
-        self._s_point = QtWidgets.QDoubleSpinBox()
-        self._s_point.setRange(0.1, 20.0)
-        self._s_point.setSingleStep(0.5)
-        self._s_point.setDecimals(1)
-        self._s_point.setValue(float(viewer._point_size))
+        # Point size (pixels, screen-space)
+        self._s_point = QtWidgets.QSpinBox()
+        self._s_point.setRange(1, 50)
+        self._s_point.setValue(int(viewer._point_size))
+        self._s_point.setSuffix(" px")
         self._s_point.valueChanged.connect(self._on_point_size_changed)
         form.addRow("Point size", self._s_point)
 
@@ -482,9 +481,20 @@ class BaseViewerWindow:
     # Preference callbacks
     # ------------------------------------------------------------------
 
-    def _on_point_size_changed(self, value: float) -> None:
+    def _on_point_size_changed(self, value) -> None:
         self._viewer._point_size = float(value)
-        self._apply_visual_changes()
+        # Update screen-space point size on the dim=0 actor directly
+        viewer = self._viewer
+        if getattr(viewer, '_batched', False):
+            actor = viewer._batch_actors.get(0)
+            if actor is not None:
+                actor.GetProperty().SetPointSize(float(value))
+        else:
+            # Non-batched: single actor for all points
+            for dt, actor in viewer._id_to_actor.items():
+                if dt[0] == 0:
+                    actor.GetProperty().SetPointSize(float(value))
+                    break  # all dim=0 share one actor now
         self._qt_interactor.render()
 
     def _on_line_width_changed(self, value: float) -> None:

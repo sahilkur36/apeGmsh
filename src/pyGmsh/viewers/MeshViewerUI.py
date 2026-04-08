@@ -26,7 +26,6 @@ from typing import TYPE_CHECKING
 import gmsh
 
 from .SelectionPickerUI import SelectionPickerWindow
-from .MeshViewer import _NODE_COLOR
 
 if TYPE_CHECKING:
     from .MeshViewer import MeshViewer
@@ -94,8 +93,8 @@ class MeshViewerWindow(SelectionPickerWindow):
 
         # Reconfigure point-size spinbox for mesh nodes
         if hasattr(self, "_s_point"):
-            self._s_point.setRange(0.1, 5.0)
-            self._s_point.setValue(float(viewer._point_size))
+            self._s_point.setRange(1, 50)
+            self._s_point.setValue(int(viewer._point_size))
 
         # Wire pick-changed -> refresh info panel
         viewer._on_pick_changed.append(self._refresh_mesh_info)
@@ -200,38 +199,17 @@ class MeshViewerWindow(SelectionPickerWindow):
     # Point size override (sphere glyph approach)
     # ------------------------------------------------------------------
 
-    def _on_point_size_changed(self, value: float) -> None:
-        """Rebuild node cloud glyphs with new radius."""
+    def _on_point_size_changed(self, value) -> None:
+        """Update node marker point size (screen-space pixels)."""
         v = self._picker
         v._point_size = float(value)
         v._node_marker_size = float(value)
-        # Rebuild the node cloud glyph actor
-        try:
-            plotter = v._plotter
-            if v._node_actor is not None:
-                plotter.remove_actor(v._node_actor)
-                v._node_actor = None
-            if v._node_coords is not None and len(v._node_coords) > 0:
-                import pyvista as pv
-                node_cloud = pv.PolyData(v._node_coords)
-                glyph_radius = 0.004 * v._model_diagonal * v._node_marker_size
-                sphere_src = pv.Sphere(
-                    radius=glyph_radius,
-                    theta_resolution=10, phi_resolution=10,
-                )
-                glyphs = node_cloud.glyph(
-                    geom=sphere_src, orient=False, scale=False,
-                )
-                v._node_actor = plotter.add_mesh(
-                    glyphs, color=_NODE_COLOR,
-                    smooth_shading=True, pickable=False, opacity=1.0,
-                )
-        except Exception:
-            pass
-        try:
-            v._highlight_picked_nodes()
-        except Exception:
-            pass
+        # Update VTK point size directly on the node actor
+        if v._node_actor is not None:
+            try:
+                v._node_actor.GetProperty().SetPointSize(float(value))
+            except Exception:
+                pass
         try:
             self._qt_interactor.render()
         except Exception:
