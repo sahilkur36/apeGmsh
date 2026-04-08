@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 import numpy as np
 import openseespy.opensees as ops
-from pyGmsh._core import pyGmsh
+from pyGmsh import pyGmsh
 
 # ================================================================
 #  1. PARAMETERS
