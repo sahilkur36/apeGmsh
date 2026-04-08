@@ -34,14 +34,20 @@ def _install_fake_pandas() -> None:
     sys.modules["pandas"] = fake_pandas
 
 
+def _install_fake_pyvista() -> None:
+    sys.modules["pyvista"] = types.ModuleType("pyvista")
+
+
 class LibraryContractTests(unittest.TestCase):
     def setUp(self) -> None:
         _purge_pygmsh_modules()
         self._saved_gmsh = sys.modules.get("gmsh")
         self._saved_g2o = sys.modules.get("gmsh2opensees")
         self._saved_pandas = sys.modules.get("pandas")
+        self._saved_pyvista = sys.modules.get("pyvista")
         _install_fake_gmsh()
         _install_fake_pandas()
+        _install_fake_pyvista()
 
     def tearDown(self) -> None:
         _purge_pygmsh_modules()
@@ -59,6 +65,11 @@ class LibraryContractTests(unittest.TestCase):
             sys.modules.pop("pandas", None)
         else:
             sys.modules["pandas"] = self._saved_pandas
+
+        if self._saved_pyvista is None:
+            sys.modules.pop("pyvista", None)
+        else:
+            sys.modules["pyvista"] = self._saved_pyvista
 
     def test_top_level_import_only_requires_core_dependencies(self) -> None:
         pkg = importlib.import_module("pyGmsh")
@@ -177,6 +188,145 @@ class LibraryContractTests(unittest.TestCase):
         self.assertEqual(eq.slave_entities, [(0, 10), (0, 11)])
         self.assertEqual(eq.dofs, [1, 2, 3])
         self.assertEqual(rl.slave_entities, [(0, 10), (0, 11)])
+
+    def test_fem_data_dim3_keeps_volume_physical_elements(self) -> None:
+        fake_gmsh = sys.modules["gmsh"]
+
+        coords_by_tag = {
+            1: [0.0, 0.0, 0.0],
+            2: [1.0, 0.0, 0.0],
+            3: [0.0, 1.0, 0.0],
+            4: [0.0, 0.0, 1.0],
+        }
+
+        def _flatten(node_tags: list[int]) -> list[float]:
+            flat: list[float] = []
+            for tag in node_tags:
+                flat.extend(coords_by_tag[tag])
+            return flat
+
+        class _FakeMesh:
+            def getNodes(self):
+                tags = [1, 2, 3, 4]
+                return tags, _flatten(tags), []
+
+            def getElements(self, dim=-1, tag=-1):
+                data = {
+                    (1, -1): ([1], [[301]], [[1, 2]]),
+                    (2, -1): ([2], [[201]], [[1, 2, 3]]),
+                    (3, -1): ([4], [[101]], [[1, 2, 3, 4]]),
+                    (1, 30): ([1], [[301]], [[1, 2]]),
+                    (2, 20): ([2], [[201]], [[1, 2, 3]]),
+                    (3, 10): ([4], [[101]], [[1, 2, 3, 4]]),
+                }
+                types, elem_tags, node_tags = data.get((dim, tag), ([], [], []))
+                return (
+                    types,
+                    [np.array(tags, dtype=np.int64) for tags in elem_tags],
+                    [np.array(nodes, dtype=np.int64) for nodes in node_tags],
+                )
+
+            def getElementProperties(self, etype):
+                return {
+                    1: ("Line 2", 1, 1, 2, [], 2),
+                    2: ("Triangle 3", 2, 1, 3, [], 3),
+                    4: ("Tetrahedron 4", 3, 1, 4, [], 4),
+                }[int(etype)]
+
+            def getNodesForPhysicalGroup(self, dim, pg_tag):
+                node_tags = {
+                    (1, 3): [1, 2],
+                    (2, 2): [1, 2, 3],
+                    (3, 1): [1, 2, 3, 4],
+                }[(dim, pg_tag)]
+                return node_tags, _flatten(node_tags)
+
+        class _FakeModel:
+            def __init__(self):
+                self.mesh = _FakeMesh()
+
+            def getPhysicalGroups(self):
+                return [(1, 3), (2, 2), (3, 1)]
+
+            def getPhysicalName(self, dim, pg_tag):
+                return {
+                    (1, 3): "Edge",
+                    (2, 2): "Face",
+                    (3, 1): "Body",
+                }[(dim, pg_tag)]
+
+            def getEntitiesForPhysicalGroup(self, dim, pg_tag):
+                return {
+                    (1, 3): [30],
+                    (2, 2): [20],
+                    (3, 1): [10],
+                }[(dim, pg_tag)]
+
+        fake_gmsh.model = _FakeModel()
+
+        mod = importlib.import_module("pyGmsh.mesh._fem_extract")
+        fem = mod.build_fem_data(dim=3)
+
+        self.assertEqual(fem.info.n_nodes, 4)
+        self.assertEqual(fem.info.n_elems, 1)
+        np.testing.assert_array_equal(fem.node_ids, np.array([1, 2, 3, 4]))
+        np.testing.assert_array_equal(
+            fem.connectivity,
+            np.array([[1, 2, 3, 4]], dtype=int),
+        )
+
+        body_tag = fem.physical.get_tag(3, "Body")
+        self.assertEqual(body_tag, 1)
+
+        body = fem.physical.get_elements(3, body_tag)
+        face = fem.physical.get_elements(2, 2)
+        edge = fem.physical.get_elements(1, 3)
+
+        self.assertEqual(body["connectivity"].shape, (1, 4))
+        self.assertEqual(face["connectivity"].shape, (1, 3))
+        self.assertEqual(edge["connectivity"].shape, (1, 2))
+        self.assertEqual(list(map(int, body["element_ids"])), [101])
+
+    def test_fast_surface_helper_keeps_elements_with_embedded_nodes(self) -> None:
+        mod = importlib.import_module("pyGmsh.viewers.SelectionPicker")
+
+        node_tags = np.array([10, 20, 30, 40, 50], dtype=np.int64)
+        node_coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [1.0, 1.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.5, 0.5, 0.0],
+            ],
+            dtype=float,
+        )
+        tag_to_idx = np.full(51, -1, dtype=np.int64)
+        tag_to_idx[node_tags] = np.arange(len(node_tags), dtype=np.int64)
+
+        pts, faces_parts, n_cells = mod._surface_polydata_from_global_mesh(
+            node_coords,
+            tag_to_idx,
+            [2],
+            [
+                np.array(
+                    [
+                        10, 20, 50,
+                        20, 30, 50,
+                        30, 40, 50,
+                        40, 10, 50,
+                    ],
+                    dtype=np.int64,
+                )
+            ],
+        )
+
+        self.assertEqual(n_cells, 4)
+        self.assertEqual(len(pts), 5)
+        self.assertEqual(len(faces_parts), 1)
+        self.assertEqual(len(faces_parts[0]), 16)
+        self.assertEqual(int(faces_parts[0].max()), 4)
+        self.assertTrue(any(np.allclose(pt, [0.5, 0.5, 0.0]) for pt in pts))
 
 
 if __name__ == "__main__":

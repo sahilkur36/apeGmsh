@@ -1199,11 +1199,22 @@ class SelectionPickerWindow(BaseViewerWindow):
     def _on_point_size_changed(self, value: int) -> None:
         """Point-spheres use SetScale -- override base to handle dim=0
         actors specially."""
-        scale = float(value)
-        self._picker._point_size = scale
-        for (d, _), actor in self._picker._dimtag_to_actor.items():
-            if d != 0:
+        new_size = float(value)
+        picker = self._picker
+        initial = getattr(picker, "_initial_point_size", picker._point_size)
+        if not hasattr(picker, "_initial_point_size"):
+            picker._initial_point_size = picker._point_size
+        picker._point_size = new_size
+
+        scale = max(0.01, new_size / max(0.01, initial))
+        seen_actors: set[int] = set()
+        for dt, actor in picker._dimtag_to_actor.items():
+            if dt[0] != 0 or actor is None:
                 continue
+            actor_id = id(actor)
+            if actor_id in seen_actors:
+                continue
+            seen_actors.add(actor_id)
             try:
                 actor.SetScale(scale, scale, scale)
             except Exception:

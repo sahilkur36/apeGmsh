@@ -199,6 +199,76 @@ def _boundary_surface_polydata(
     return pts, faces
 
 
+def _surface_polydata_from_global_mesh(
+    node_coords: np.ndarray,
+    tag_to_idx: np.ndarray,
+    elem_types,
+    enodes_list,
+) -> tuple[np.ndarray, list[np.ndarray], int]:
+    """Build one surface entity from global mesh nodes and connectivity.
+
+    The fast viewer cannot rely on ``getNodes(dim=2, tag=...)`` alone:
+    triangles on a surface may reference nodes classified on embedded
+    points or curves, and dropping those nodes creates artificial holes.
+    """
+    if len(tag_to_idx) == 0:
+        return np.empty((0, 3), dtype=np.float64), [], 0
+
+    face_specs: list[tuple[int, np.ndarray]] = []
+    n_cells = 0
+    max_tag = len(tag_to_idx) - 1
+
+    for etype, enodes in zip(elem_types, enodes_list):
+        etype = int(etype)
+        if etype == 2:
+            npe = 3
+        elif etype == 3:
+            npe = 4
+        else:
+            continue
+
+        enodes_arr = np.asarray(enodes, dtype=np.int64)
+        if len(enodes_arr) == 0:
+            continue
+
+        n_elems = len(enodes_arr) // npe
+        node_mat = enodes_arr.reshape(n_elems, npe)
+        in_range = (
+            np.all(node_mat >= 0, axis=1)
+            & np.all(node_mat <= max_tag, axis=1)
+        )
+        if not np.any(in_range):
+            continue
+
+        node_mat = node_mat[in_range]
+        idx_mat = tag_to_idx[node_mat]
+        valid = np.all(idx_mat >= 0, axis=1)
+        if not np.any(valid):
+            continue
+
+        node_mat = node_mat[valid]
+        face_specs.append((npe, node_mat))
+        n_cells += len(node_mat)
+
+    if not face_specs:
+        return np.empty((0, 3), dtype=np.float64), [], 0
+
+    all_tags = np.concatenate([node_mat.ravel() for _, node_mat in face_specs])
+    unique_tags, inverse = np.unique(all_tags, return_inverse=True)
+    local_pts = node_coords[tag_to_idx[unique_tags]]
+
+    faces_parts: list[np.ndarray] = []
+    cursor = 0
+    for npe, node_mat in face_specs:
+        count = node_mat.size
+        local_idx = inverse[cursor:cursor + count].reshape(-1, npe)
+        prefix = np.full((len(local_idx), 1), npe, dtype=np.int64)
+        faces_parts.append(np.hstack([prefix, local_idx]).ravel())
+        cursor += count
+
+    return local_pts, faces_parts, n_cells
+
+
 # ======================================================================
 # Physical-group I/O helpers
 # ======================================================================
@@ -722,13 +792,22 @@ class SelectionPicker(BaseViewer):
 
         # ── 3. Check mesh was generated ─────────────────────────────
         try:
-            all_tags, _, _ = gmsh.model.mesh.getNodes()
+            all_tags, all_coords, _ = gmsh.model.mesh.getNodes()
         except Exception:
             self._build_scene_parametric()
             return
         if len(all_tags) == 0:
             self._build_scene_parametric()
             return
+
+        all_node_tags = np.asarray(all_tags, dtype=np.int64)
+        all_node_coords = np.asarray(all_coords, dtype=np.float64).reshape(-1, 3)
+        global_tag_to_idx = np.full(
+            int(all_node_tags.max()) + 1, -1, dtype=np.int64,
+        )
+        global_tag_to_idx[all_node_tags] = np.arange(
+            len(all_node_tags), dtype=np.int64,
+        )
 
         # ── 4. Enable batched pick/hover/recolor mode ───────────────
         self._batched = True
@@ -882,53 +961,33 @@ class SelectionPicker(BaseViewer):
             pt_offset = 0
             for _, tag in gmsh.model.getEntities(dim=2):
                 try:
-                    ntags, ncoords, _ = gmsh.model.mesh.getNodes(
-                        dim=2, tag=tag, includeBoundary=True,
-                    )
-                    if len(ntags) == 0:
-                        continue
-                    ltags = np.asarray(ntags, dtype=np.int64)
-                    lpts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
-                    lmax = int(ltags.max())
-                    lidx = np.full(lmax + 1, -1, dtype=np.int64)
-                    lidx[ltags] = np.arange(len(ltags), dtype=np.int64)
-
                     etypes, _, enodes_list = gmsh.model.mesh.getElements(2, tag)
-                    n_cells_entity = 0
-                    for etype, enodes in zip(etypes, enodes_list):
-                        etype = int(etype)
-                        if etype == 2:
-                            npe = 3
-                        elif etype == 3:
-                            npe = 4
-                        else:
-                            continue
-                        enodes = np.asarray(enodes, dtype=np.int64)
-                        n_elems = len(enodes) // npe
-                        node_mat = enodes.reshape(n_elems, npe)
-                        idx_mat = lidx[node_mat]
-                        valid = np.all(idx_mat >= 0, axis=1)
-                        idx_mat = idx_mat[valid]
-                        if len(idx_mat) == 0:
-                            continue
-                        # Offset indices
-                        idx_mat = idx_mat + pt_offset
-                        prefix = np.full((len(idx_mat), 1), npe, dtype=np.int64)
-                        all_faces_parts.append(
-                            np.hstack([prefix, idx_mat]).ravel()
+                    lpts, entity_faces_parts, n_cells_entity = (
+                        _surface_polydata_from_global_mesh(
+                            all_node_coords,
+                            global_tag_to_idx,
+                            etypes,
+                            enodes_list,
                         )
-                        n_cells_entity += len(idx_mat)
-                        all_etags.extend([tag] * len(idx_mat))
+                    )
+                    if n_cells_entity == 0:
+                        continue
 
-                    if n_cells_entity > 0:
-                        dt = (2, tag)
-                        cell_indices = list(range(cell_offset, cell_offset + n_cells_entity))
-                        all_dt_cells[dt] = cell_indices
-                        self._batch_centroids[dt] = lpts.mean(axis=0)
-                        all_pts_parts.append(lpts)
-                        cell_offset += n_cells_entity
-                        pt_offset += len(lpts)
-                        n_d2 += 1
+                    dt = (2, tag)
+                    cell_indices = list(
+                        range(cell_offset, cell_offset + n_cells_entity)
+                    )
+                    all_dt_cells[dt] = cell_indices
+                    self._batch_centroids[dt] = lpts.mean(axis=0)
+                    all_pts_parts.append(lpts)
+                    for faces in entity_faces_parts:
+                        shifted = faces.copy()
+                        shifted.reshape(-1, shifted[0] + 1)[:, 1:] += pt_offset
+                        all_faces_parts.append(shifted)
+                    all_etags.extend([tag] * n_cells_entity)
+                    cell_offset += n_cells_entity
+                    pt_offset += len(lpts)
+                    n_d2 += 1
                 except Exception:
                     pass
             if all_pts_parts:

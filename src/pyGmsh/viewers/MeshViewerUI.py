@@ -200,18 +200,12 @@ class MeshViewerWindow(SelectionPickerWindow):
     # ------------------------------------------------------------------
 
     def _on_point_size_changed(self, value) -> None:
-        """Scale node cloud glyph actor (no rebuild)."""
+        """Rebuild node glyph actors so base and picked nodes stay in sync."""
         v = self._picker
-        initial = getattr(v, '_initial_point_size', v._point_size)
-        if not hasattr(v, '_initial_point_size'):
-            v._initial_point_size = v._point_size
         v._point_size = float(value)
         v._node_marker_size = float(value)
-        if v._node_actor is not None:
-            s = max(0.01, float(value) / max(0.01, initial))
-            v._node_actor.SetScale(s, s, s)
         try:
-            self._qt_interactor.render()
+            v._refresh_node_glyphs()
         except Exception:
             pass
 

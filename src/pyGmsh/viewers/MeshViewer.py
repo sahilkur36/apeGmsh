@@ -613,20 +613,7 @@ class MeshViewer(SelectionPicker):
             }
 
         if self._node_coords is not None and len(self._node_coords) > 0:
-            node_cloud = pv.PolyData(self._node_coords)
-            self._node_cloud = node_cloud
-            glyph_radius = 0.003 * diag * max(0.1, self._node_marker_size / 10.0)
-            sphere_src = pv.Sphere(
-                radius=glyph_radius,
-                theta_resolution=8, phi_resolution=8,
-            )
-            glyphs = node_cloud.glyph(
-                geom=sphere_src, orient=False, scale=False,
-            )
-            self._node_actor = plotter.add_mesh(
-                glyphs, color=_NODE_COLOR,
-                smooth_shading=True, pickable=False, opacity=1.0,
-            )
+            self._refresh_node_glyphs(render=False)
 
         if self._node_coords is not None and len(self._node_coords) > 0:
             try:
@@ -634,6 +621,58 @@ class MeshViewer(SelectionPicker):
                 self._node_tree = cKDTree(self._node_coords)
             except ImportError:
                 self._node_tree = None
+
+    def _node_glyph_radius(self) -> float:
+        """Return the current node-cloud sphere radius."""
+        return (
+            0.003
+            * self._model_diagonal
+            * max(0.1, self._node_marker_size / 10.0)
+        )
+
+    def _picked_node_glyph_radius(self) -> float:
+        """Return the current picked-node sphere radius."""
+        return (
+            0.004
+            * self._model_diagonal
+            * max(0.1, self._node_marker_size / 10.0)
+        )
+
+    def _refresh_node_glyphs(self, *, render: bool = True) -> None:
+        """Rebuild node glyph actors so slider changes stay visually consistent."""
+        if self._plotter is None or self._node_coords is None or len(self._node_coords) == 0:
+            return
+
+        if self._node_actor is not None:
+            try:
+                self._plotter.remove_actor(self._node_actor)
+            except Exception:
+                pass
+            self._node_actor = None
+
+        self._node_cloud = pv.PolyData(self._node_coords)
+        sphere_src = pv.Sphere(
+            radius=self._node_glyph_radius(),
+            theta_resolution=8,
+            phi_resolution=8,
+        )
+        glyphs = self._node_cloud.glyph(
+            geom=sphere_src,
+            orient=False,
+            scale=False,
+        )
+        self._node_actor = self._plotter.add_mesh(
+            glyphs,
+            color=_NODE_COLOR,
+            smooth_shading=True,
+            pickable=False,
+            opacity=1.0,
+        )
+
+        if self._picked_nodes:
+            self._highlight_picked_nodes()
+        elif render:
+            self._plotter.render()
 
     # ------------------------------------------------------------------
     # Mesh-level pick mode
@@ -898,9 +937,8 @@ class MeshViewer(SelectionPicker):
 
         pts = np.array(picked_positions)
         cloud = pv.PolyData(pts)
-        pick_r = 0.004 * self._model_diagonal * max(0.1, self._node_marker_size / 10.0)
         sphere_src = pv.Sphere(
-            radius=pick_r,
+            radius=self._picked_node_glyph_radius(),
             theta_resolution=10, phi_resolution=10,
         )
         glyphs = cloud.glyph(geom=sphere_src, orient=False, scale=False)
