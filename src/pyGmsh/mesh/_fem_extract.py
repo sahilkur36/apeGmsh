@@ -192,8 +192,18 @@ def build_fem_data(dim: int = 2):
 
     # Filter to only nodes referenced by elements
     mask        = np.isin(node_tags, list(used_tags))
+    n_total     = len(node_tags)
     node_ids    = np.asarray(node_tags[mask], dtype=int)
     node_coords = node_coords[mask]
+    n_orphans   = n_total - len(node_ids)
+    if n_orphans > 0:
+        orphan_tags = node_tags[~mask]
+        print(
+            f"[FEMData] WARNING: {n_orphans} orphan node(s) removed "
+            f"(not connected to any element). "
+            f"Tags: {orphan_tags.tolist()[:20]}"
+            + (f" ... (+{n_orphans - 20} more)" if n_orphans > 20 else "")
+        )
 
     bw = _compute_bandwidth(connectivity)
 

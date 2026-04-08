@@ -1712,4 +1712,105 @@ class Mesh:
 
         return df
 
+    # ------------------------------------------------------------------
+    # Interactive mesh viewer
+    # ------------------------------------------------------------------
+
+    def viewer(self, **kwargs):
+        """Open the interactive mesh viewer.
+
+        The viewer supports picking (BRep entities, elements, nodes),
+        color modes (partition, quality, element type, physical group),
+        node/element label overlays, and physical group management.
+
+        Parameters are forwarded to :class:`MeshViewer`.
+        """
+        from ..viewers.MeshViewer import MeshViewer
+        mv = MeshViewer(self._parent, self, **kwargs)
+        return mv.show()
+
+    def results_viewer(
+        self,
+        results: str | None = None,
+        *,
+        point_data: dict | None = None,
+        cell_data: dict | None = None,
+        blocking: bool = True,
+    ) -> None:
+        """Open the results viewer (pyGmshViewer).
+
+        Parameters
+        ----------
+        results : str, optional
+            Path to a ``.vtu``, ``.vtk``, or ``.pvd`` file.
+        point_data : dict, optional
+            Nodal fields as numpy arrays: ``{name: ndarray}``.
+        cell_data : dict, optional
+            Element fields as numpy arrays: ``{name: ndarray}``.
+        blocking : bool
+            If True, blocks until viewer is closed.
+        """
+        from pyGmshViewer import show
+
+        if results is not None:
+            show(results, blocking=blocking)
+        elif point_data is not None or cell_data is not None:
+            from pyGmshViewer.loaders.vtu_loader import from_arrays
+            from pyGmshViewer.main_window import MainWindow
+
+            fem = self.get_fem_data()
+            coords = fem.node_coords
+            tag_to_idx = {int(t): i for i, t in enumerate(fem.node_ids)}
+
+            _GMSH_VTK = {
+                1: 3, 2: 5, 3: 9, 4: 10, 5: 12, 6: 13, 7: 14,
+                8: 21, 9: 23, 11: 24, 15: 1,
+            }
+            import gmsh
+            vtk_types = []
+            cells_list = []
+            for dim in range(1, 4):
+                for _, tag in gmsh.model.getEntities(dim):
+                    etypes, _, enodes = gmsh.model.mesh.getElements(dim, tag)
+                    for etype, enodes_arr in zip(etypes, enodes):
+                        vt = _GMSH_VTK.get(int(etype))
+                        if vt is None:
+                            continue
+                        props = gmsh.model.mesh.getElementProperties(int(etype))
+                        npe = props[3]
+                        node_rows = np.asarray(enodes_arr).reshape(-1, npe)
+                        for row in node_rows:
+                            idxs = [tag_to_idx.get(int(n), -1) for n in row]
+                            if -1 not in idxs:
+                                cells_list.append([npe] + idxs)
+                                vtk_types.append(vt)
+
+            mesh_data = from_arrays(
+                coords,
+                cells_list,
+                np.array(vtk_types, dtype=np.uint8),
+                point_data=point_data,
+                cell_data=cell_data,
+                name=self._parent.model_name,
+            )
+
+            import sys
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is None:
+                app = QApplication(sys.argv)
+            win = MainWindow()
+            win.load_mesh_data(mesh_data, mesh_data.name)
+            win.show()
+            if blocking:
+                app.exec()
+        else:
+            from ..viz.VTKExport import VTKExport
+            import tempfile
+            vtk_export = VTKExport(self._parent)
+            tmp = tempfile.NamedTemporaryFile(suffix=".vtu", delete=False)
+            vtk_export.write(tmp.name)
+            tmp.close()
+            show(tmp.name, blocking=blocking)
+
     # -----------------------------

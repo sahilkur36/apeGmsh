@@ -368,8 +368,19 @@ class Numberer:
         # ── Filter nodes ──────────────────────────────────────────
         if used_only:
             mask = np.isin(self._node_tags, list(self._used_tags))
+            n_total   = len(self._node_tags)
             gmsh_tags = self._node_tags[mask]
             coords    = self._node_coords[mask]
+            n_orphans = n_total - len(gmsh_tags)
+            if n_orphans > 0:
+                orphan_tags = self._node_tags[~mask]
+                print(
+                    f"[Numberer] WARNING: {n_orphans} orphan node(s) "
+                    f"skipped (not connected to any element). "
+                    f"Tags: {orphan_tags.tolist()[:20]}"
+                    + (f" ... (+{n_orphans - 20} more)"
+                       if n_orphans > 20 else "")
+                )
         else:
             gmsh_tags = self._node_tags.copy()
             coords    = self._node_coords.copy()
