@@ -807,7 +807,8 @@ class SelectionPicker(BaseViewer):
             if all_pts_parts:
                 merged_pts = np.vstack(all_pts_parts)
                 merged_lines = np.concatenate(all_lines_parts)
-                poly = pv.PolyData(merged_pts)
+                poly = pv.PolyData()
+                poly.points = merged_pts
                 poly.lines = merged_lines
                 entity_tags = np.array(all_etags, dtype=np.int64)
                 colors = np.tile(idle_rgb[1], (len(all_etags), 1))
