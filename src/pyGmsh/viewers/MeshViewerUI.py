@@ -76,6 +76,8 @@ class MeshViewerWindow(SelectionPickerWindow):
     and keyboard shortcuts.  This subclass replaces/adds mesh-specific UI.
     """
 
+    _show_console = False  # no console dock in mesh viewer
+
     def __init__(
         self,
         viewer: "MeshViewer",
@@ -140,18 +142,17 @@ class MeshViewerWindow(SelectionPickerWindow):
         """Add E/N buttons for element/node picking before inherited
         buttons."""
         self._act_elem_pick = bar.addAction(self._make_icon("E", _IC), "")
-        self._act_elem_pick.setToolTip("Element picking mode")
+        self._act_elem_pick.setToolTip("Element picking  [E]")
         self._act_elem_pick.setCheckable(True)
-        self._act_elem_pick.setChecked(True)
         self._act_elem_pick.toggled.connect(
-            lambda c: self._set_mesh_pick_ui("elem") if c else None,
+            lambda c: self._set_mesh_pick_ui("elem" if c else "off"),
         )
 
         self._act_node_pick = bar.addAction(self._make_icon("N", _IC), "")
-        self._act_node_pick.setToolTip("Node picking mode")
+        self._act_node_pick.setToolTip("Node picking  [N]")
         self._act_node_pick.setCheckable(True)
         self._act_node_pick.toggled.connect(
-            lambda c: self._set_mesh_pick_ui("node") if c else None,
+            lambda c: self._set_mesh_pick_ui("node" if c else "off"),
         )
 
         bar.addSeparator()
@@ -268,11 +269,14 @@ class MeshViewerWindow(SelectionPickerWindow):
     # ==================================================================
 
     def _action_deselect_all(self) -> None:
-        """Clear all picks and refresh the UI."""
+        """Clear all picks, reset pick mode, and sync toolbar."""
         try:
             self._picker.clear()
         except Exception:
             pass
+        # Sync toolbar buttons (clear() resets _mesh_pick_mode to "off")
+        self._set_mesh_pick_ui("off")
+        self._refresh_mesh_info()
         self._refresh_statusbar()
 
     # ==================================================================

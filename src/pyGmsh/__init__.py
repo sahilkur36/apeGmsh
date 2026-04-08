@@ -43,6 +43,7 @@ from pyGmsh.viewers.SelectionPicker import SelectionPicker
 from pyGmsh.viewers.SelectionPickerUI import SelectionPickerWindow
 from pyGmsh.viewers.MeshViewer import MeshViewer
 from pyGmsh.viewers.MeshViewerUI import MeshViewerWindow
+from pyGmsh.results.Results import Results
 import pyGmsh.solvers.Constraints as Constraints
 
 __all__ = [
@@ -53,6 +54,7 @@ __all__ = [
     "FEMData",
     "MeshInfo",
     "PhysicalGroupSet",
+    "Results",
     "Numberer",
     "NumberedMesh",
     "Selection",
@@ -62,5 +64,6 @@ __all__ = [
     "SelectionPickerWindow",
     "MeshViewer",
     "MeshViewerWindow",
+    "Results",
     "Constraints",
 ]

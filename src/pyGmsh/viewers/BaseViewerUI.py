@@ -180,16 +180,21 @@ class BaseViewerWindow:
             window.addDockWidget(QtCore.Qt.RightDockWidgetArea, dock)
 
         # ---- Bottom dock: Console (collapsible, hidden by default) ----
-        console_dock = QtWidgets.QDockWidget("Console")
-        console_dock.setFeatures(
-            QtWidgets.QDockWidget.DockWidgetMovable
-            | QtWidgets.QDockWidget.DockWidgetFloatable
-            | QtWidgets.QDockWidget.DockWidgetClosable
-        )
-        console_dock.setWidget(self._build_console_widget())
-        window.addDockWidget(QtCore.Qt.BottomDockWidgetArea, console_dock)
-        self._console_dock = console_dock
-        console_dock.hide()  # collapsed by default
+        # Subclasses can set _show_console = False to skip entirely.
+        self._console_dock = None
+        if getattr(self, "_show_console", True):
+            console_dock = QtWidgets.QDockWidget("Console")
+            console_dock.setFeatures(
+                QtWidgets.QDockWidget.DockWidgetMovable
+                | QtWidgets.QDockWidget.DockWidgetFloatable
+                | QtWidgets.QDockWidget.DockWidgetClosable
+            )
+            console_dock.setWidget(self._build_console_widget())
+            window.addDockWidget(
+                QtCore.Qt.BottomDockWidgetArea, console_dock,
+            )
+            self._console_dock = console_dock
+            console_dock.hide()  # collapsed by default
 
         # Corner assignments -- right docks span full height
         window.setCorner(
@@ -208,7 +213,8 @@ class BaseViewerWindow:
         # ---- View menu -- toggle dock visibility ----
         menu_bar = window.menuBar()
         view_menu = menu_bar.addMenu("View")
-        view_menu.addAction(console_dock.toggleViewAction())
+        if self._console_dock is not None:
+            view_menu.addAction(self._console_dock.toggleViewAction())
         for dock in extra_docks:
             view_menu.addAction(dock.toggleViewAction())
 
@@ -392,10 +398,11 @@ class BaseViewerWindow:
 
     def log(self, msg: str) -> None:
         """Append a timestamped line to the console widget."""
+        if not hasattr(self, "_console") or self._console is None:
+            return
         import datetime
         ts = datetime.datetime.now().strftime("%H:%M:%S")
         self._console.append(f"[{ts}] {msg}")
-        # Auto-scroll to bottom
         sb = self._console.verticalScrollBar()
         sb.setValue(sb.maximum())
 

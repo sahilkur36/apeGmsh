@@ -394,3 +394,117 @@ class FEMData:
     def summary(self) -> str:
         """One-line summary string."""
         return f"FEMData: {self.info.summary()}"
+
+    # ------------------------------------------------------------------
+    # VTU export
+    # ------------------------------------------------------------------
+
+    def to_vtu(
+        self,
+        filepath: str,
+        *,
+        point_data: dict[str, ndarray] | None = None,
+        cell_data: dict[str, ndarray] | None = None,
+    ) -> None:
+        """Write this mesh (+ optional results) to a VTU file.
+
+        Parameters
+        ----------
+        filepath : str
+            Output ``.vtu`` file path.
+        point_data : dict, optional
+            Nodal fields: ``{name: ndarray (N,) or (N,3)}``.
+        cell_data : dict, optional
+            Element fields: ``{name: ndarray (E,) or (E,3)}``.
+        """
+        import pyvista as pv
+
+        npe = self.connectivity.shape[1]
+        n_elems = len(self.element_ids)
+
+        _NPE_TO_VTK = {
+            1: 1, 2: 3, 3: 5, 4: 10, 6: 13, 8: 12,
+        }
+        vtk_type = _NPE_TO_VTK.get(npe, 5)
+
+        prefix = np.full((n_elems, 1), npe, dtype=np.int64)
+        cells = np.hstack([prefix, self.connectivity.astype(np.int64)])
+        cell_types = np.full(n_elems, vtk_type, dtype=np.uint8)
+
+        grid = pv.UnstructuredGrid(cells, cell_types, self.node_coords)
+
+        for name, arr in (point_data or {}).items():
+            grid.point_data[name] = np.asarray(arr)
+        for name, arr in (cell_data or {}).items():
+            grid.cell_data[name] = np.asarray(arr)
+
+        grid.save(filepath)
+
+    # ------------------------------------------------------------------
+    # Results viewer
+    # ------------------------------------------------------------------
+
+    def viewer(
+        self,
+        results: str | None = None,
+        *,
+        point_data: dict[str, ndarray] | None = None,
+        cell_data: dict[str, ndarray] | None = None,
+        blocking: bool = True,
+    ) -> None:
+        """Open the results viewer (pyGmshViewer).
+
+        No live Gmsh session required — uses the self-contained FEM data.
+
+        Parameters
+        ----------
+        results : str, optional
+            Path to a ``.vtu`` / ``.vtk`` / ``.pvd`` file.
+        point_data : dict, optional
+            Nodal results: ``{name: ndarray (N,) or (N,3)}``.
+        cell_data : dict, optional
+            Element results: ``{name: ndarray (E,) or (E,3)}``.
+        blocking : bool
+            If True, blocks until viewer is closed.
+
+        Examples
+        --------
+        View results from a VTU file::
+
+            fem.viewer("displacement_results.vtu")
+
+        View numpy arrays directly::
+
+            fem.viewer(
+                point_data={"Displacement": disp_array},
+                cell_data={"Stress": stress_array},
+            )
+
+        Just view the mesh (no results)::
+
+            fem.viewer()
+        """
+        from pyGmshViewer import show
+
+        if results is not None:
+            show(results, blocking=blocking)
+            return
+
+        # Build a VTU from our own data + optional results
+        import tempfile
+        import os
+
+        tmp = tempfile.NamedTemporaryFile(
+            suffix=".vtu", delete=False, prefix="fem_",
+        )
+        tmp_path = tmp.name
+        tmp.close()
+
+        try:
+            self.to_vtu(tmp_path, point_data=point_data, cell_data=cell_data)
+            show(tmp_path, blocking=blocking)
+        finally:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
