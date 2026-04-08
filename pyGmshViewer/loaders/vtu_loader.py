@@ -193,11 +193,13 @@ def create_deformed_mesh(
     deformed = source.copy()
     disp = np.asarray(source.point_data[displacement_field])
 
-    # Ensure 3D displacement
+    # Ensure 3-column displacement (strip rotational DOFs if present)
     if disp.ndim == 1:
         n = source.n_points
         disp = disp.reshape(n, -1)
-    if disp.shape[1] == 2:
+    if disp.shape[1] > 3:
+        disp = disp[:, :3]
+    elif disp.shape[1] == 2:
         disp = np.column_stack([disp, np.zeros(disp.shape[0])])
 
     deformed.points = np.array(source.points) + scale_factor * disp

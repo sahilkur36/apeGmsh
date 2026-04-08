@@ -834,7 +834,7 @@ class Results:
     # Viewer
     # ------------------------------------------------------------------
 
-    def viewer(self, *, blocking: bool = True) -> None:
+    def viewer(self, *, blocking: bool = False) -> None:
         """Open the results in pyGmshViewer.
 
         No live Gmsh session required.
@@ -842,30 +842,12 @@ class Results:
         Parameters
         ----------
         blocking : bool
-            If True (default), opens the viewer in-process with direct
-            memory transfer (no temp files).
-            If False, writes temp files and launches a subprocess so the
-            notebook / script keeps running — recommended for Jupyter.
+            If False (default), the viewer runs in a non-blocking Qt
+            event loop so the script/notebook keeps running.
+            If True, blocks until the viewer window is closed.
         """
-        if blocking:
-            from pyGmshViewer import show_mesh_data
-            show_mesh_data(self.to_mesh_data(), blocking=True)
-        else:
-            import tempfile
-            import shutil
-            import atexit
-            from pyGmshViewer import show
-
-            tmp_dir = tempfile.mkdtemp(prefix="pyGmsh_results_")
-            atexit.register(shutil.rmtree, tmp_dir, True)
-
-            if self.has_time_series:
-                paths = self.to_pvd(Path(tmp_dir) / self._name)
-                show(str(paths[0]), blocking=False)
-            else:
-                vtu_path = Path(tmp_dir) / f"{self._name}.vtu"
-                self.to_vtu(vtu_path)
-                show(str(vtu_path), blocking=False)
+        from pyGmshViewer import show_mesh_data
+        show_mesh_data(self.to_mesh_data(), blocking=blocking)
 
     # ------------------------------------------------------------------
     # Display

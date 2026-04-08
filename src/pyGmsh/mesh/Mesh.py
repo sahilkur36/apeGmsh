@@ -1735,7 +1735,7 @@ class Mesh:
         *,
         point_data: dict | None = None,
         cell_data: dict | None = None,
-        blocking: bool = True,
+        blocking: bool = False,
     ) -> None:
         """Open the results viewer (pyGmshViewer).
 
@@ -1748,6 +1748,7 @@ class Mesh:
         cell_data : dict, optional
             Element fields as numpy arrays: ``{name: ndarray}``.
         blocking : bool
+            If False (default), the viewer runs non-blocking.
             If True, blocks until viewer is closed.
         """
         if results is not None:

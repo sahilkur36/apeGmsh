@@ -53,35 +53,32 @@ def show(*filepaths, blocking=None):
         subprocess.Popen(cmd)
         return
 
-    # Blocking: run the Qt event loop in this process
-    _launch_blocking(lambda win: [win.load_file(p) for p in paths])
+    # Run the Qt event loop in this process
+    _launch_viewer(
+        lambda win: [win.load_file(p) for p in paths],
+        blocking=blocking,
+    )
 
 
-def show_mesh_data(mesh_data, *, blocking=None):
+def show_mesh_data(mesh_data, *, blocking=False):
     """Launch pyGmshViewer with a MeshData object directly (no file I/O).
 
     Parameters
     ----------
     mesh_data : MeshData
         Pre-built mesh data, e.g. from ``Results.to_mesh_data()``.
-    blocking : bool or None
-        If True, runs Qt event loop and blocks.
-        If None, auto-detects (True for scripts, False for Jupyter).
+    blocking : bool
+        If False (default), shows the window without blocking.
+        If True, runs Qt event loop and blocks until closed.
     """
-    if blocking is None:
-        blocking = not _in_jupyter()
-
-    if not blocking:
-        raise ValueError(
-            "Non-blocking mode requires file-based show(). "
-            "Use results.viewer(blocking=False) for subprocess mode."
-        )
-
-    _launch_blocking(lambda win: win.load_mesh_data(mesh_data, mesh_data.name))
+    _launch_viewer(
+        lambda win: win.load_mesh_data(mesh_data, mesh_data.name),
+        blocking=blocking,
+    )
 
 
-def _launch_blocking(load_fn):
-    """Create a MainWindow, call *load_fn(window)*, and run the Qt loop."""
+def _launch_viewer(load_fn, *, blocking=False):
+    """Create a MainWindow, load data, and optionally block."""
     import pyvista as pv
     pv.set_plot_theme("dark")
     pv.global_theme.font.color = "white"
@@ -96,15 +93,17 @@ def _launch_blocking(load_fn):
         app = QApplication(sys.argv)
 
     window = MainWindow()
+    window.showMaximized()
+
+    # Load data after show so the VTK render window is realized
     try:
         load_fn(window)
     except Exception as e:
         print(f"Warning: could not load data: {e}")
-    window.show()
 
-    if own_app:
+    if blocking and own_app:
         app.exec()
-    else:
-        # Inside an existing event loop (e.g. IPython with %gui qt)
-        # Just show the window; the existing loop will handle events
-        pass
+
+
+# Keep old name as alias for backward compatibility
+_launch_blocking = _launch_viewer
