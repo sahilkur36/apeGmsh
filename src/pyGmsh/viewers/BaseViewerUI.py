@@ -482,8 +482,27 @@ class BaseViewerWindow:
     # ------------------------------------------------------------------
 
     def _on_point_size_changed(self, value) -> None:
-        self._viewer._point_size = float(value)
-        self._apply_visual_changes()
+        new_size = float(value)
+        viewer = self._viewer
+        initial = getattr(viewer, '_initial_point_size', viewer._point_size)
+        if not hasattr(viewer, '_initial_point_size'):
+            viewer._initial_point_size = viewer._point_size
+        viewer._point_size = new_size
+
+        # Find the dim=0 glyph actor and scale it uniformly
+        if getattr(viewer, '_batched', False):
+            actor = getattr(viewer, '_batch_actors', {}).get(0)
+        else:
+            actor = None
+            for dt, a in viewer._id_to_actor.items():
+                if dt[0] == 0:
+                    actor = a
+                    break
+
+        if actor is not None:
+            s = max(0.01, new_size / max(0.01, initial))
+            actor.SetScale(s, s, s)
+
         self._qt_interactor.render()
 
     def _on_line_width_changed(self, value: float) -> None:

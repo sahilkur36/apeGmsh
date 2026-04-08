@@ -200,33 +200,16 @@ class MeshViewerWindow(SelectionPickerWindow):
     # ------------------------------------------------------------------
 
     def _on_point_size_changed(self, value) -> None:
-        """Rebuild node cloud glyphs with new size."""
-        import pyvista as pv
-        from .MeshViewer import _NODE_COLOR
+        """Scale node cloud glyph actor (no rebuild)."""
         v = self._picker
+        initial = getattr(v, '_initial_point_size', v._point_size)
+        if not hasattr(v, '_initial_point_size'):
+            v._initial_point_size = v._point_size
         v._point_size = float(value)
         v._node_marker_size = float(value)
-        try:
-            plotter = v._plotter
-            if v._node_actor is not None:
-                plotter.remove_actor(v._node_actor)
-                v._node_actor = None
-            if v._node_coords is not None and len(v._node_coords) > 0:
-                node_cloud = pv.PolyData(v._node_coords)
-                glyph_r = 0.003 * v._model_diagonal * max(0.1, float(value) / 10.0)
-                sphere_src = pv.Sphere(
-                    radius=glyph_r,
-                    theta_resolution=8, phi_resolution=8,
-                )
-                glyphs = node_cloud.glyph(
-                    geom=sphere_src, orient=False, scale=False,
-                )
-                v._node_actor = plotter.add_mesh(
-                    glyphs, color=_NODE_COLOR,
-                    smooth_shading=True, pickable=False, opacity=1.0,
-                )
-        except Exception:
-            pass
+        if v._node_actor is not None:
+            s = max(0.01, float(value) / max(0.01, initial))
+            v._node_actor.SetScale(s, s, s)
         try:
             self._qt_interactor.render()
         except Exception:
