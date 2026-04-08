@@ -750,6 +750,13 @@ class SelectionPicker(BaseViewer):
                     pickable=True,
                     reset_camera=False,
                 )
+                # Push points in front of coincident geometry
+                try:
+                    mapper = actor.GetMapper()
+                    mapper.SetRelativeCoincidentTopologyPointOffsetParameter(-2)
+                    mapper.SetResolveCoincidentTopologyToPolygonOffset()
+                except Exception:
+                    pass
                 self._batch_actors[0] = actor
                 self._batch_meshes[0] = cloud
                 self._batch_cell_to_dt[0] = cell_to_dt
@@ -1187,6 +1194,13 @@ class SelectionPicker(BaseViewer):
                     style="points",
                     pickable=True,
                 )
+                # Push points in front of coincident geometry
+                try:
+                    mapper = actor.GetMapper()
+                    mapper.SetRelativeCoincidentTopologyPointOffsetParameter(-2)
+                    mapper.SetResolveCoincidentTopologyToPolygonOffset()
+                except Exception:
+                    pass
                 # Register each point entity to the single actor
                 for tag in tags_d0:
                     self._register_actor(actor, (0, tag))

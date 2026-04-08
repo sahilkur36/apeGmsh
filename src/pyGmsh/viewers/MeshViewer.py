@@ -622,6 +622,14 @@ class MeshViewer(SelectionPicker):
                 style="points",
                 pickable=False, opacity=1.0,
             )
+            # Push points in front of coincident surfaces to avoid
+            # depth-fighting (points hidden behind mesh faces)
+            try:
+                mapper = self._node_actor.GetMapper()
+                mapper.SetRelativeCoincidentTopologyPointOffsetParameter(-2)
+                mapper.SetResolveCoincidentTopologyToPolygonOffset()
+            except Exception:
+                pass
 
         if self._node_coords is not None and len(self._node_coords) > 0:
             try:
