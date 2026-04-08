@@ -382,18 +382,133 @@ class FEMData:
         cols['element_ids'], cols['connectivity']
         slab['element_ids'], slab['connectivity']
     """
-    node_ids:     ndarray
-    node_coords:  ndarray
-    element_ids:  ndarray
-    connectivity: ndarray
-    info:         MeshInfo     = field(default_factory=lambda: MeshInfo(0, 0, 0))
-    physical:     PhysicalGroupSet = field(
+    node_ids:      ndarray
+    node_coords:   ndarray
+    element_ids:   ndarray
+    connectivity:  ndarray
+    element_types: ndarray = field(default_factory=lambda: np.array([], dtype=int))
+    info:          MeshInfo     = field(default_factory=lambda: MeshInfo(0, 0, 0))
+    physical:      PhysicalGroupSet = field(
         default_factory=lambda: PhysicalGroupSet({})
     )
+
+    # Gmsh element type → (name, dim, nodes_per_element)
+    _ELEM_TYPE_INFO: dict = field(default_factory=dict, repr=False)
 
     def summary(self) -> str:
         """One-line summary string."""
         return f"FEMData: {self.info.summary()}"
+
+    # ------------------------------------------------------------------
+    # Element queries by type / dimension
+    # ------------------------------------------------------------------
+
+    def get_ids(
+        self,
+        *,
+        dim: int | None = None,
+        etype: int | None = None,
+        tag: int | None = None,
+    ) -> ndarray:
+        """Return element IDs filtered by dimension, type, or single tag.
+
+        Parameters
+        ----------
+        dim : int, optional
+            Filter to elements of this topological dimension
+            (1 = lines, 2 = tris/quads, 3 = tets/hexes).
+        etype : int, optional
+            Filter to a specific Gmsh element type code
+            (e.g. 2 = 3-node triangle, 4 = 4-node tet).
+        tag : int, optional
+            Return only the element with this ID.
+
+        Returns
+        -------
+        ndarray of element IDs matching the filter.
+
+        Examples
+        --------
+        ::
+
+            fem.get_ids(dim=2)          # all surface elements
+            fem.get_ids(etype=4)        # all 4-node tets
+            fem.get_ids(tag=42)         # single element
+        """
+        mask = np.ones(len(self.element_ids), dtype=bool)
+
+        if tag is not None:
+            mask &= self.element_ids == tag
+
+        if etype is not None:
+            if len(self.element_types) == len(self.element_ids):
+                mask &= self.element_types == etype
+
+        if dim is not None:
+            if len(self.element_types) == len(self.element_ids):
+                dim_mask = np.zeros(len(self.element_ids), dtype=bool)
+                for et in np.unique(self.element_types):
+                    info = self._ELEM_TYPE_INFO.get(int(et))
+                    if info is not None and info[1] == dim:
+                        dim_mask |= self.element_types == et
+                mask &= dim_mask
+
+        return self.element_ids[mask]
+
+    def get_connectivity(
+        self,
+        *,
+        dim: int | None = None,
+        etype: int | None = None,
+        tag: int | None = None,
+    ) -> ndarray:
+        """Return connectivity rows filtered by dimension, type, or tag.
+
+        Same filter parameters as :meth:`get_ids`.
+
+        Returns
+        -------
+        ndarray(M, npe) — connectivity rows matching the filter.
+        """
+        mask = np.ones(len(self.element_ids), dtype=bool)
+
+        if tag is not None:
+            mask &= self.element_ids == tag
+
+        if etype is not None:
+            if len(self.element_types) == len(self.element_ids):
+                mask &= self.element_types == etype
+
+        if dim is not None:
+            if len(self.element_types) == len(self.element_ids):
+                dim_mask = np.zeros(len(self.element_ids), dtype=bool)
+                for et in np.unique(self.element_types):
+                    info = self._ELEM_TYPE_INFO.get(int(et))
+                    if info is not None and info[1] == dim:
+                        dim_mask |= self.element_types == et
+                mask &= dim_mask
+
+        return self.connectivity[mask]
+
+    def get_element_info(self, etype: int) -> dict | None:
+        """Return metadata for a Gmsh element type code.
+
+        Returns
+        -------
+        dict with ``name``, ``dim``, ``n_nodes``, or None if unknown.
+        """
+        info = self._ELEM_TYPE_INFO.get(etype)
+        if info is None:
+            return None
+        return {"name": info[0], "dim": info[1], "n_nodes": info[2]}
+
+    @property
+    def element_type_summary(self) -> dict[int, int]:
+        """Count of elements per Gmsh element type code."""
+        if len(self.element_types) == 0:
+            return {}
+        types, counts = np.unique(self.element_types, return_counts=True)
+        return {int(t): int(c) for t, c in zip(types, counts)}
 
     # ------------------------------------------------------------------
     # VTU export

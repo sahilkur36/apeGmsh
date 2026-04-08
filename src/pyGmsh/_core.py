@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from .viz.Inspect import Inspect
     from .core.Model import Model
     from .mesh.Mesh import Mesh
+    from .mesh.MshLoader import MshLoader
     from .mesh.PhysicalGroups import PhysicalGroups
     from .mesh.Partition import Partition
     from .mesh.View import View
@@ -31,6 +32,7 @@ class pyGmsh(_SessionBase):
         ("inspect",   ".viz.Inspect",           "Inspect",        False),
         ("model",     ".core.Model",            "Model",          False),
         ("mesh",      ".mesh.Mesh",             "Mesh",           False),
+        ("loader",    ".mesh.MshLoader",        "MshLoader",      False),
         ("physical",  ".mesh.PhysicalGroups",   "PhysicalGroups", False),
         ("partition", ".mesh.Partition",        "Partition",      False),
         ("view",      ".mesh.View",             "View",           False),
@@ -43,6 +45,7 @@ class pyGmsh(_SessionBase):
     inspect: Inspect
     model: Model
     mesh: Mesh
+    loader: MshLoader
     physical: PhysicalGroups
     partition: Partition
     view: View

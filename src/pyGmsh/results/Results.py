@@ -808,39 +808,58 @@ class Results:
         Parameters
         ----------
         blocking : bool
-            If True, blocks until the viewer is closed.
+            If True (default), blocks until the viewer window is closed.
+            If False, launches the viewer as a **subprocess** so the
+            notebook / script keeps running — recommended for Jupyter.
+
+        Notes
+        -----
+        When ``blocking=False`` the results are written to a temporary
+        directory that persists until the Python process exits (via
+        :mod:`atexit`), giving the subprocess time to load the file.
         """
         import tempfile
         import shutil
+        import atexit
 
         from pyGmshViewer import show
 
-        if self.has_time_series:
-            # Write PVD to temp dir, open .pvd
-            tmp_dir = tempfile.mkdtemp(prefix="results_")
-            try:
-                paths = self.to_pvd(Path(tmp_dir) / self._name)
-                show(str(paths[0]), blocking=blocking)
-            finally:
+        if blocking:
+            # Blocking: write temp files, show, clean up after close
+            if self.has_time_series:
+                tmp_dir = tempfile.mkdtemp(prefix="results_")
                 try:
-                    shutil.rmtree(tmp_dir)
-                except OSError:
-                    pass
+                    paths = self.to_pvd(Path(tmp_dir) / self._name)
+                    show(str(paths[0]), blocking=True)
+                finally:
+                    shutil.rmtree(tmp_dir, ignore_errors=True)
+            else:
+                tmp = tempfile.NamedTemporaryFile(
+                    suffix=".vtu", delete=False, prefix="results_",
+                )
+                tmp_path = tmp.name
+                tmp.close()
+                try:
+                    self.to_vtu(tmp_path)
+                    show(tmp_path, blocking=True)
+                finally:
+                    try:
+                        Path(tmp_path).unlink()
+                    except OSError:
+                        pass
         else:
-            # Write single VTU to temp file
-            tmp = tempfile.NamedTemporaryFile(
-                suffix=".vtu", delete=False, prefix="results_",
-            )
-            tmp_path = tmp.name
-            tmp.close()
-            try:
-                self.to_vtu(tmp_path)
-                show(tmp_path, blocking=blocking)
-            finally:
-                try:
-                    Path(tmp_path).unlink()
-                except OSError:
-                    pass
+            # Non-blocking: write to a temp dir that lives until the
+            # Python process exits, so the subprocess can read it.
+            tmp_dir = tempfile.mkdtemp(prefix="pyGmsh_results_")
+            atexit.register(shutil.rmtree, tmp_dir, True)
+
+            if self.has_time_series:
+                paths = self.to_pvd(Path(tmp_dir) / self._name)
+                show(str(paths[0]), blocking=False)
+            else:
+                vtu_path = Path(tmp_dir) / f"{self._name}.vtu"
+                self.to_vtu(vtu_path)
+                show(str(vtu_path), blocking=False)
 
     # ------------------------------------------------------------------
     # Display

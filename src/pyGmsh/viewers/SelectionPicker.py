@@ -80,6 +80,126 @@ _FILTER_DIMMED_ALPHA = 0.12
 
 
 # ======================================================================
+# Boundary-curve surface tessellation helper
+# ======================================================================
+
+def _surface_is_planar(tag: int) -> bool:
+    """Heuristic: sample the surface normal at several UV points.
+    If all normals are (nearly) parallel, the surface is planar."""
+    try:
+        lo, hi = gmsh.model.getParametrizationBounds(2, tag)
+        u_mid = 0.5 * (lo[0] + hi[0])
+        v_mid = 0.5 * (lo[1] + hi[1])
+        n0 = np.array(gmsh.model.getNormal(tag, [u_mid, v_mid]))
+        # Sample 4 corners
+        for u, v in [(lo[0], lo[1]), (hi[0], lo[1]),
+                     (lo[0], hi[1]), (hi[0], hi[1])]:
+            try:
+                ni = np.array(gmsh.model.getNormal(tag, [u, v]))
+                if abs(np.dot(n0, ni)) < 0.95:
+                    return False
+            except Exception:
+                pass
+        return True
+    except Exception:
+        return True  # assume planar if we can't check
+
+
+def _uv_grid_polydata(
+    tag: int, n_samples: int = 16,
+) -> tuple[np.ndarray, list[int]]:
+    """Tessellate a surface via its UV parametric grid.
+
+    Works well for **curved** surfaces (cylinders, spheres, cones)
+    where the UV rectangle maps cleanly to the 3D surface.
+    """
+    lo, hi = gmsh.model.getParametrizationBounds(2, tag)
+    u_vals = np.linspace(lo[0], hi[0], n_samples)
+    v_vals = np.linspace(lo[1], hi[1], n_samples)
+    uu, vv = np.meshgrid(u_vals, v_vals)
+    uv_flat = np.column_stack([uu.ravel(), vv.ravel()]).ravel().tolist()
+    pts = np.array(gmsh.model.getValue(2, tag, uv_flat)).reshape(-1, 3)
+
+    n = n_samples
+    faces: list[int] = []
+    for i in range(n - 1):
+        for j in range(n - 1):
+            v0 = i * n + j
+            v1 = v0 + 1
+            v2 = (i + 1) * n + j
+            v3 = v2 + 1
+            faces.extend([3, v0, v1, v3])
+            faces.extend([3, v0, v3, v2])
+    return pts, faces
+
+
+def _boundary_surface_polydata(
+    tag: int,
+    n_curve_samples: int = 60,
+) -> tuple[np.ndarray, list[int]]:
+    """Return ``(pts, faces)`` for a surface.
+
+    Strategy:
+    - **Curved** surfaces (cylinders, spheres): use UV parametric grid.
+    - **Planar** surfaces (trimmed, irregular): sample boundary curves
+      and triangulate with Delaunay 2D.
+
+    Parameters
+    ----------
+    tag : int
+        Gmsh surface tag.
+    n_curve_samples : int
+        Number of sample points per boundary curve (for planar path).
+
+    Returns
+    -------
+    pts : ndarray, shape (N, 3)
+    faces : list[int]  VTK-style ``[3, i, j, k, ...]``.
+    """
+    # Curved surfaces → UV grid (handles cylinders, spheres correctly)
+    if not _surface_is_planar(tag):
+        try:
+            return _uv_grid_polydata(tag, n_samples=n_curve_samples // 4)
+        except Exception:
+            pass  # fall through to boundary approach
+
+    # Planar / trimmed surfaces → boundary curve sampling + Delaunay
+    bnd = gmsh.model.getBoundary(
+        [(2, tag)], combined=False, oriented=True,
+    )
+    if not bnd:
+        raise ValueError(f"Surface {tag} has no boundary curves")
+
+    boundary_pts: list[np.ndarray] = []
+    for _, ctag in bnd:
+        abs_ctag = abs(ctag)
+        lo, hi = gmsh.model.getParametrizationBounds(1, abs_ctag)
+        u = np.linspace(lo[0], hi[0], n_curve_samples)
+        cpts = np.array(
+            gmsh.model.getValue(1, abs_ctag, u.tolist())
+        ).reshape(-1, 3)
+        if ctag < 0:
+            cpts = cpts[::-1]
+        boundary_pts.append(cpts[:-1])
+
+    polygon = np.vstack(boundary_pts)
+
+    # Centroid fan triangulation — works for any star-shaped polygon
+    # (convex or mildly concave). Respects boundary edges exactly,
+    # unlike Delaunay which can add triangles outside the boundary.
+    centroid = polygon.mean(axis=0)
+    pts = np.vstack([polygon, centroid.reshape(1, 3)])
+    c_idx = len(polygon)
+    faces: list[int] = []
+    n_bnd = len(polygon)
+    for i in range(n_bnd):
+        j = (i + 1) % n_bnd
+        faces.extend([3, c_idx, i, j])
+
+    return pts, faces
+
+
+# ======================================================================
 # Physical-group I/O helpers
 # ======================================================================
 
@@ -572,26 +692,9 @@ class SelectionPicker(BaseViewer):
         if 2 in self._dims:
             for _, tag in gmsh.model.getEntities(dim=2):
                 try:
-                    lo, hi = gmsh.model.getParametrizationBounds(2, tag)
-                    n = self._n_surf_samples
-                    u_vals = np.linspace(lo[0], hi[0], n)
-                    v_vals = np.linspace(lo[1], hi[1], n)
-                    uu, vv = np.meshgrid(u_vals, v_vals)
-                    uv_flat = np.column_stack(
-                        [uu.ravel(), vv.ravel()]
-                    ).ravel().tolist()
-                    pts = np.array(
-                        gmsh.model.getValue(2, tag, uv_flat)
-                    ).reshape(-1, 3)
-                    faces = []
-                    for ii in range(n - 1):
-                        for jj in range(n - 1):
-                            a = ii * n + jj
-                            b = a + 1
-                            c = (ii + 1) * n + jj
-                            d = c + 1
-                            faces.extend([3, a, b, d])
-                            faces.extend([3, a, d, c])
+                    pts, faces = _boundary_surface_polydata(
+                        tag, self._n_curve_samples,
+                    )
                     mesh = pv.PolyData(pts, faces=np.array(faces))
                     actor = plotter.add_mesh(
                         mesh, color=_IDLE_SURFACE,
@@ -622,34 +725,24 @@ class SelectionPicker(BaseViewer):
                     all_pts: list[np.ndarray] = []
                     all_faces: list[int] = []
                     offset = 0
-                    n = self._n_surf_samples
                     for bd, btag in boundary:
                         if bd != 2:
                             continue
                         try:
-                            lo, hi = gmsh.model.getParametrizationBounds(
-                                2, btag,
+                            pts, faces_local = _boundary_surface_polydata(
+                                btag, self._n_curve_samples,
                             )
-                            u_vals = np.linspace(lo[0], hi[0], n)
-                            v_vals = np.linspace(lo[1], hi[1], n)
-                            uu, vv = np.meshgrid(u_vals, v_vals)
-                            uv_flat = np.column_stack(
-                                [uu.ravel(), vv.ravel()]
-                            ).ravel().tolist()
-                            pts = np.array(
-                                gmsh.model.getValue(2, btag, uv_flat)
-                            ).reshape(-1, 3)
                         except Exception:
                             continue
                         all_pts.append(pts)
-                        for ii in range(n - 1):
-                            for jj in range(n - 1):
-                                a = offset + ii * n + jj
-                                b = a + 1
-                                c = offset + (ii + 1) * n + jj
-                                d = c + 1
-                                all_faces.extend([3, a, b, d])
-                                all_faces.extend([3, a, d, c])
+                        # Shift face indices by the running offset
+                        for k in range(0, len(faces_local), 4):
+                            all_faces.extend([
+                                faces_local[k],
+                                faces_local[k + 1] + offset,
+                                faces_local[k + 2] + offset,
+                                faces_local[k + 3] + offset,
+                            ])
                         offset += len(pts)
                     if not all_pts:
                         continue

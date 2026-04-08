@@ -3,41 +3,52 @@
 __version__ = "0.1.0"
 
 
-def show(*filepaths, blocking=True):
+def _in_jupyter() -> bool:
+    """Detect if running inside a Jupyter/IPython notebook."""
+    try:
+        from IPython import get_ipython
+        ip = get_ipython()
+        return ip is not None and "IPKernelApp" in ip.config
+    except Exception:
+        return False
+
+
+def show(*filepaths, blocking=None):
     """Launch the pyGmshViewer from a notebook or script.
 
     Parameters
     ----------
     *filepaths : str or Path
         One or more VTU/PVD/MSH files to open on launch.
-    blocking : bool
-        If True (default), runs the Qt event loop and blocks until the
-        window is closed — safe for scripts and ``if __name__ == '__main__'``.
-        If False, launches in a subprocess so the notebook keeps running.
+    blocking : bool or None
+        If True, runs the Qt event loop and blocks until the window
+        is closed — safe for scripts.
+        If False, launches in a subprocess so the notebook stays alive.
+        If None (default), auto-detects: False in Jupyter, True in scripts.
 
     Examples
     --------
-    From a notebook cell (non-blocking, recommended in Jupyter)::
+    From a notebook cell::
 
         from pyGmshViewer import show
-        show("results.vtu", blocking=False)
+        show("results.vtu")            # auto-detects Jupyter → subprocess
 
-    From a script (blocking)::
+    From a script::
 
         from pyGmshViewer import show
-        show("results.vtu")
-
-    Multiple files::
-
-        show("mesh.vtu", "modes.pvd", blocking=False)
+        show("results.vtu")            # auto-detects script → blocking
     """
     from pathlib import Path
+
+    if blocking is None:
+        blocking = not _in_jupyter()
 
     paths = [str(Path(f).resolve()) for f in filepaths]
 
     if not blocking:
         # Non-blocking: launch as a subprocess so the notebook stays alive
-        import sys, subprocess
+        import subprocess
+        import sys
         cmd = [sys.executable, "-m", "pyGmshViewer"] + paths
         subprocess.Popen(cmd)
         return

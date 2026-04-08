@@ -235,35 +235,62 @@ class Plot:
                 except Exception:
                     pass
 
-        # --- Surfaces (dim=2): UV grid → Poly3DCollection ---
+        # --- Surfaces (dim=2): boundary-curve sampling → Poly3DCollection ---
+        # Previous approach used a uniform UV grid which fails badly for
+        # trimmed surfaces (IGES/STEP imports) because the parametric
+        # rectangle extends beyond the trim boundary.  Instead we sample
+        # each surface's boundary curves, chain the points into a closed
+        # polygon, and fan-triangulate from the centroid.
         if show_surfaces:
             tris: list[ndarray] = []
             for _, tag in gmsh.model.getEntities(dim=2):
                 try:
-                    lo, hi = gmsh.model.getParametrizationBounds(2, tag)
-                    u_vals = np.linspace(lo[0], hi[0], n_surf_samples)
-                    v_vals = np.linspace(lo[1], hi[1], n_surf_samples)
-                    uu, vv  = np.meshgrid(u_vals, v_vals)
-                    uv_flat = np.column_stack(
-                        [uu.ravel(), vv.ravel()]
-                    ).ravel().tolist()
-                    pts = np.array(
-                        gmsh.model.getValue(2, tag, uv_flat)
-                    ).reshape(-1, 3)
-                    n = n_surf_samples
-                    for i in range(n - 1):
-                        for j in range(n - 1):
-                            a = i * n + j
-                            b = a + 1
-                            c = (i + 1) * n + j
-                            d = c + 1
-                            tris.append(pts[[a, b, d]])
-                            tris.append(pts[[a, d, c]])
+                    bnd = gmsh.model.getBoundary(
+                        [(2, tag)], combined=False, oriented=True,
+                    )
+                    if not bnd:
+                        continue
+
+                    # Sample each boundary curve and chain into polygon
+                    boundary_pts: list[ndarray] = []
+                    for _, ctag in bnd:
+                        abs_ctag = abs(ctag)
+                        lo, hi = gmsh.model.getParametrizationBounds(
+                            1, abs_ctag,
+                        )
+                        u = np.linspace(lo[0], hi[0], n_curve_samples)
+                        cpts = np.array(
+                            gmsh.model.getValue(1, abs_ctag, u.tolist())
+                        ).reshape(-1, 3)
+                        if ctag < 0:          # reversed orientation
+                            cpts = cpts[::-1]
+                        # Drop last point (== first of next curve)
+                        boundary_pts.append(cpts[:-1])
+
+                    if not boundary_pts:
+                        continue
+                    polygon = np.vstack(boundary_pts)
+
+                    # Delaunay triangulation (handles concave surfaces)
+                    try:
+                        from scipy.spatial import Delaunay
+                        tri_obj = Delaunay(polygon[:, :2])
+                        for simplex in tri_obj.simplices:
+                            tris.append(polygon[simplex])
+                    except Exception:
+                        # Fallback: centroid fan (convex only)
+                        centroid = polygon.mean(axis=0)
+                        n_bnd = len(polygon)
+                        for i in range(n_bnd):
+                            j = (i + 1) % n_bnd
+                            tris.append(
+                                np.array([centroid, polygon[i], polygon[j]])
+                            )
+
                     if label_tags:
-                        cxyz = pts.mean(axis=0)
-                        ax.text(*cxyz, f'  S{tag}', fontsize=6,
+                        ax.text(*centroid, f'  S{tag}', fontsize=6,
                                 color=color_surfaces)
-                    collected.append(pts)
+                    collected.append(polygon)
                 except Exception:
                     pass
 
@@ -857,25 +884,42 @@ class Plot:
                 tris: list[ndarray] = []
                 for t in ents:
                     try:
-                        lo, hi = gmsh.model.getParametrizationBounds(2, int(t))
-                        u_vals = np.linspace(lo[0], hi[0], n_surf_samples)
-                        v_vals = np.linspace(lo[1], hi[1], n_surf_samples)
-                        uu, vv = np.meshgrid(u_vals, v_vals)
-                        uv_flat = np.column_stack(
-                            [uu.ravel(), vv.ravel()]
-                        ).ravel().tolist()
-                        pts = np.array(
-                            gmsh.model.getValue(2, int(t), uv_flat)
-                        ).reshape(-1, 3)
-                        n = n_surf_samples
-                        for ii in range(n - 1):
-                            for jj in range(n - 1):
-                                v0 = ii * n + jj
-                                v1 = v0 + 1
-                                v2 = (ii + 1) * n + jj
-                                v3 = v2 + 1
-                                tris.append(pts[[v0, v1, v3]])
-                                tris.append(pts[[v0, v3, v2]])
+                        # Sample boundary curves (handles trimmed/concave)
+                        bnd = gmsh.model.getBoundary(
+                            [(2, int(t))], combined=False, oriented=True,
+                        )
+                        if not bnd:
+                            continue
+                        bnd_pts: list[ndarray] = []
+                        for _, ctag in bnd:
+                            abs_ctag = abs(ctag)
+                            lo, hi = gmsh.model.getParametrizationBounds(
+                                1, abs_ctag,
+                            )
+                            u = np.linspace(lo[0], hi[0], n_curve_samples)
+                            cpts = np.array(
+                                gmsh.model.getValue(1, abs_ctag, u.tolist())
+                            ).reshape(-1, 3)
+                            if ctag < 0:
+                                cpts = cpts[::-1]
+                            bnd_pts.append(cpts[:-1])
+                        if not bnd_pts:
+                            continue
+                        pts = np.vstack(bnd_pts)
+                        # Delaunay triangulation
+                        try:
+                            from scipy.spatial import Delaunay
+                            tri_obj = Delaunay(pts[:, :2])
+                            for simplex in tri_obj.simplices:
+                                tris.append(pts[simplex])
+                        except Exception:
+                            centroid = pts.mean(axis=0)
+                            n_bnd = len(pts)
+                            for i in range(n_bnd):
+                                j = (i + 1) % n_bnd
+                                tris.append(
+                                    np.array([centroid, pts[i], pts[j]])
+                                )
                         collected.append(pts)
                         centroid_pts.append(pts.mean(axis=0))
                     except Exception:

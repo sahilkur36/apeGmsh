@@ -36,6 +36,7 @@ from pyGmsh._core import pyGmsh
 from pyGmsh.core.Part import Part
 from pyGmsh.core.Assembly import Assembly
 from pyGmsh.mesh.FEMData import FEMData, MeshInfo, PhysicalGroupSet
+from pyGmsh.mesh.MshLoader import MshLoader
 from pyGmsh.solvers.Numberer import Numberer, NumberedMesh
 from pyGmsh.viz.Selection import Selection, SelectionComposite
 from pyGmsh.viewers.BaseViewer import BaseViewer
@@ -54,6 +55,7 @@ __all__ = [
     "FEMData",
     "MeshInfo",
     "PhysicalGroupSet",
+    "MshLoader",
     "Results",
     "Numberer",
     "NumberedMesh",

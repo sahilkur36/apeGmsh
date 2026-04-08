@@ -1495,13 +1495,20 @@ class Mesh:
 
         conn_blocks: list[ndarray] = []
         elem_tags: list[int] = []
+        elem_type_codes: list[int] = []
+        elem_type_info: dict[int, tuple] = {}
         for etype, etags, enodes in zip(
             elems['types'], elems['tags'], elems['node_tags']
         ):
             props  = self.get_element_properties(etype)
             npe    = props['n_nodes']
             conn_blocks.append(enodes.reshape(-1, npe).astype(int))
+            n_this = len(etags)
             elem_tags.extend(etags.astype(int).tolist())
+            elem_type_codes.extend([int(etype)] * n_this)
+            elem_type_info[int(etype)] = (
+                props['name'], props['dim'], props['n_nodes'],
+            )
 
         connectivity = np.vstack(conn_blocks) if conn_blocks else np.empty(
             (0, 0), dtype=int
@@ -1519,11 +1526,13 @@ class Mesh:
             used_tags.update(int(n) for n in enodes)
 
         return {
-            'node_tags'   : node_tags,
-            'node_coords' : node_coords,
-            'connectivity': connectivity,
-            'elem_tags'   : elem_tags,
-            'used_tags'   : used_tags,
+            'node_tags'      : node_tags,
+            'node_coords'    : node_coords,
+            'connectivity'   : connectivity,
+            'elem_tags'      : elem_tags,
+            'elem_type_codes': elem_type_codes,
+            'elem_type_info' : elem_type_info,
+            'used_tags'      : used_tags,
         }
 
     def get_fem_data(self, dim: int = 2):
@@ -1570,91 +1579,15 @@ class Mesh:
                 ops.node(int(fem.node_ids[i]),
                          *fem.node_coords[i])
         """
-        from .FEMData import (
-            FEMData, MeshInfo, PhysicalGroupSet, _compute_bandwidth,
-        )
+        from ._fem_extract import build_fem_data
 
-        raw = self._get_raw_fem_data(dim=dim)
-
-        node_tags    = raw['node_tags']
-        node_coords  = raw['node_coords']
-        connectivity = raw['connectivity']
-        elem_tags    = np.asarray(raw['elem_tags'], dtype=int)
-        used_tags    = raw['used_tags']
-
-        # Filter to only nodes that appear in elements
-        mask        = np.isin(node_tags, list(used_tags))
-        node_ids    = np.asarray(node_tags[mask], dtype=int)
-        node_coords = node_coords[mask]
-
-        bw = _compute_bandwidth(connectivity)
-
-        # ── MeshInfo ──────────────────────────────────────────────
-        info = MeshInfo(
-            n_nodes=len(node_ids),
-            n_elems=len(elem_tags),
-            bandwidth=bw,
-        )
-
-        # ── Physical groups snapshot ──────────────────────────────
-        pg_data: dict[tuple[int, int], dict] = {}
-        for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
-            name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
-            pg_node_tags, pg_coords = \
-                gmsh.model.mesh.getNodesForPhysicalGroup(pg_dim, pg_tag)
-
-            entry: dict = {
-                'name':        name,
-                'node_ids':    np.array(pg_node_tags, dtype=np.int64),
-                'node_coords': np.array(pg_coords).reshape(-1, 3),
-            }
-
-            # Capture element data for dim >= 1 physical groups
-            if pg_dim >= 1:
-                entity_tags = gmsh.model.getEntitiesForPhysicalGroup(
-                    pg_dim, pg_tag
-                )
-                pg_elem_tags: list[int] = []
-                pg_conn_blocks: list[ndarray] = []
-                for ent_tag in entity_tags:
-                    etypes, etags_list, enodes_list = \
-                        gmsh.model.mesh.getElements(
-                            dim=pg_dim, tag=int(ent_tag)
-                        )
-                    for etype, etags_arr, enodes in zip(
-                        etypes, etags_list, enodes_list
-                    ):
-                        props = gmsh.model.mesh.getElementProperties(etype)
-                        npe   = props[3]          # n_nodes
-                        pg_elem_tags.extend(
-                            int(t) for t in etags_arr
-                        )
-                        pg_conn_blocks.append(
-                            np.array(enodes, dtype=np.int64).reshape(-1, npe)
-                        )
-
-                if pg_conn_blocks:
-                    entry['element_ids']  = np.array(
-                        pg_elem_tags, dtype=np.int64
-                    )
-                    entry['connectivity'] = np.vstack(pg_conn_blocks)
-
-            pg_data[(pg_dim, pg_tag)] = entry
-
-        physical = PhysicalGroupSet(pg_data)
-
-        # ── Assemble FEMData ──────────────────────────────────────
-        result = FEMData(
-            node_ids=node_ids,
-            node_coords=node_coords,
-            element_ids=elem_tags,
-            connectivity=connectivity,
-            info=info,
-            physical=physical,
-        )
+        result = build_fem_data(dim=dim)
 
         self._log(
-            f"get_fem_data(dim={dim}) → {result.summary()}"
+            f"get_fem_data(dim={dim}) → "
+            f"{result.info.n_nodes} nodes, "
+            f"{result.info.n_elems} elements, "
+            f"bw={result.info.bandwidth}"
         )
 
         return result
@@ -1779,19 +1712,4 @@ class Mesh:
 
         return df
 
-    # ------------------------------------------------------------------
-    # Interactive mesh viewer
-    # ------------------------------------------------------------------
-
-    def viewer(self, **kwargs):
-        """Open the interactive mesh viewer.
-
-        The viewer supports dual-level picking (mesh nodes vs BRep patches),
-        color modes (partition, quality, element type, physical group),
-        node/element label overlays, renumbering, and selection sets.
-
-        Parameters are forwarded to :class:`MeshViewer`.
-        """
-        from ..viewers.MeshViewer import MeshViewer
-        mv = MeshViewer(self._parent, self, **kwargs)
-        return mv.show()
+    # -----------------------------
