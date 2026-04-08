@@ -268,6 +268,8 @@ class MeshViewer(SelectionPicker):
     def _build_scene(self) -> None:  # noqa: C901
         """Populate the plotter with one actor per BRep entity plus a
         node glyph cloud."""
+        import time
+        t0 = time.perf_counter()
         plotter = self._plotter
 
         # 1. Get all mesh nodes
@@ -305,8 +307,11 @@ class MeshViewer(SelectionPicker):
         except Exception:
             diag = 1.0
         self._model_diagonal = diag
+        t_setup = time.perf_counter() - t0
 
         # 2. For each BRep entity with dim in self._dims, build actors
+        t_actors = time.perf_counter()
+        n_actors = 0
         for dim in sorted(self._dims):
             for _, tag in gmsh.model.getEntities(dim=dim):
                 dt: DimTag = (dim, tag)
@@ -454,6 +459,9 @@ class MeshViewer(SelectionPicker):
                 )
                 # Register into SelectionPicker's _id_to_actor / _actor_to_id
                 self._register_actor(actor, dt)
+                n_actors += 1
+
+        t_actors_elapsed = time.perf_counter() - t_actors
 
         # 3. Node cloud -- filter to only nodes in the connectivity
         #    (removes orphans: arc centres, construction points)
@@ -523,6 +531,18 @@ class MeshViewer(SelectionPicker):
         # 5. Apply initial coloring
         if self._color_mode != "default":
             self._apply_coloring()
+
+        # ── Profiling summary ───────────────────────────────────────
+        total = time.perf_counter() - t0
+        n_nodes = len(self._node_tags) if self._node_tags is not None else 0
+        entities = {d: len(gmsh.model.getEntities(d)) for d in self._dims}
+        print(f"\n[mesh.viewer] Scene built in {total:.2f}s  "
+              f"({n_actors} actors, {n_nodes} nodes)")
+        print(f"  Entities: {entities}")
+        print(f"  Node setup    : {t_setup:.3f}s")
+        print(f"  Actor creation: {t_actors_elapsed:.3f}s  ({n_actors} actors)")
+        print(f"  Remainder     : {total - t_setup - t_actors_elapsed:.3f}s  "
+              f"(glyphs, KD-tree, groups, coloring)")
 
     # ------------------------------------------------------------------
     # Mesh-level pick mode

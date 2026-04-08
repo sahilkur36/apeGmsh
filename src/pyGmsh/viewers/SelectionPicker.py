@@ -938,9 +938,13 @@ class SelectionPicker(BaseViewer):
 
     def _build_scene_parametric(self) -> None:
         """Original parametric-sampling scene builder."""
+        import time
         import pyvista as pv
         plotter = self._plotter
+        t0 = time.perf_counter()
 
+        t_dim = time.perf_counter()
+        n_dim0 = 0
         if 0 in self._dims:
             # Compute an auto sphere radius as a fraction of the model's
             # bounding-box diagonal.  Spheres are built at the unit
@@ -976,9 +980,13 @@ class SelectionPicker(BaseViewer):
                     actor.SetOrigin(xyz[0], xyz[1], xyz[2])
                     actor.SetScale(scale, scale, scale)
                     self._register_actor(actor, (0, tag))
+                    n_dim0 += 1
                 except Exception:
                     pass
+        t_dim0 = time.perf_counter() - t_dim
 
+        t_dim = time.perf_counter()
+        n_dim1 = 0
         if 1 in self._dims:
             for _, tag in gmsh.model.getEntities(dim=1):
                 try:
@@ -999,9 +1007,13 @@ class SelectionPicker(BaseViewer):
                         pickable=True,
                     )
                     self._register_actor(actor, (1, tag))
+                    n_dim1 += 1
                 except Exception:
                     pass
+        t_dim1 = time.perf_counter() - t_dim
 
+        t_dim = time.perf_counter()
+        n_dim2 = 0
         if 2 in self._dims:
             for _, tag in gmsh.model.getEntities(dim=2):
                 try:
@@ -1019,9 +1031,13 @@ class SelectionPicker(BaseViewer):
                         pickable=True,
                     )
                     self._register_actor(actor, (2, tag))
+                    n_dim2 += 1
                 except Exception:
                     pass
+        t_dim2 = time.perf_counter() - t_dim
 
+        t_dim = time.perf_counter()
+        n_dim3 = 0
         if 3 in self._dims:
             # Render each volume as the combined mesh of its boundary
             # surfaces -- one actor per volume, so a click anywhere on
@@ -1070,11 +1086,30 @@ class SelectionPicker(BaseViewer):
                         pickable=True,
                     )
                     self._register_actor(actor, (3, vtag))
+                    n_dim3 += 1
                 except Exception:
                     pass
+        t_dim3 = time.perf_counter() - t_dim
 
         # Apply initial pick colours (for edit-mode preload)
+        t_rc = time.perf_counter()
         self._recolor_all()
+        t_recolor = time.perf_counter() - t_rc
+
+        # ── Profiling summary ───────────────────────────────────────
+        total = time.perf_counter() - t0
+        n_actors = len(self._actor_to_id)
+        print(f"\n[viewer] Scene built in {total:.2f}s  "
+              f"({n_actors} actors, parametric)")
+        for label, t, n in [
+            ("dim0_points", t_dim0, n_dim0),
+            ("dim1_curves", t_dim1, n_dim1),
+            ("dim2_surfaces", t_dim2, n_dim2),
+            ("dim3_volumes", t_dim3, n_dim3),
+        ]:
+            if t > 0.001:
+                print(f"  {label:16s}: {t:.3f}s  ({n} actors)")
+        print(f"  Recolor       : {t_recolor:.3f}s")
 
     # ------------------------------------------------------------------
     # Keybindings
@@ -1394,7 +1429,7 @@ class SelectionPicker(BaseViewer):
     # selection clearly visible even at small point_size values.
     _PICK_SCALE_BOOST = 1.6
 
-    def _recolor(self, dt: DimTag) -> None:
+    def _recolor(self, dt: DimTag, *, _render: bool = True) -> None:
         actor = self._id_to_actor.get(dt)
         if actor is None:
             return
@@ -1418,13 +1453,15 @@ class SelectionPicker(BaseViewer):
             else:
                 s = base
             actor.SetScale(s, s, s)
-        self._plotter.render()
+        if _render:
+            self._plotter.render()
 
     def _recolor_all(self) -> None:
         """Recolor every actor based on current hover / picks state.
         Called after set_active_group() reloads the working set."""
         for dt in self._id_to_actor:
-            self._recolor(dt)
+            self._recolor(dt, _render=False)
+        self._plotter.render()
 
     def _undo(self) -> None:
         """Undo the last pick (pop from history)."""
