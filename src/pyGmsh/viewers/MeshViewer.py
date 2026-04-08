@@ -615,21 +615,18 @@ class MeshViewer(SelectionPicker):
         if self._node_coords is not None and len(self._node_coords) > 0:
             node_cloud = pv.PolyData(self._node_coords)
             self._node_cloud = node_cloud
-            self._node_actor = plotter.add_mesh(
-                node_cloud, color=_NODE_COLOR,
-                point_size=self._node_marker_size,
-                render_points_as_spheres=True,
-                style="points",
-                pickable=False, opacity=1.0,
+            glyph_radius = 0.003 * diag * max(0.1, self._node_marker_size / 10.0)
+            sphere_src = pv.Sphere(
+                radius=glyph_radius,
+                theta_resolution=8, phi_resolution=8,
             )
-            # Push points in front of coincident surfaces to avoid
-            # depth-fighting (points hidden behind mesh faces)
-            try:
-                mapper = self._node_actor.GetMapper()
-                mapper.SetRelativeCoincidentTopologyPointOffsetParameter(-2)
-                mapper.SetResolveCoincidentTopologyToPolygonOffset()
-            except Exception:
-                pass
+            glyphs = node_cloud.glyph(
+                geom=sphere_src, orient=False, scale=False,
+            )
+            self._node_actor = plotter.add_mesh(
+                glyphs, color=_NODE_COLOR,
+                smooth_shading=True, pickable=False, opacity=1.0,
+            )
 
         if self._node_coords is not None and len(self._node_coords) > 0:
             try:
@@ -901,12 +898,16 @@ class MeshViewer(SelectionPicker):
 
         pts = np.array(picked_positions)
         cloud = pv.PolyData(pts)
+        pick_r = 0.004 * self._model_diagonal * max(0.1, self._node_marker_size / 10.0)
+        sphere_src = pv.Sphere(
+            radius=pick_r,
+            theta_resolution=10, phi_resolution=10,
+        )
+        glyphs = cloud.glyph(geom=sphere_src, orient=False, scale=False)
         self._node_pick_actor = self._plotter.add_mesh(
-            cloud,
+            glyphs,
             color=_PICK_COLOR,
-            point_size=self._node_marker_size * 1.5,
-            render_points_as_spheres=True,
-            style="points",
+            smooth_shading=True,
             pickable=False,
             opacity=1.0,
         )

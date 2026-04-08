@@ -483,18 +483,7 @@ class BaseViewerWindow:
 
     def _on_point_size_changed(self, value) -> None:
         self._viewer._point_size = float(value)
-        # Update screen-space point size on the dim=0 actor directly
-        viewer = self._viewer
-        if getattr(viewer, '_batched', False):
-            actor = viewer._batch_actors.get(0)
-            if actor is not None:
-                actor.GetProperty().SetPointSize(float(value))
-        else:
-            # Non-batched: single actor for all points
-            for dt, actor in viewer._id_to_actor.items():
-                if dt[0] == 0:
-                    actor.GetProperty().SetPointSize(float(value))
-                    break  # all dim=0 share one actor now
+        self._apply_visual_changes()
         self._qt_interactor.render()
 
     def _on_line_width_changed(self, value: float) -> None:

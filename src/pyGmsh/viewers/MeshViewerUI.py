@@ -200,16 +200,33 @@ class MeshViewerWindow(SelectionPickerWindow):
     # ------------------------------------------------------------------
 
     def _on_point_size_changed(self, value) -> None:
-        """Update node marker point size (screen-space pixels)."""
+        """Rebuild node cloud glyphs with new size."""
+        import pyvista as pv
+        from .MeshViewer import _NODE_COLOR
         v = self._picker
         v._point_size = float(value)
         v._node_marker_size = float(value)
-        # Update VTK point size directly on the node actor
-        if v._node_actor is not None:
-            try:
-                v._node_actor.GetProperty().SetPointSize(float(value))
-            except Exception:
-                pass
+        try:
+            plotter = v._plotter
+            if v._node_actor is not None:
+                plotter.remove_actor(v._node_actor)
+                v._node_actor = None
+            if v._node_coords is not None and len(v._node_coords) > 0:
+                node_cloud = pv.PolyData(v._node_coords)
+                glyph_r = 0.003 * v._model_diagonal * max(0.1, float(value) / 10.0)
+                sphere_src = pv.Sphere(
+                    radius=glyph_r,
+                    theta_resolution=8, phi_resolution=8,
+                )
+                glyphs = node_cloud.glyph(
+                    geom=sphere_src, orient=False, scale=False,
+                )
+                v._node_actor = plotter.add_mesh(
+                    glyphs, color=_NODE_COLOR,
+                    smooth_shading=True, pickable=False, opacity=1.0,
+                )
+        except Exception:
+            pass
         try:
             self._qt_interactor.render()
         except Exception:

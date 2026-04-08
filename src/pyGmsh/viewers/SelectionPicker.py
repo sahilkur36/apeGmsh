@@ -711,7 +711,7 @@ class SelectionPicker(BaseViewer):
         t_build = time.perf_counter()
         n_entities = 0
 
-        # ── dim=0: flat screen-space dots for all points ────────────
+        # ── dim=0: single glyph actor for all points ───────────────
         t_dim = time.perf_counter()
         n_d0 = 0
         if 0 in self._dims:
@@ -732,33 +732,34 @@ class SelectionPicker(BaseViewer):
             if centers:
                 centers_arr = np.array(centers)
                 cloud = pv.PolyData(centers_arr)
-                # One vertex cell per point — cell_data maps 1:1
-                entity_tags = np.array(tags_d0, dtype=np.int64)
-                colors = np.tile(idle_rgb[0], (len(tags_d0), 1))
+                base_r = diag * 0.003 * max(0.1, self._point_size / 10.0)
+                sphere_src = pv.Sphere(
+                    radius=base_r,
+                    theta_resolution=8, phi_resolution=8,
+                )
+                glyphs = cloud.glyph(geom=sphere_src, orient=False, scale=False)
+                n_cells_per_pt = glyphs.n_cells // len(centers) if len(centers) else 1
+                entity_tags = np.empty(glyphs.n_cells, dtype=np.int64)
+                colors = np.tile(idle_rgb[0], (glyphs.n_cells, 1))
                 cell_to_dt: dict[int, DimTag] = {}
                 for i, tag in enumerate(tags_d0):
+                    start = i * n_cells_per_pt
+                    end = start + n_cells_per_pt
+                    entity_tags[start:end] = tag
                     dt = (0, tag)
-                    self._batch_dt_to_cells[dt] = [i]
-                    cell_to_dt[i] = dt
-                cloud.cell_data["entity_tag"] = entity_tags
-                cloud.cell_data["colors"] = colors
+                    self._batch_dt_to_cells[dt] = list(range(start, end))
+                    for ci in range(start, end):
+                        cell_to_dt[ci] = dt
+                glyphs.cell_data["entity_tag"] = entity_tags
+                glyphs.cell_data["colors"] = colors
                 actor = plotter.add_mesh(
-                    cloud, scalars="colors", rgb=True,
-                    point_size=self._point_size,
-                    render_points_as_spheres=True,
-                    style="points",
+                    glyphs, scalars="colors", rgb=True,
+                    smooth_shading=True,
                     pickable=True,
                     reset_camera=False,
                 )
-                # Push points in front of coincident geometry
-                try:
-                    mapper = actor.GetMapper()
-                    mapper.SetRelativeCoincidentTopologyPointOffsetParameter(-2)
-                    mapper.SetResolveCoincidentTopologyToPolygonOffset()
-                except Exception:
-                    pass
                 self._batch_actors[0] = actor
-                self._batch_meshes[0] = cloud
+                self._batch_meshes[0] = glyphs
                 self._batch_cell_to_dt[0] = cell_to_dt
                 for tag in tags_d0:
                     self._id_to_actor[(0, tag)] = actor
@@ -1175,6 +1176,15 @@ class SelectionPicker(BaseViewer):
         t_dim = time.perf_counter()
         n_dim0 = 0
         if 0 in self._dims:
+            try:
+                bb = gmsh.model.getBoundingBox(-1, -1)
+                diag = float(np.linalg.norm(
+                    [bb[3] - bb[0], bb[4] - bb[1], bb[5] - bb[2]]
+                ))
+                if diag <= 0.0:
+                    diag = 1.0
+            except Exception:
+                diag = 1.0
             centers = []
             tags_d0 = []
             for _, tag in gmsh.model.getEntities(dim=0):
@@ -1187,20 +1197,17 @@ class SelectionPicker(BaseViewer):
                     pass
             if centers:
                 cloud = pv.PolyData(np.array(centers))
+                base_r = diag * 0.003 * max(0.1, self._point_size / 10.0)
+                sphere_src = pv.Sphere(
+                    radius=base_r,
+                    theta_resolution=8, phi_resolution=8,
+                )
+                glyphs = cloud.glyph(geom=sphere_src, orient=False, scale=False)
                 actor = plotter.add_mesh(
-                    cloud, color=_IDLE_POINT,
-                    point_size=self._point_size,
-                    render_points_as_spheres=True,
-                    style="points",
+                    glyphs, color=_IDLE_POINT,
+                    smooth_shading=True,
                     pickable=True,
                 )
-                # Push points in front of coincident geometry
-                try:
-                    mapper = actor.GetMapper()
-                    mapper.SetRelativeCoincidentTopologyPointOffsetParameter(-2)
-                    mapper.SetResolveCoincidentTopologyToPolygonOffset()
-                except Exception:
-                    pass
                 # Register each point entity to the single actor
                 for tag in tags_d0:
                     self._register_actor(actor, (0, tag))
