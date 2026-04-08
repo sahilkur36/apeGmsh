@@ -60,16 +60,20 @@ def show(*filepaths, blocking=None):
     )
 
 
-def show_mesh_data(mesh_data, *, blocking=False):
+def show_mesh_data(mesh_data, *, blocking=True):
     """Launch pyGmshViewer with a MeshData object directly (no file I/O).
+
+    This always runs in-process (blocking) since MeshData cannot be
+    serialized to a subprocess.  For non-blocking use, call
+    ``results.viewer(blocking=False)`` which writes temp files and
+    launches a subprocess.
 
     Parameters
     ----------
     mesh_data : MeshData
         Pre-built mesh data, e.g. from ``Results.to_mesh_data()``.
     blocking : bool
-        If False (default), shows the window without blocking.
-        If True, runs Qt event loop and blocks until closed.
+        Must be True (default). In-process Qt event loop.
     """
     _launch_viewer(
         lambda win: win.load_mesh_data(mesh_data, mesh_data.name),
