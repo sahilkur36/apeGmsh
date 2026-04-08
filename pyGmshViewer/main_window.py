@@ -118,6 +118,10 @@ class MainWindow(QMainWindow):
         self._renderer = ViewportRenderer(self._plotter_widget)
         self._probe_engine = ProbeEngine(self._plotter_widget)
 
+        # Install BaseViewer-compatible camera navigation
+        from pyGmshViewer.visualization.navigation import install_navigation
+        install_navigation(self._plotter_widget)
+
     def _setup_menu_bar(self):
         menubar = self.menuBar()
 
@@ -498,18 +502,25 @@ class MainWindow(QMainWindow):
             views[view_id]()
 
     def _set_picking(self, mode: str):
+        nav = getattr(self._plotter_widget, '_nav_set_picking', None)
         if mode == "point":
             self._renderer.enable_point_picking(
                 callback=self._on_point_picked
             )
+            if nav:
+                nav(True)
             self.statusBar().showMessage("Pick mode: Node — click on mesh")
         elif mode == "cell":
             self._renderer.enable_cell_picking(
                 callback=self._on_cell_picked
             )
+            if nav:
+                nav(True)
             self.statusBar().showMessage("Pick mode: Element — click on mesh")
         else:
             self._renderer.disable_picking()
+            if nav:
+                nav(False)
             self.statusBar().showMessage("Picking disabled")
 
     def _on_point_picked(self, point):

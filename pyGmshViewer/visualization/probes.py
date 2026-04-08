@@ -157,11 +157,19 @@ class ProbeEngine:
             self._plotter.disable_picking()
         except Exception:
             pass
+        self._set_nav_picking(False)
+
+    def _set_nav_picking(self, active: bool) -> None:
+        """Tell the navigation layer whether LMB picking is active."""
+        fn = getattr(self._plotter, '_nav_set_picking', None)
+        if fn is not None:
+            fn(active)
 
     def start_point_probe(self) -> None:
         """Enter point probe mode — next click samples all fields."""
         self._safe_disable_picking()
         self._mode = ProbeMode.POINT
+        self._set_nav_picking(True)
         self._plotter.enable_point_picking(
             callback=self._on_point_picked,
             show_message="Click on mesh to probe field values",
@@ -277,6 +285,7 @@ class ProbeEngine:
         self._safe_disable_picking()
         self._mode = ProbeMode.LINE_START
         self._line_start = None
+        self._set_nav_picking(True)
         self._plotter.enable_point_picking(
             callback=self._on_line_point_picked,
             show_message="Click FIRST point for line probe",
@@ -350,6 +359,7 @@ class ProbeEngine:
             self._add_point_marker(pos, "A")
             # Disable current picker before re-enabling for second point
             self._safe_disable_picking()
+            self._set_nav_picking(True)
             self._plotter.enable_point_picking(
                 callback=self._on_line_point_picked,
                 show_message="Click SECOND point for line probe",
@@ -363,6 +373,7 @@ class ProbeEngine:
             self._add_point_marker(pos, "B")
             result = self.probe_along_line(self._line_start, pos)
             self._mode = ProbeMode.NONE
+            self._set_nav_picking(False)
             self._plotter.disable_picking()
             if result and self._on_line_result:
                 self._on_line_result(result)
@@ -475,6 +486,7 @@ class ProbeEngine:
 
         self._safe_disable_picking()
         self._mode = ProbeMode.PLANE
+        self._set_nav_picking(True)
 
         def _on_plane_moved(normal, origin):
             result = self.probe_with_plane(origin=origin, normal=normal)
@@ -572,10 +584,12 @@ class ProbeEngine:
         self.clear_line_probe()
         self.clear_plane_probe()
         self._mode = ProbeMode.NONE
+        self._set_nav_picking(False)
 
     def stop(self) -> None:
         """Deactivate current probe mode."""
         self._mode = ProbeMode.NONE
+        self._set_nav_picking(False)
         try:
             self._plotter.disable_picking()
         except Exception:
