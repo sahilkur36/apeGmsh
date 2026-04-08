@@ -165,14 +165,16 @@ def install_navigation(plotter: pv.Plotter) -> None:
         # Don't abort — let trackball style handle pan moves,
         # and PyVista handle pick hover
 
-    # ── MMB: pan / Shift+orbit ─────────────────────────────────────
+    # ── MMB: orbit / Shift+pan ─────────────────────────────────────
     def on_mmb_press(caller, _event):
         if caller.GetShiftKey():
-            _orbit_pivot[0] = _scene_center()
-            _orbit_last[0] = caller.GetEventPosition()
-        else:
+            # Shift+MMB: pan
             _orbit_pivot[0] = None
             style.StartPan()
+        else:
+            # MMB: orbit around scene centre
+            _orbit_pivot[0] = _scene_center()
+            _orbit_last[0] = caller.GetEventPosition()
         _abort(caller, _tag_mmb_press[0])
 
     def on_mmb_release(caller, _event):

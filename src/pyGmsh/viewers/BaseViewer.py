@@ -414,8 +414,8 @@ class BaseViewer:
                                    R->L = crossing (overlap)
         Ctrl+LEFT click      : unpick entity under cursor
         Ctrl+LEFT drag       : rubber-band box-UNselect
-        MIDDLE drag          : pan camera
-        Shift+MIDDLE drag    : rotate camera (quaternion orbit)
+        MIDDLE drag          : rotate camera (quaternion orbit)
+        Shift+MIDDLE drag    : pan camera
         RIGHT drag           : pan camera
         WHEEL                : zoom
         hover (no button)    : highlight entity under cursor
@@ -721,13 +721,15 @@ class BaseViewer:
 
         def on_mmb_press(caller, _event):
             if caller.GetShiftKey():
-                # Quaternion orbit: selection centroid or scene centre
+                # Shift+MMB: pan camera
+                _orbit_pivot[0] = None
+                picker_self._interactor_style.StartPan()
+            else:
+                # MMB: quaternion orbit around selection centroid or
+                # scene centre (matches mesh viewer behaviour)
                 pivot = _selection_centroid() or _scene_center()
                 _orbit_pivot[0] = pivot
                 _orbit_last[0] = caller.GetEventPosition()
-            else:
-                _orbit_pivot[0] = None
-                picker_self._interactor_style.StartPan()
             _abort(caller, _tag_mmb_press[0])
 
         def on_mmb_release(caller, _event):

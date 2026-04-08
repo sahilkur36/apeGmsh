@@ -1260,7 +1260,109 @@ class SelectionPicker(BaseViewer):
                 self._pick_history.append(dt)
                 self._recolor(dt, _render=False)
                 added += 1
+        if added:
+            self._fire_pick_changed()
         self._plotter.render()
+
+    def _do_box_unselect(
+        self, x0: float, y0: float, x1: float, y1: float,
+        *, crossing: bool,
+    ) -> None:
+        if not getattr(self, '_batched', False):
+            return super()._do_box_unselect(x0, y0, x1, y1, crossing=crossing)
+
+        try:
+            rw = self._plotter.render_window
+            vw, vh = rw.GetSize()
+            aw, ah = rw.GetActualSize()
+            sx_ratio = aw / vw if vw else 1.0
+            sy_ratio = ah / vh if vh else 1.0
+        except Exception:
+            sx_ratio = sy_ratio = 1.0
+
+        bx0 = x0 * sx_ratio
+        bx1 = x1 * sx_ratio
+        by0 = y0 * sy_ratio
+        by1 = y1 * sy_ratio
+
+        removed = 0
+        for dt in list(self._picks):
+            pt = self._project_centroid(dt)
+            if pt is None:
+                continue
+            sx, sy = pt
+            if bx0 <= sx <= bx1 and by0 <= sy <= by1:
+                self._picks.remove(dt)
+                self._pick_history = [
+                    d for d in self._pick_history if d != dt
+                ]
+                self._recolor(dt, _render=False)
+                removed += 1
+        if removed:
+            self._fire_pick_changed()
+        self._plotter.render()
+
+    # ------------------------------------------------------------------
+    # Batched hide / isolate / reveal overrides
+    # ------------------------------------------------------------------
+
+    def _hide_selected(self) -> None:
+        """Hide picked entities — batched: dim cells transparent."""
+        if not getattr(self, '_batched', False):
+            return super()._hide_selected()
+        if not self._picks:
+            return
+        _HIDDEN_RGB = np.array([0, 0, 0], dtype=np.uint8)
+        for dt in list(self._picks):
+            dim = dt[0]
+            mesh = self._batch_meshes.get(dim)
+            cells = self._batch_dt_to_cells.get(dt)
+            if mesh is not None and cells:
+                colors = mesh.cell_data["colors"]
+                for ci in cells:
+                    colors[ci] = _HIDDEN_RGB
+                mesh.cell_data["colors"] = colors
+            self._hidden.add(dt)
+        self._picks.clear()
+        if hasattr(self, '_pick_history'):
+            self._pick_history.clear()
+        self._plotter.render()
+        self._update_status()
+        self._fire_pick_changed()
+        self._fire_visibility_changed()
+
+    def _isolate_selected(self) -> None:
+        """Hide everything except picked entities."""
+        if not getattr(self, '_batched', False):
+            return super()._isolate_selected()
+        if not self._picks:
+            return
+        visible = set(self._picks)
+        _HIDDEN_RGB = np.array([0, 0, 0], dtype=np.uint8)
+        for dt, cells in self._batch_dt_to_cells.items():
+            if dt in visible:
+                continue
+            dim = dt[0]
+            mesh = self._batch_meshes.get(dim)
+            if mesh is not None and cells:
+                colors = mesh.cell_data["colors"]
+                for ci in cells:
+                    colors[ci] = _HIDDEN_RGB
+                mesh.cell_data["colors"] = colors
+            self._hidden.add(dt)
+        self._plotter.render()
+        self._update_status()
+        self._fire_visibility_changed()
+
+    def _show_all(self) -> None:
+        """Reveal all hidden entities."""
+        if not getattr(self, '_batched', False):
+            return super()._show_all()
+        self._hidden.clear()
+        self._recolor_all()
+        self._plotter.render()
+        self._update_status()
+        self._fire_visibility_changed()
 
     def _build_scene_parametric(self) -> None:
         """Original parametric-sampling scene builder."""
