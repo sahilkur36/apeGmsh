@@ -641,8 +641,11 @@ class SelectionPicker(BaseViewer):
         VTK rendering until all actors are added.  Orders of magnitude
         faster than parametric sampling for large BRep models.
         """
+        import time
         import pyvista as pv
         plotter = self._plotter
+        t0 = time.perf_counter()
+        timings: dict[str, float] = {}
 
         # ── 1. Model diagonal for sizing ────────────────────────────
         try:
@@ -656,6 +659,7 @@ class SelectionPicker(BaseViewer):
             diag = 1.0
 
         # ── 2. Generate temp mesh if none exists ────────────────────
+        t_mesh = time.perf_counter()
         had_mesh = False
         try:
             existing_tags, _, _ = gmsh.model.mesh.getNodes()
@@ -678,6 +682,7 @@ class SelectionPicker(BaseViewer):
                 gmsh.option.setNumber("Mesh.MeshSizeMin", old_min)
                 gmsh.option.setNumber("Mesh.MeshSizeMax", old_max)
                 gmsh.option.setNumber("Mesh.Algorithm", old_algo)
+        timings["mesh_generate"] = time.perf_counter() - t_mesh
 
         # ── 3. Check mesh was generated ─────────────────────────────
         try:
@@ -696,14 +701,17 @@ class SelectionPicker(BaseViewer):
         except Exception:
             rw = None
 
+        t_actors = time.perf_counter()
         try:
-            self._build_scene_from_mesh_inner(plotter, diag)
+            dim_timings = self._build_scene_from_mesh_inner(plotter, diag)
+            timings.update(dim_timings)
         finally:
             if rw is not None:
                 try:
                     rw.SetOffScreenRendering(False)
                 except Exception:
                     pass
+        timings["actors_total"] = time.perf_counter() - t_actors
 
         # ── 5. Cleanup temp mesh ────────────────────────────────────
         if not had_mesh:
@@ -712,13 +720,42 @@ class SelectionPicker(BaseViewer):
             except Exception:
                 pass
 
+        t_recolor = time.perf_counter()
         self._recolor_all()
+        timings["recolor"] = time.perf_counter() - t_recolor
 
-    def _build_scene_from_mesh_inner(self, plotter, diag: float) -> None:
-        """Inner loop: create per-entity actors from mesh data."""
+        # ── 6. Print profiling summary ──────────────────────────────
+        total = time.perf_counter() - t0
+        n_actors = len(self._actor_to_id)
+        entities = {d: len(gmsh.model.getEntities(d)) for d in self._dims}
+        print(f"\n[viewer_fast] Scene built in {total:.2f}s  "
+              f"({n_actors} actors)")
+        print(f"  Entities: {entities}")
+        print(f"  Mesh generate : {timings.get('mesh_generate', 0):.3f}s"
+              f"  {'(used existing)' if had_mesh else '(temp coarse)'}")
+        for dim_label in ("dim0_points", "dim1_curves",
+                          "dim2_surfaces", "dim3_volumes"):
+            t = timings.get(dim_label, 0)
+            n = timings.get(dim_label + "_n", 0)
+            if t > 0:
+                print(f"  {dim_label:16s}: {t:.3f}s  ({int(n)} actors)")
+        print(f"  Actors total  : {timings.get('actors_total', 0):.3f}s")
+        print(f"  Recolor       : {timings.get('recolor', 0):.3f}s")
+
+    def _build_scene_from_mesh_inner(
+        self, plotter, diag: float,
+    ) -> dict[str, float]:
+        """Inner loop: create per-entity actors from mesh data.
+
+        Returns per-dimension timing dict.
+        """
+        import time
         import pyvista as pv
+        timings: dict[str, float] = {}
 
         # ── dim=0 — points as spheres ───────────────────────────────
+        t_dim = time.perf_counter()
+        n_dim = 0
         if 0 in self._dims:
             base_r = 0.005 * diag
             scale = float(self._point_size)
@@ -742,10 +779,15 @@ class SelectionPicker(BaseViewer):
                     actor.SetOrigin(xyz[0], xyz[1], xyz[2])
                     actor.SetScale(scale, scale, scale)
                     self._register_actor(actor, (0, tag))
+                    n_dim += 1
                 except Exception:
                     pass
+        timings["dim0_points"] = time.perf_counter() - t_dim
+        timings["dim0_points_n"] = n_dim
 
         # ── dim=1 — curves as lines ─────────────────────────────────
+        t_dim = time.perf_counter()
+        n_dim = 0
         if 1 in self._dims:
             for _, tag in gmsh.model.getEntities(dim=1):
                 try:
@@ -771,10 +813,15 @@ class SelectionPicker(BaseViewer):
                         reset_camera=False,
                     )
                     self._register_actor(actor, (1, tag))
+                    n_dim += 1
                 except Exception:
                     pass
+        timings["dim1_curves"] = time.perf_counter() - t_dim
+        timings["dim1_curves_n"] = n_dim
 
         # ── dim=2 — surfaces as triangles ───────────────────────────
+        t_dim = time.perf_counter()
+        n_dim = 0
         if 2 in self._dims:
             for _, tag in gmsh.model.getEntities(dim=2):
                 try:
@@ -792,10 +839,15 @@ class SelectionPicker(BaseViewer):
                         reset_camera=False,
                     )
                     self._register_actor(actor, (2, tag))
+                    n_dim += 1
                 except Exception:
                     pass
+        timings["dim2_surfaces"] = time.perf_counter() - t_dim
+        timings["dim2_surfaces_n"] = n_dim
 
         # ── dim=3 — volumes (combined boundary surfaces) ────────────
+        t_dim = time.perf_counter()
+        n_dim = 0
         if 3 in self._dims:
             vol_alpha = max(0.05, self._surface_opacity * 0.6)
             for _, vtag in gmsh.model.getEntities(dim=3):
@@ -822,10 +874,14 @@ class SelectionPicker(BaseViewer):
                         reset_camera=False,
                     )
                     self._register_actor(actor, (3, vtag))
+                    n_dim += 1
                 except Exception:
                     pass
+        timings["dim3_volumes"] = time.perf_counter() - t_dim
+        timings["dim3_volumes_n"] = n_dim
 
         plotter.reset_camera()
+        return timings
 
     @staticmethod
     def _mesh_entity_to_polydata(dim: int, tag: int):
