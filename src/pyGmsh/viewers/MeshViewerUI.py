@@ -93,8 +93,8 @@ class MeshViewerWindow(SelectionPickerWindow):
 
         # Reconfigure point-size spinbox for mesh nodes
         if hasattr(self, "_s_point"):
-            self._s_point.setRange(1, 5)
-            self._s_point.setValue(int(viewer._point_size))
+            self._s_point.setRange(0.1, 5.0)
+            self._s_point.setValue(float(viewer._point_size))
 
         # Wire pick-changed -> refresh info panel
         viewer._on_pick_changed.append(self._refresh_mesh_info)
@@ -199,7 +199,7 @@ class MeshViewerWindow(SelectionPickerWindow):
     # Point size override (sphere glyph approach)
     # ------------------------------------------------------------------
 
-    def _on_point_size_changed(self, value: int) -> None:
+    def _on_point_size_changed(self, value: float) -> None:
         """Rebuild node glyphs with new radius."""
         v = self._picker
         v._point_size = float(value)

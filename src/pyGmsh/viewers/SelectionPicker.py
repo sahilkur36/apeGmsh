@@ -321,7 +321,7 @@ class SelectionPicker(BaseViewer):
         physical_group: str | None = None,
         dims: list[int] | None = None,
         # --- visual properties ---
-        point_size: float = 2.0,
+        point_size: float = 1.0,
         line_width: float = 6.0,
         surface_opacity: float = 0.35,
         show_surface_edges: bool = False,

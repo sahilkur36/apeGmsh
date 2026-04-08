@@ -419,16 +419,20 @@ class BaseViewerWindow:
         viewer = self._viewer
 
         # Point size
-        self._s_point = QtWidgets.QSpinBox()
-        self._s_point.setRange(1, 20)
-        self._s_point.setValue(int(viewer._point_size))
+        self._s_point = QtWidgets.QDoubleSpinBox()
+        self._s_point.setRange(0.1, 20.0)
+        self._s_point.setSingleStep(0.5)
+        self._s_point.setDecimals(1)
+        self._s_point.setValue(float(viewer._point_size))
         self._s_point.valueChanged.connect(self._on_point_size_changed)
         form.addRow("Point size", self._s_point)
 
         # Line width
-        self._s_line = QtWidgets.QSpinBox()
-        self._s_line.setRange(1, 20)
-        self._s_line.setValue(int(viewer._line_width))
+        self._s_line = QtWidgets.QDoubleSpinBox()
+        self._s_line.setRange(0.5, 20.0)
+        self._s_line.setSingleStep(0.5)
+        self._s_line.setDecimals(1)
+        self._s_line.setValue(float(viewer._line_width))
         self._s_line.valueChanged.connect(self._on_line_width_changed)
         form.addRow("Line width", self._s_line)
 
@@ -478,12 +482,12 @@ class BaseViewerWindow:
     # Preference callbacks
     # ------------------------------------------------------------------
 
-    def _on_point_size_changed(self, value: int) -> None:
+    def _on_point_size_changed(self, value: float) -> None:
         self._viewer._point_size = float(value)
         self._apply_visual_changes()
         self._qt_interactor.render()
 
-    def _on_line_width_changed(self, value: int) -> None:
+    def _on_line_width_changed(self, value: float) -> None:
         self._viewer._line_width = float(value)
         self._apply_visual_changes()
         self._qt_interactor.render()
