@@ -82,6 +82,18 @@ class Model:
         if self._parent._verbose:
             print(f"[Model] {msg}")
 
+    def _resolve_dim(self, tag: int, default_dim: int) -> int:
+        """Return the dimension of *tag* from the registry.
+
+        If the tag appears at exactly one dimension, return that dimension.
+        If it appears at multiple dimensions (e.g. curve 1 *and* volume 1)
+        or is not in the registry at all, fall back to *default_dim*.
+        """
+        found_dims = [d for (d, t) in self._registry if t == tag]
+        if len(found_dims) == 1:
+            return found_dims[0]
+        return default_dim
+
     def _as_dimtags(
         self,
         tags: TagsLike,
@@ -91,15 +103,23 @@ class Model:
         Normalise any of the accepted input forms into a list of (dim, tag)
         tuples.
 
+        For bare integer tags the dimension is resolved automatically from
+        the internal registry when possible.  This allows, e.g.,
+        ``fragment(objects=[vol], tools=[surf], dim=3)`` to work without
+        explicit ``(dim, tag)`` tuples for the tools.
+
         Accepted forms
         --------------
-        * ``5``                  → ``[(default_dim, 5)]``
-        * ``[1, 2, 3]``          → ``[(default_dim, 1), …]``
+        * ``5``                  → ``[(resolved_dim, 5)]``
+        * ``[1, 2, 3]``          → ``[(resolved_dim, 1), …]``
         * ``(2, 5)``             → ``[(2, 5)]``
         * ``[(2, 5), (2, 6)]``   → ``[(2, 5), (2, 6)]``
+
+        When the tag is not in the registry or is ambiguous (same tag at
+        multiple dimensions), *default_dim* is used as before.
         """
         if isinstance(tags, int):
-            return [(default_dim, tags)]
+            return [(self._resolve_dim(tags, default_dim), tags)]
 
         # single (dim, tag) tuple
         if (
@@ -112,7 +132,7 @@ class Model:
         out: list[DimTag] = []
         for item in tags:
             if isinstance(item, int):
-                out.append((default_dim, item))
+                out.append((self._resolve_dim(item, default_dim), item))
             elif isinstance(item, (tuple, list)) and len(item) == 2:
                 out.append((int(item[0]), int(item[1])))
             else:
@@ -477,6 +497,69 @@ class Model:
         self._log(f"add_surface_filling(wire={wire_tag}) → tag {tag}")
         return self._register(2, tag, label, 'surface_filling')
 
+    def add_rectangle(
+        self,
+        x: float, y: float, z: float,
+        dx: float, dy: float,
+        *,
+        rounded_radius: float = 0.0,
+        label: str | None = None,
+        sync : bool       = True,
+    ) -> Tag:
+        """
+        Add a rectangular planar surface in the XY plane.
+
+        The rectangle is created at **(x, y, z)** with extents **dx** along
+        X and **dy** along Y.  Combine with :meth:`rotate` and
+        :meth:`translate` to orient it arbitrarily.
+
+        Useful as a cutting tool for :meth:`fragment` — a 2D rectangle
+        fragmented against a 3D solid splits the solid along the
+        rectangle's plane.
+
+        Parameters
+        ----------
+        x, y, z : float
+            Corner of the rectangle.
+        dx, dy : float
+            Extents along X and Y.
+        rounded_radius : float
+            If > 0, rounds the four corners with this radius.
+        label : str, optional
+            Human-readable label stored in the internal registry.
+        sync : bool
+            Synchronise the OCC kernel after creation (default True).
+
+        Returns
+        -------
+        Tag
+            Surface tag of the new rectangle.
+
+        Example
+        -------
+        ::
+
+            # Split a solid at mid-height with a cutting plane
+            bb = gmsh.model.getBoundingBox(3, 1)
+            xmin, ymin, zmin, xmax, ymax, zmax = bb
+            zmid = (zmin + zmax) / 2
+            pad = 1.0
+            rect = m1.model.add_rectangle(
+                xmin - pad, ymin - pad, zmid,
+                (xmax - xmin) + 2*pad,
+                (ymax - ymin) + 2*pad,
+            )
+            result = m1.model.fragment(objects=[1], tools=[rect], dim=3)
+        """
+        tag = gmsh.model.occ.addRectangle(x, y, z, dx, dy, roundedRadius=rounded_radius)
+        if sync:
+            gmsh.model.occ.synchronize()
+        self._log(
+            f"add_rectangle(origin=({x},{y},{z}), size=({dx},{dy})"
+            f"{f', r={rounded_radius}' if rounded_radius else ''}) → tag {tag}"
+        )
+        return self._register(2, tag, label, 'rectangle')
+
     # ------------------------------------------------------------------
     # Primitives  (dim = 3 solids)
     # ------------------------------------------------------------------
@@ -646,6 +729,18 @@ class Model:
         )
         if sync:
             gmsh.model.occ.synchronize()
+
+        # Clean up registry: remove consumed objects/tools
+        result_set = set(result)
+        if remove_object:
+            for dt in obj_dt:
+                if dt not in result_set:
+                    self._registry.pop(dt, None)
+        if remove_tool:
+            for dt in tool_dt:
+                if dt not in result_set:
+                    self._registry.pop(dt, None)
+
         tags = [t for _, t in result]
         for d, t in result:
             self._register(d, t, None, fn_name)
@@ -1061,6 +1156,10 @@ class Model:
             f"(before={before}, after={after})"
         )
         return self
+
+    # Alias so both ``model.fragment_all()`` and ``model.make_conformal()``
+    # work — mirrors the Assembly API naming convention.
+    fragment_all = make_conformal
 
     # ------------------------------------------------------------------
     # IO
