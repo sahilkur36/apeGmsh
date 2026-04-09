@@ -131,12 +131,12 @@ class BrowserTab:
                 child.setText(0, f"{dim_labels.get(dim, '?')} {tag}")
                 child.setData(0, 0x0100, ("entity", (dim, tag)))
 
-        # Staged groups not yet in Gmsh
+        # Groups in staging that aren't in Gmsh yet (new/empty)
         for name, members in self._selection.staged_groups.items():
             if name in groups:
                 continue
             item = QtWidgets.QTreeWidgetItem(self._tree.invisibleRootItem())
-            item.setText(0, f"{name} (staged)")
+            item.setText(0, name)
             item.setText(1, str(len(members)))
             item.setData(0, 0x0100, ("group", name))
             item.setForeground(0, QtGui.QBrush(QtGui.QColor("#f9e2af")))

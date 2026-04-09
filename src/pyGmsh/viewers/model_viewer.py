@@ -259,6 +259,8 @@ class ModelViewer:
 
         sel.on_changed.append(_on_sel_changed)
         sel.on_changed.append(lambda: browser.refresh())
+        # Write active group to Gmsh on every pick change
+        sel.on_changed.append(lambda: sel.commit_active_group())
 
         # Visibility changed → render
         vis_mgr.on_changed.append(lambda: plotter.render())

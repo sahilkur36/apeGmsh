@@ -203,9 +203,14 @@ class SelectionState:
         return dict(self._staged_groups)
 
     def set_active_group(self, name: str | None) -> None:
-        """Switch active group, staging current picks."""
+        """Switch active group, writing the outgoing group to Gmsh."""
+        # Write outgoing group to Gmsh immediately
         if self._active_group is not None:
-            self._staged_groups[self._active_group] = list(self._picks)
+            members = list(self._picks)
+            self._staged_groups[self._active_group] = members
+            if members:
+                _write_group(self._active_group, members)
+
         self._active_group = name
         if name is None:
             self._picks = []
@@ -216,9 +221,17 @@ class SelectionState:
         self._history = list(self._picks)
         self._fire()
 
+    def commit_active_group(self) -> None:
+        """Write the current active group to Gmsh now."""
+        if self._active_group is not None and self._picks:
+            self._staged_groups[self._active_group] = list(self._picks)
+            _write_group(self._active_group, self._picks)
+
     def apply_group(self, name: str) -> None:
-        """Stage current picks as group *name*."""
+        """Stage current picks as group *name* and write to Gmsh."""
         self._staged_groups[name] = list(self._picks)
+        if self._picks:
+            _write_group(name, self._picks)
 
     def rename_group(self, old: str, new: str) -> None:
         if old in self._staged_groups:
