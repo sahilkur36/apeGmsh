@@ -63,6 +63,7 @@ class VisibilityManager:
             self._hidden.add(dt)
         self._selection.clear()
         self._rebuild_actors()
+        self._reset_colors()
         self._fire()
 
     def isolate(self) -> None:
@@ -74,6 +75,7 @@ class VisibilityManager:
             if dt not in picks:
                 self._hidden.add(dt)
         self._rebuild_actors()
+        self._reset_colors()
         self._fire()
 
     def reveal_all(self) -> None:
@@ -82,10 +84,19 @@ class VisibilityManager:
             return
         self._hidden.clear()
         self._rebuild_actors()
+        self._reset_colors()
         self._fire()
+
+    def _reset_colors(self) -> None:
+        """Reset all visible entity colors to idle, re-apply pick highlights."""
+        self._color_mgr.reset_all_idle()
+        # Re-apply pick state for any remaining picks
+        for dt in self._selection._picks:
+            self._color_mgr.set_entity_state(dt, picked=True)
 
     def _rebuild_actors(self) -> None:
         """Extract visible cells per dimension and swap actors."""
+        from .color_manager import IDLE_COLORS
         plotter = self._plotter
         reg = self._registry
 
@@ -93,6 +104,13 @@ class VisibilityManager:
             full_mesh = reg._full_meshes.get(dim)
             if full_mesh is None:
                 continue
+
+            # Reset colors on full mesh to idle before extracting
+            idle_rgb = IDLE_COLORS.get(dim, IDLE_COLORS[2])
+            colors = full_mesh.cell_data.get("colors")
+            if colors is not None:
+                colors[:] = idle_rgb
+                full_mesh.cell_data["colors"] = colors
 
             kwargs = reg._add_mesh_kwargs.get(dim, {})
 
