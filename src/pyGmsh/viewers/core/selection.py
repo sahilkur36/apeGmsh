@@ -116,9 +116,12 @@ class SelectionState:
             self.pick(dt)
 
     def clear(self) -> None:
+        """Clear picks without affecting the active group's stored members."""
         if self._picks:
             self._picks.clear()
             self._history.clear()
+            # Deactivate group so commit doesn't overwrite with empty
+            self._active_group = None
             self._fire()
 
     def undo(self) -> "DimTag | None":
@@ -203,7 +206,22 @@ class SelectionState:
         return dict(self._staged_groups)
 
     def set_active_group(self, name: str | None) -> None:
-        """Switch active group, writing the outgoing group to Gmsh."""
+        """Switch active group, writing the outgoing group to Gmsh.
+
+        If *name* is the same as the current active group, reloads
+        without writing (avoids overwriting with stale picks).
+        """
+        # Reload same group → don't write outgoing (would overwrite)
+        if name is not None and name == self._active_group:
+            # Reload from staged or Gmsh
+            if name in self._staged_groups:
+                self._picks = list(self._staged_groups[name])
+            else:
+                self._picks = _load_group_members(name)
+            self._history = list(self._picks)
+            self._fire()
+            return
+
         # Write outgoing group to Gmsh immediately
         if self._active_group is not None:
             members = list(self._picks)
