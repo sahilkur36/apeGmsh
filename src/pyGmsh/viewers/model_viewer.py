@@ -337,24 +337,19 @@ class ModelViewer:
 
         pick_engine.on_hover = _on_hover
 
-        # Selection changed → recolor + refresh UI
+        # Selection changed → batch recolor + refresh UI
         def _on_sel_changed():
             import time as _t
             _t0 = _t.perf_counter()
-            # Recolor all entities based on current state
-            all_ents = registry.all_entities()
-            picks_set = set(sel._picks)
-            for entity_dt in all_ents:
-                is_picked = entity_dt in picks_set
-                is_hidden = vis_mgr.is_hidden(entity_dt)
-                color_mgr.set_entity_state(
-                    entity_dt, picked=is_picked, hidden=is_hidden,
-                )
+            color_mgr.recolor_all(
+                picks=set(sel._picks),
+                hidden=vis_mgr.hidden,
+                hover=pick_engine.hover_entity,
+            )
             _t1 = _t.perf_counter()
             plotter.render()
             _t2 = _t.perf_counter()
-            print(f"[sel_changed] {len(all_ents)} entities | "
-                  f"recolor={(_t1-_t0)*1000:.1f}ms  "
+            print(f"[sel_changed] recolor={(_t1-_t0)*1000:.1f}ms  "
                   f"render={(_t2-_t1)*1000:.1f}ms")
             n = len(sel.picks)
             grp = sel.active_group or "none"

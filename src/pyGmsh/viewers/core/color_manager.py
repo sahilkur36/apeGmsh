@@ -114,7 +114,7 @@ class ColorManager:
         self._set_cells_rgb(dt, np.asarray(rgb, dtype=np.uint8))
 
     def reset_all_idle(self) -> None:
-        """Reset every entity to its idle color."""
+        """Reset every entity to its idle color (vectorized)."""
         reg = self._registry
         for dim in reg.dims:
             mesh = reg.dim_meshes.get(dim)
@@ -123,10 +123,52 @@ class ColorManager:
             colors = mesh.cell_data.get("colors")
             if colors is None:
                 continue
-            cell_map = reg._cell_to_dt.get(dim, {})
-            for cell_idx, dt in cell_map.items():
-                colors[cell_idx] = self._idle_fn(dt)
-            mesh.cell_data["colors"] = colors  # trigger VTK modified
+            idle = IDLE_COLORS.get(dim, IDLE_COLORS[2])
+            colors[:] = idle  # broadcast fill — instant
+            mesh.cell_data["colors"] = colors
+
+    def recolor_all(
+        self,
+        picks: set["DimTag"],
+        hidden: set["DimTag"] | None = None,
+        hover: "DimTag | None" = None,
+    ) -> None:
+        """Batch recolor all entities in one pass per dimension.
+
+        Uses numpy fancy indexing — single ``cell_data`` assignment
+        per dimension instead of per-entity.
+        """
+        reg = self._registry
+        hidden = hidden or set()
+
+        for dim in reg.dims:
+            mesh = reg.dim_meshes.get(dim)
+            if mesh is None:
+                continue
+            colors = mesh.cell_data.get("colors")
+            if colors is None:
+                continue
+
+            # Fill all with idle color for this dim
+            idle = IDLE_COLORS.get(dim, IDLE_COLORS[2])
+            colors[:] = idle
+
+            # Overlay pick color on picked entities
+            for dt in picks:
+                if dt[0] != dim:
+                    continue
+                cells = reg.cells_for_entity(dt)
+                if cells:
+                    colors[cells] = self._pick_rgb
+
+            # Overlay hover color
+            if hover is not None and hover[0] == dim and hover not in picks:
+                cells = reg.cells_for_entity(hover)
+                if cells:
+                    colors[cells] = self._hover_rgb
+
+            # Single VTK update per dimension
+            mesh.cell_data["colors"] = colors
 
     def set_pick_color(self, rgb: np.ndarray) -> None:
         """Change the pick highlight color."""
@@ -137,7 +179,7 @@ class ColorManager:
     # ------------------------------------------------------------------
 
     def _set_cells_rgb(self, dt: "DimTag", rgb: np.ndarray) -> None:
-        """Write *rgb* to every cell of entity *dt* in the merged mesh."""
+        """Write *rgb* to cells of entity *dt* (numpy fancy indexing)."""
         reg = self._registry
         cells = reg.cells_for_entity(dt)
         if not cells:
@@ -148,6 +190,5 @@ class ColorManager:
         colors = mesh.cell_data.get("colors")
         if colors is None:
             return
-        for ci in cells:
-            colors[ci] = rgb
-        mesh.cell_data["colors"] = colors  # trigger VTK modified
+        colors[cells] = rgb  # numpy fancy indexing (vectorized)
+        mesh.cell_data["colors"] = colors
