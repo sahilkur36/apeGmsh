@@ -231,13 +231,17 @@ class ViewerWindow:
         self._toolbar = bar
         self._window.addToolBar(QtCore.Qt.LeftToolBarArea, bar)
 
-        # ── Menu bar ────────────────────────────────────────────────
-        menu_bar = self._window.menuBar()
-        view_menu = menu_bar.addMenu("View")
+        # ── Menu bar (only if there are toggleable docks) ───────────
+        view_items = []
         if self._console_dock is not None:
-            view_menu.addAction(self._console_dock.toggleViewAction())
+            view_items.append(self._console_dock.toggleViewAction())
         for dock in (extra_docks or []):
-            view_menu.addAction(dock.toggleViewAction())
+            view_items.append(dock.toggleViewAction())
+        if view_items:
+            menu_bar = self._window.menuBar()
+            view_menu = menu_bar.addMenu("View")
+            for action in view_items:
+                view_menu.addAction(action)
 
         # ── Status bar ──────────────────────────────────────────────
         self._statusbar = self._window.statusBar()
