@@ -258,3 +258,81 @@ class FilterTab:
     def _select_none(self):
         for cb in self._checkboxes.values():
             cb.setChecked(False)
+
+
+# ======================================================================
+# ViewTab — Entity label overlays
+# ======================================================================
+
+_DIM_NAMES = {0: "Points", 1: "Curves", 2: "Surfaces", 3: "Volumes"}
+_DIM_ABBR = {0: "P", 1: "C", 2: "S", 3: "V"}
+
+
+class ViewTab:
+    """Toggle entity label overlays per dimension in the 3D viewport."""
+
+    def __init__(
+        self,
+        dims: list[int],
+        *,
+        on_labels_changed: Callable[
+            [dict[int, bool], int, bool], None
+        ] | None = None,
+    ) -> None:
+        """
+        Parameters
+        ----------
+        dims : list[int]
+            Available dimensions.
+        on_labels_changed : callable
+            ``fn(active_dims_dict, font_size, use_names)`` called when
+            any toggle or setting changes.
+        """
+        QtWidgets, _, _ = _qt()
+        self._on_labels_changed = on_labels_changed
+
+        self.widget = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(self.widget)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+
+        # ── Dim checkboxes ──────────────────────────────────────────
+        group = QtWidgets.QGroupBox("Show entity labels on screen")
+        group_layout = QtWidgets.QVBoxLayout(group)
+
+        self._dim_cbs: dict[int, object] = {}
+        for d in sorted(dims):
+            cb = QtWidgets.QCheckBox(f"{_DIM_NAMES.get(d, f'dim={d}')} tags")
+            cb.setChecked(False)
+            cb.toggled.connect(self._fire)
+            group_layout.addWidget(cb)
+            self._dim_cbs[d] = cb
+
+        layout.addWidget(group)
+
+        # ── Label style ─────────────────────────────────────────────
+        style_group = QtWidgets.QGroupBox("Label style")
+        style_layout = QtWidgets.QFormLayout(style_group)
+        style_layout.setSpacing(4)
+
+        self._font_size = QtWidgets.QSpinBox()
+        self._font_size.setRange(6, 24)
+        self._font_size.setValue(10)
+        self._font_size.valueChanged.connect(self._fire)
+        style_layout.addRow("Font size", self._font_size)
+
+        self._use_names = QtWidgets.QCheckBox("Show names instead of tags")
+        self._use_names.setChecked(False)
+        self._use_names.toggled.connect(self._fire)
+        style_layout.addRow(self._use_names)
+
+        layout.addWidget(style_group)
+        layout.addStretch(1)
+
+    def _fire(self, *_args) -> None:
+        if self._on_labels_changed is None:
+            return
+        active = {d: cb.isChecked() for d, cb in self._dim_cbs.items()}
+        font_size = self._font_size.value()
+        use_names = self._use_names.isChecked()
+        self._on_labels_changed(active, font_size, use_names)

@@ -86,7 +86,7 @@ class ModelViewer:
         from .scene.brep_scene import build_brep_scene
         from .ui.viewer_window import ViewerWindow
         from .ui.preferences import PreferencesTab
-        from .ui.model_tabs import BrowserTab, FilterTab
+        from .ui.model_tabs import BrowserTab, FilterTab, ViewTab
 
         # Ensure geometry is synced
         gmsh.model.occ.synchronize()
@@ -185,8 +185,82 @@ class ModelViewer:
 
         filter_tab = FilterTab(self._dims)
 
+        # ── View tab (entity labels) ────────────────────────────────
+        _label_actors: list = []
+        _DIM_ABBR = {0: "P", 1: "C", 2: "S", 3: "V"}
+
+        def _on_labels_changed(active_dims, font_size, use_names):
+            # Remove existing labels
+            for a in _label_actors:
+                try:
+                    plotter.remove_actor(a)
+                except Exception:
+                    pass
+            _label_actors.clear()
+
+            for dim, show in active_dims.items():
+                if not show:
+                    continue
+                points = []
+                labels = []
+                for _, tag in gmsh.model.getEntities(dim=dim):
+                    try:
+                        bb = gmsh.model.getBoundingBox(dim, tag)
+                        cx = (bb[0] + bb[3]) * 0.5
+                        cy = (bb[1] + bb[4]) * 0.5
+                        cz = (bb[2] + bb[5]) * 0.5
+                        points.append([cx, cy, cz])
+                    except Exception:
+                        continue
+                    if use_names:
+                        # Try to get physical group name
+                        name = None
+                        for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(dim):
+                            try:
+                                ents = gmsh.model.getEntitiesForPhysicalGroup(
+                                    pg_dim, pg_tag,
+                                )
+                                if tag in ents:
+                                    name = gmsh.model.getPhysicalName(
+                                        pg_dim, pg_tag,
+                                    )
+                                    break
+                            except Exception:
+                                pass
+                        labels.append(
+                            name or f"{_DIM_ABBR[dim]}{tag}"
+                        )
+                    else:
+                        labels.append(f"{_DIM_ABBR[dim]}{tag}")
+
+                if not points:
+                    continue
+
+                try:
+                    actor = plotter.add_point_labels(
+                        np.array(points), labels,
+                        font_size=font_size,
+                        text_color="white",
+                        shape_color="#333333",
+                        shape_opacity=0.6,
+                        show_points=False,
+                        always_visible=True,
+                        name=f"_labels_dim{dim}",
+                    )
+                    _label_actors.append(actor)
+                except Exception:
+                    pass
+
+            plotter.render()
+
+        view_tab = ViewTab(
+            self._dims,
+            on_labels_changed=_on_labels_changed,
+        )
+
         # Add tabs to window
         win.add_tab("Browser", browser.widget)
+        win.add_tab("View", view_tab.widget)
         win.add_tab("Filter", filter_tab.widget)
         win.add_tab("Preferences", prefs.widget)
 
