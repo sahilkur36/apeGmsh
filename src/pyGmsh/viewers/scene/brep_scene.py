@@ -283,19 +283,16 @@ def build_brep_scene(
         centroids_d1: dict[DimTag, np.ndarray] = {}
         cell_off = 0
         pt_off = 0
+        n_curve_samples = 30
         for _, tag in gmsh.model.getEntities(dim=1):
             try:
-                ntags, ncoords, nparams = gmsh.model.mesh.getNodes(
-                    dim=1, tag=tag, includeBoundary=True,
-                )
-                if len(ntags) < 2:
-                    continue
-                pts = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)
-                # Sort nodes by parametric coordinate along the curve
-                params = np.asarray(nparams, dtype=np.float64)
-                if len(params) == len(pts):
-                    order = np.argsort(params)
-                    pts = pts[order]
+                # Parametric sampling — reads CAD geometry directly,
+                # independent of mesh coarseness. Always smooth.
+                lo, hi = gmsh.model.getParametrizationBounds(1, tag)
+                u = np.linspace(lo[0], hi[0], n_curve_samples)
+                pts = np.array(
+                    gmsh.model.getValue(1, tag, u.tolist())
+                ).reshape(-1, 3)
                 n = len(pts)
                 n_lines = n - 1
                 idx = np.arange(n_lines, dtype=np.int64)
