@@ -94,8 +94,7 @@ class ViewerWindow:
         app = QtWidgets.QApplication.instance()
         self._own_app = app is None
         if self._own_app:
-            import sys
-            app = QtWidgets.QApplication(sys.argv)
+            app = QtWidgets.QApplication([])
         self._app = app
 
         # ── Window ──────────────────────────────────────────────────
@@ -263,6 +262,10 @@ class ViewerWindow:
     @property
     def window(self):
         return self._window
+
+    def add_tab(self, name: str, widget) -> None:
+        """Add a tab to the right-side panel (after construction)."""
+        self._tab_widget.addTab(widget, name)
 
     def set_status(self, text: str, timeout: int = 0) -> None:
         self._statusbar.showMessage(text, timeout)

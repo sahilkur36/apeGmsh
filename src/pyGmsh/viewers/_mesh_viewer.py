@@ -85,7 +85,11 @@ class MeshViewer:
         sel = SelectionState()
         self._selection_state = sel
 
-        # ── UI tabs ─────────────────────────────────────────────────
+        # ── Window (creates QApplication) ───────────────────────────
+        default_title = f"MeshViewer — {self._parent.model_name}"
+        win = ViewerWindow(title=title or default_title)
+
+        # ── UI tabs (AFTER QApplication exists) ─────────────────────
         info_tab = MeshInfoTab()
         display_tab = DisplayTab()
         filter_tab = MeshFilterTab(self._dims)
@@ -95,19 +99,10 @@ class MeshViewer:
             surface_opacity=self._surface_opacity,
             show_surface_edges=self._show_surface_edges,
         )
-
-        # ── Window ──────────────────────────────────────────────────
-        default_title = f"MeshViewer — {self._parent.model_name}"
-
-        win = ViewerWindow(
-            title=title or default_title,
-            tabs=[
-                ("Info", info_tab.widget),
-                ("Display", display_tab.widget),
-                ("Filter", filter_tab.widget),
-                ("Preferences", prefs.widget),
-            ],
-        )
+        win.add_tab("Info", info_tab.widget)
+        win.add_tab("Display", display_tab.widget)
+        win.add_tab("Filter", filter_tab.widget)
+        win.add_tab("Preferences", prefs.widget)
 
         plotter = win.plotter
 

@@ -91,6 +91,12 @@ class ModelViewer:
         # Ensure geometry is synced
         gmsh.model.occ.synchronize()
 
+        # ── Window (creates QApplication + plotter) ─────────────────
+        default_title = (
+            f"ModelViewer — {self._parent.model_name}"
+            + (f" → {self._physical_group}" if self._physical_group else "")
+        )
+
         # ── Selection state ─────────────────────────────────────────
         sel = SelectionState()
         self._selection_state = sel
@@ -98,7 +104,19 @@ class ModelViewer:
         if self._physical_group is not None:
             sel.set_active_group(self._physical_group)
 
-        # ── Preferences tab ─────────────────────────────────────────
+        def _on_close():
+            n = sel.flush_to_gmsh()
+            if self._parent._verbose:
+                print(f"[viewer] closed — {n} physical group(s) written, "
+                      f"{len(sel.picks)} picks in working set")
+
+        # Create window FIRST so QApplication exists for Qt widgets
+        win = ViewerWindow(
+            title=title or default_title,
+            on_close=_on_close,
+        )
+
+        # ── UI tabs (created AFTER QApplication exists) ─────────────
         prefs = PreferencesTab(
             point_size=self._point_size,
             line_width=self._line_width,
@@ -106,7 +124,6 @@ class ModelViewer:
             show_surface_edges=self._show_surface_edges,
         )
 
-        # ── Browser tab ─────────────────────────────────────────────
         def _on_new_group():
             from qtpy import QtWidgets
             name, ok = QtWidgets.QInputDialog.getText(
@@ -155,30 +172,12 @@ class ModelViewer:
             on_delete_group=_on_delete_group,
         )
 
-        # ── Filter tab ──────────────────────────────────────────────
         filter_tab = FilterTab(self._dims)
 
-        # ── Window ──────────────────────────────────────────────────
-        default_title = (
-            f"ModelViewer — {self._parent.model_name}"
-            + (f" → {self._physical_group}" if self._physical_group else "")
-        )
-
-        def _on_close():
-            n = sel.flush_to_gmsh()
-            if self._parent._verbose:
-                print(f"[viewer] closed — {n} physical group(s) written, "
-                      f"{len(sel.picks)} picks in working set")
-
-        win = ViewerWindow(
-            title=title or default_title,
-            tabs=[
-                ("Browser", browser.widget),
-                ("Filter", filter_tab.widget),
-                ("Preferences", prefs.widget),
-            ],
-            on_close=_on_close,
-        )
+        # Add tabs to window
+        win.add_tab("Browser", browser.widget)
+        win.add_tab("Filter", filter_tab.widget)
+        win.add_tab("Preferences", prefs.widget)
 
         plotter = win.plotter
 
