@@ -160,11 +160,40 @@ class MeshViewer:
                         pass
             plotter.render()
 
+        def _toggle_wireframe(checked: bool):
+            for dim in registry.dims:
+                actor = registry.dim_actors.get(dim)
+                if actor is None:
+                    continue
+                if checked:
+                    actor.GetProperty().SetRepresentationToWireframe()
+                else:
+                    actor.GetProperty().SetRepresentationToSurface()
+            plotter.render()
+
+        def _toggle_edges(checked: bool):
+            for dim in registry.dims:
+                actor = registry.dim_actors.get(dim)
+                if actor is None or dim < 2:
+                    continue
+                actor.GetProperty().SetEdgeVisibility(checked)
+            plotter.render()
+
         display_tab = DisplayTab(
             on_node_labels=_toggle_node_labels,
             on_elem_labels=_toggle_elem_labels,
+            on_wireframe=_toggle_wireframe,
+            on_show_edges=_toggle_edges,
         )
-        filter_tab = MeshFilterTab(self._dims)
+        def _on_mesh_filter(active_dims: set[int]):
+            for dim in registry.dims:
+                actor = registry.dim_actors.get(dim)
+                if actor is None:
+                    continue
+                actor.SetVisibility(dim in active_dims)
+            plotter.render()
+
+        filter_tab = MeshFilterTab(self._dims, on_filter_changed=_on_mesh_filter)
         prefs = PreferencesTab(
             point_size=self._point_size,
             line_width=self._line_width,
