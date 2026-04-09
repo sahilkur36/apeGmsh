@@ -91,7 +91,79 @@ class MeshViewer:
 
         # ── UI tabs (AFTER QApplication exists) ─────────────────────
         info_tab = MeshInfoTab()
-        display_tab = DisplayTab()
+
+        # ── Label state ─────────────────────────────────────────────
+        _label_actors: list = []
+
+        def _toggle_node_labels(checked: bool):
+            # Remove existing
+            for a in _label_actors:
+                try:
+                    plotter.remove_actor(a)
+                except Exception:
+                    pass
+            _label_actors.clear()
+            if checked and scene.node_coords is not None and len(scene.node_coords) > 0:
+                labels = [str(int(t)) for t in scene.node_tags]
+                try:
+                    actor = plotter.add_point_labels(
+                        scene.node_coords, labels,
+                        font_size=8,
+                        text_color="white",
+                        shape_color="#333333",
+                        shape_opacity=0.6,
+                        show_points=False,
+                        always_visible=True,
+                        name="_node_labels",
+                    )
+                    _label_actors.append(actor)
+                except Exception:
+                    pass
+            plotter.render()
+
+        def _toggle_elem_labels(checked: bool):
+            for a in _label_actors:
+                try:
+                    plotter.remove_actor(a)
+                except Exception:
+                    pass
+            _label_actors.clear()
+            if checked:
+                centers = []
+                labels = []
+                for elem_tag, info in scene.elem_data.items():
+                    nodes = info.get("nodes", [])
+                    if nodes:
+                        coords = []
+                        for nid in nodes:
+                            idx = scene.node_tag_to_idx.get(int(nid))
+                            if idx is not None:
+                                coords.append(scene.node_coords[idx])
+                        if coords:
+                            center = np.mean(coords, axis=0)
+                            centers.append(center)
+                            labels.append(str(elem_tag))
+                if centers:
+                    try:
+                        actor = plotter.add_point_labels(
+                            np.array(centers), labels,
+                            font_size=8,
+                            text_color="#a6e3a1",
+                            shape_color="#333333",
+                            shape_opacity=0.6,
+                            show_points=False,
+                            always_visible=True,
+                            name="_elem_labels",
+                        )
+                        _label_actors.append(actor)
+                    except Exception:
+                        pass
+            plotter.render()
+
+        display_tab = DisplayTab(
+            on_node_labels=_toggle_node_labels,
+            on_elem_labels=_toggle_elem_labels,
+        )
         filter_tab = MeshFilterTab(self._dims)
         prefs = PreferencesTab(
             point_size=self._point_size,
