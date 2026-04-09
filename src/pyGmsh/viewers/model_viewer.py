@@ -131,10 +131,10 @@ class ModelViewer:
                 "Group name:",
             )
             if ok and name.strip():
-                sel.apply_group(name.strip())
-                sel.set_active_group(name.strip())
+                n = name.strip()
+                sel.set_active_group(n)
                 browser.refresh()
-                win.set_status(f"Active group: {name.strip()}")
+                win.set_status(f"Active group: {n} — pick entities to add")
 
         def _on_rename_group(old_name: str):
             from qtpy import QtWidgets
@@ -208,8 +208,23 @@ class ModelViewer:
         pick_engine.on_pick = _on_pick
         pick_engine.set_hidden_check(vis_mgr.is_hidden)
 
-        # Filter → pick engine
-        filter_tab._on_filter_changed = pick_engine.set_pickable_dims
+        # Filter → pick engine + visual dim feedback
+        def _on_filter(active_dims: set[int]):
+            pick_engine.set_pickable_dims(active_dims)
+            # Dim non-pickable dimension actors
+            for dim in registry.dims:
+                actor = registry.dim_actors.get(dim)
+                if actor is None:
+                    continue
+                if dim in active_dims:
+                    actor.GetProperty().SetOpacity(
+                        self._surface_opacity if dim >= 2 else 1.0
+                    )
+                else:
+                    actor.GetProperty().SetOpacity(0.1)
+            plotter.render()
+
+        filter_tab._on_filter_changed = _on_filter
 
         # Hover → color
         _prev_hover: list[DimTag | None] = [None]
@@ -243,6 +258,7 @@ class ModelViewer:
             win.set_status(f"{n} picked | group: {grp}")
 
         sel.on_changed.append(_on_sel_changed)
+        sel.on_changed.append(lambda: browser.refresh())
 
         # Visibility changed → render
         vis_mgr.on_changed.append(lambda: plotter.render())
