@@ -203,14 +203,14 @@ class ViewerWindow:
 
         # Subclass-provided actions first
         for tooltip, icon_text, callback in (toolbar_actions or []):
-            act = bar.addAction(self._make_icon(icon_text, "#2d2d2d"), "")
+            act = bar.addAction(self._make_icon(icon_text, "#cdd6f4"), "")
             act.setToolTip(tooltip)
             act.triggered.connect(callback)
         if toolbar_actions:
             bar.addSeparator()
 
         # Camera controls
-        _IC = "#2d2d2d"
+        _IC = "#cdd6f4"  # light text on dark toolbar
         self._act_parallel = bar.addAction(self._make_icon("\u2316", _IC), "")
         self._act_parallel.setToolTip("Ortho / perspective toggle")
         self._act_parallel.setCheckable(True)
@@ -271,7 +271,7 @@ class ViewerWindow:
         """Add a button to the toolbar (after construction)."""
         bar = self._window.findChild(self._QtWidgets.QToolBar, "Tools")
         if bar is not None:
-            act = bar.addAction(self._make_icon(icon_text, "#2d2d2d"), "")
+            act = bar.addAction(self._make_icon(icon_text, "#cdd6f4"), "")
             act.setToolTip(tooltip)
             act.triggered.connect(callback)
 

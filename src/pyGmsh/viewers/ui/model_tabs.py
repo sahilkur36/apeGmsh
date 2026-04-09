@@ -118,37 +118,30 @@ class BrowserTab:
         self._tree.clear()
         self._group_items: dict[str, object] = {}
 
-        # Collect all groups (Gmsh + staged)
+        # Collect groups sorted by tag
         groups = self._collect_groups()
-        all_names: list[str] = list(groups.keys())
-
-        # Add staged-only groups
-        for name in self._selection.staged_groups:
-            if name not in groups:
-                groups[name] = list(self._selection.staged_groups[name])
-                all_names.append(name)
+        seen_names: set[str] = set()
 
         active = self._selection.active_group
         dim_labels = {0: "pt", 1: "crv", 2: "srf", 3: "vol"}
 
-        for name in all_names:
-            members = groups[name]
+        for name, pg_dim, pg_tag, members in groups:
+            seen_names.add(name)
             item = QtWidgets.QTreeWidgetItem(self._tree)
             item.setText(0, name)
             item.setText(1, str(len(members)))
             item.setData(0, 0x0100, ("group", name))
 
-            # Highlight active group
             if name == active:
                 item.setForeground(
-                    0, QtGui.QBrush(QtGui.QColor("#a6e3a1")),  # green
+                    0, QtGui.QBrush(QtGui.QColor("#a6e3a1")),
                 )
                 font = item.font(0)
                 font.setBold(True)
                 item.setFont(0, font)
             else:
                 item.setForeground(
-                    0, QtGui.QBrush(QtGui.QColor("#89b4fa")),  # blue
+                    0, QtGui.QBrush(QtGui.QColor("#89b4fa")),
                 )
 
             item.setExpanded(False)
@@ -157,6 +150,27 @@ class BrowserTab:
                 child.setText(0, f"{dim_labels.get(dim, '?')} {tag}")
                 child.setData(0, 0x0100, ("entity", (dim, tag)))
 
+            self._group_items[name] = item
+
+        # Staged-only groups (not yet in Gmsh)
+        for name, members in self._selection.staged_groups.items():
+            if name in seen_names:
+                continue
+            item = QtWidgets.QTreeWidgetItem(self._tree)
+            item.setText(0, name)
+            item.setText(1, str(len(members)))
+            item.setData(0, 0x0100, ("group", name))
+            if name == active:
+                item.setForeground(
+                    0, QtGui.QBrush(QtGui.QColor("#a6e3a1")),
+                )
+                font = item.font(0)
+                font.setBold(True)
+                item.setFont(0, font)
+            else:
+                item.setForeground(
+                    0, QtGui.QBrush(QtGui.QColor("#f9e2af")),
+                )
             self._group_items[name] = item
 
     def update_active(self) -> None:
@@ -185,18 +199,20 @@ class BrowserTab:
                     0, QtGui.QBrush(QtGui.QColor("#89b4fa")),
                 )
 
-    def _collect_groups(self) -> dict[str, list[tuple]]:
-        groups: dict[str, list[tuple]] = {}
+    def _collect_groups(self) -> list[tuple[str, int, int, list[tuple]]]:
+        """Return groups as ``[(name, dim, pg_tag, members), ...]`` sorted by tag."""
+        raw = []
         for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
             try:
                 name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
             except Exception:
                 name = f"Group_{pg_dim}_{pg_tag}"
             ents = gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
-            members = groups.setdefault(name, [])
-            for t in ents:
-                members.append((pg_dim, int(t)))
-        return groups
+            members = [(pg_dim, int(t)) for t in ents]
+            raw.append((name, pg_dim, pg_tag, members))
+        # Sort by physical group tag
+        raw.sort(key=lambda x: x[2])
+        return raw
 
     def _on_tree_click(self, item, column):
         data = item.data(0, 0x0100)
