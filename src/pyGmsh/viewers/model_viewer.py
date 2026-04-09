@@ -132,9 +132,18 @@ class ModelViewer:
             )
             if ok and name.strip():
                 n = name.strip()
+                current_picks = list(sel._picks)
+                # Stage current picks as the new group directly
+                sel._staged_groups[n] = current_picks
+                # Switch to the new group (loads picks from staged)
                 sel.set_active_group(n)
                 browser.refresh()
-                win.set_status(f"Active group: {n} — pick entities to add")
+                if current_picks:
+                    win.set_status(
+                        f"Group '{n}' created with {len(current_picks)} entities"
+                    )
+                else:
+                    win.set_status(f"Active group: {n} — pick entities to add")
 
         def _on_rename_group(old_name: str):
             from qtpy import QtWidgets
@@ -159,13 +168,15 @@ class ModelViewer:
                 browser.refresh()
                 win.set_status(f"Deleted group: {name}")
 
+        def _on_group_activated(name: str):
+            sel.set_active_group(name)
+            browser.refresh()
+            n = len(sel.picks)
+            win.set_status(f"Active group: {name} ({n} entities)")
+
         browser = BrowserTab(
             sel,
-            on_group_activated=lambda name: (
-                sel.set_active_group(name),
-                browser.refresh(),
-                win.set_status(f"Active group: {name}"),
-            ),
+            on_group_activated=_on_group_activated,
             on_entity_toggled=lambda dt: sel.toggle(dt),
             on_new_group=_on_new_group,
             on_rename_group=_on_rename_group,
