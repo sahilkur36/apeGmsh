@@ -190,11 +190,17 @@ class MeshViewer:
             on_show_edges=_toggle_edges,
         )
         def _on_mesh_filter(active_dims: set[int]):
+            print(f"[mesh_filter] active_dims={active_dims}, "
+                  f"registry.dims={registry.dims}, "
+                  f"actors={list(registry.dim_actors.keys())}")
             for dim in registry.dims:
                 actor = registry.dim_actors.get(dim)
                 if actor is None:
+                    print(f"  dim={dim}: no actor")
                     continue
-                actor.SetVisibility(dim in active_dims)
+                vis = dim in active_dims
+                actor.SetVisibility(vis)
+                print(f"  dim={dim}: SetVisibility({vis})")
             plotter.render()
 
         filter_tab = MeshFilterTab(self._dims, on_filter_changed=_on_mesh_filter)
