@@ -524,7 +524,7 @@ class SelectionTreePanel:
                 except Exception:
                     pass
 
-                root.setExpanded(True)
+                root.setExpanded(False)
 
         self._tree.resizeColumnToContents(0)
 
