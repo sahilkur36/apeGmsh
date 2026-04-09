@@ -271,9 +271,12 @@ class PickEngine:
     def _do_box(self, x0: int, y0: int, x1: int, y1: int, ctrl: bool) -> None:
         """Box-select with proper window vs crossing modes.
 
-        Left-to-right (window): entity must be **fully enclosed**.
-        Right-to-left (crossing): entity must **overlap** the box.
+        Uses the VTK composite projection matrix to batch-project all
+        entity bounding-box corners in one numpy operation (no per-entity
+        VTK calls).
         """
+        import numpy as np
+
         # DPI scaling
         try:
             rw = self._plotter.render_window
@@ -284,50 +287,98 @@ class PickEngine:
         except Exception:
             sx_ratio = sy_ratio = 1.0
 
-        crossing = x1 < x0  # R→L drag = crossing mode
+        crossing = x1 < x0
         bx0 = min(x0, x1) * sx_ratio
         bx1 = max(x0, x1) * sx_ratio
         by0 = min(y0, y1) * sy_ratio
         by1 = max(y0, y1) * sy_ratio
 
+        # Get composite projection matrix for batch projection
         renderer = self._plotter.renderer
+        try:
+            cam = renderer.GetActiveCamera()
+            aspect = renderer.GetAspect()
+            proj_mat = cam.GetCompositeProjectionTransformMatrix(
+                aspect[0] / aspect[1] if aspect[1] else 1.0,
+                0.0, 1.0,
+            )
+            M = np.array([
+                [proj_mat.GetElement(i, j) for j in range(4)]
+                for i in range(4)
+            ])
+            w = float(aw if aw else vw)
+            h = float(ah if ah else vh)
+        except Exception:
+            M = None
+
         hits: list["DimTag"] = []
 
-        def _project(xyz):
-            renderer.SetWorldPoint(xyz[0], xyz[1], xyz[2], 1.0)
-            renderer.WorldToDisplay()
-            return renderer.GetDisplayPoint()[:2]
+        # Collect all pickable entities and their bbox corners
+        entities = []
+        all_corners = []
+        corner_counts = []
 
         for dt in self._registry.all_entities():
             if dt[0] not in self._pickable_dims:
                 continue
             if self._hidden_check(dt):
                 continue
-
             bbox = self._registry.bbox(dt)
             if bbox is not None:
-                # Project all 8 AABB corners to screen
-                inside = []
-                for corner in bbox:
-                    sx, sy = _project(corner)
-                    inside.append(bx0 <= sx <= bx1 and by0 <= sy <= by1)
-
-                if crossing:
-                    # Crossing: ANY corner inside → selected
-                    hit = any(inside)
-                else:
-                    # Window: ALL corners inside → selected
-                    hit = all(inside)
+                entities.append(dt)
+                all_corners.append(bbox)
+                corner_counts.append(len(bbox))
             else:
-                # Fallback: centroid only
-                xyz = self._registry.centroid(dt)
-                if xyz is None:
-                    continue
-                sx, sy = _project(xyz)
-                hit = bx0 <= sx <= bx1 and by0 <= sy <= by1
+                c = self._registry.centroid(dt)
+                if c is not None:
+                    entities.append(dt)
+                    all_corners.append(c.reshape(1, 3))
+                    corner_counts.append(1)
+
+        if not entities:
+            return
+
+        if M is not None and w > 0 and h > 0:
+            # Batch project all corners at once via matrix multiply
+            pts = np.vstack(all_corners)  # (N, 3)
+            ones = np.ones((len(pts), 1))
+            homog = np.hstack([pts, ones])  # (N, 4)
+            clip = homog @ M.T  # (N, 4)
+            # Perspective divide
+            w_clip = clip[:, 3]
+            w_clip[w_clip == 0] = 1e-12
+            ndc = clip[:, :2] / w_clip[:, None]  # normalized device coords
+            # NDC → screen pixels
+            screen_x = (ndc[:, 0] * 0.5 + 0.5) * w
+            screen_y = (ndc[:, 1] * 0.5 + 0.5) * h
+        else:
+            # Fallback: per-point VTK projection
+            pts_list = np.vstack(all_corners)
+            screen_x = np.empty(len(pts_list))
+            screen_y = np.empty(len(pts_list))
+            for i, p in enumerate(pts_list):
+                renderer.SetWorldPoint(p[0], p[1], p[2], 1.0)
+                renderer.WorldToDisplay()
+                dp = renderer.GetDisplayPoint()
+                screen_x[i] = dp[0]
+                screen_y[i] = dp[1]
+
+        # Check each entity's corners against the box
+        offset = 0
+        for i, dt in enumerate(entities):
+            n = corner_counts[i]
+            sx = screen_x[offset:offset + n]
+            sy = screen_y[offset:offset + n]
+            inside = (bx0 <= sx) & (sx <= bx1) & (by0 <= sy) & (sy <= by1)
+
+            if crossing:
+                hit = np.any(inside)
+            else:
+                hit = np.all(inside)
 
             if hit:
                 hits.append(dt)
+            offset += n
 
         if hits and self.on_box_select is not None:
             self.on_box_select(hits, ctrl)

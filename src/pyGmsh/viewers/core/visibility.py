@@ -95,12 +95,32 @@ class VisibilityManager:
             self._color_mgr.set_entity_state(dt, picked=True)
 
     def _rebuild_actors(self) -> None:
-        """Extract visible cells per dimension and swap actors."""
+        """Extract visible cells per dimension and swap actors.
+
+        Only rebuilds dimensions that have hidden entities (or all
+        if revealing).
+        """
         from .color_manager import IDLE_COLORS
         plotter = self._plotter
         reg = self._registry
 
+        # Which dims are affected by hidden entities?
+        affected_dims = set()
+        if not self._hidden:
+            # Revealing all — rebuild every dim that was previously affected
+            affected_dims = set(reg.dims)
+        else:
+            for dt in self._hidden:
+                affected_dims.add(dt[0])
+            # Also need dims that were previously hidden but now aren't
+            for dim in reg.dims:
+                if reg.dim_meshes.get(dim) is not reg._full_meshes.get(dim):
+                    affected_dims.add(dim)
+
         for dim in reg.dims:
+            if dim not in affected_dims:
+                continue
+
             full_mesh = reg._full_meshes.get(dim)
             if full_mesh is None:
                 continue
