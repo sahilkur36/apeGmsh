@@ -158,6 +158,7 @@ class VisibilityManager:
             new_actor = plotter.add_mesh(
                 visible,
                 reset_camera=False,
+                show_scalar_bar=False,
                 **kwargs,
             )
             reg.swap_dim(dim, visible, new_actor)
