@@ -269,8 +269,18 @@ def build_mesh_scene(
         ))
         if diag <= 0.0:
             diag = 1.0
+        origin = np.array([
+            (bb[0] + bb[3]) * 0.5,
+            (bb[1] + bb[4]) * 0.5,
+            (bb[2] + bb[5]) * 0.5,
+        ])
     except Exception:
         diag = 1.0
+        origin = np.zeros(3)
+
+    # Shift node coordinates to origin for numerical stability
+    node_coords -= origin
+    registry.origin_shift = origin
 
     t_setup = time.perf_counter() - t0
 

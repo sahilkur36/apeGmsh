@@ -285,6 +285,14 @@ class ModelViewer:
         )
         self._registry = registry
 
+        # Set generous clipping range for shifted coords
+        try:
+            plotter.reset_camera()
+            cam = plotter.renderer.GetActiveCamera()
+            cam.SetClippingRange(0.01, 1e6)
+        except Exception:
+            pass
+
         # ── Core modules ────────────────────────────────────────────
         color_mgr = ColorManager(registry)
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter)

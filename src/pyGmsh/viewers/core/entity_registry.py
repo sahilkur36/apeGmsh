@@ -45,6 +45,7 @@ class EntityRegistry:
         "centroids",
         "_bboxes",
         "_add_mesh_kwargs",
+        "origin_shift",
     )
 
     def __init__(self) -> None:
@@ -57,6 +58,7 @@ class EntityRegistry:
         self.centroids: dict[DimTag, np.ndarray] = {}          # DimTag → (3,) xyz
         self._bboxes: dict[DimTag, np.ndarray] = {}            # DimTag → (8, 3) corners
         self._add_mesh_kwargs: dict[int, dict] = {}            # dim → kwargs for add_mesh
+        self.origin_shift: np.ndarray = np.zeros(3)            # subtracted from world coords
 
     # ------------------------------------------------------------------
     # Registration

@@ -198,7 +198,7 @@ def build_brep_scene(
     t0 = time.perf_counter()
     registry = EntityRegistry()
 
-    # ── model diagonal ──────────────────────────────────────────────
+    # ── model bounding box + origin shift ───────────────────────────
     try:
         bb = gmsh.model.getBoundingBox(-1, -1)
         diag = float(np.linalg.norm(
@@ -206,8 +206,17 @@ def build_brep_scene(
         ))
         if diag <= 0.0:
             diag = 1.0
+        origin = np.array([
+            (bb[0] + bb[3]) * 0.5,
+            (bb[1] + bb[4]) * 0.5,
+            (bb[2] + bb[5]) * 0.5,
+        ])
     except Exception:
         diag = 1.0
+        origin = np.zeros(3)
+
+    # Store origin shift so callers can convert back to world coords
+    registry.origin_shift = origin
 
     # ── generate temp mesh if needed ────────────────────────────────
     t_mesh = time.perf_counter()
@@ -232,6 +241,8 @@ def build_brep_scene(
 
     all_node_tags = np.asarray(all_tags, dtype=np.int64)
     all_node_coords = np.asarray(all_coords, dtype=np.float64).reshape(-1, 3)
+    # Shift to origin for numerical stability
+    all_node_coords -= origin
     global_tag_to_idx = np.full(
         int(all_node_tags.max()) + 1, -1, dtype=np.int64,
     )
@@ -239,8 +250,10 @@ def build_brep_scene(
         len(all_node_tags), dtype=np.int64,
     )
 
-    # ── precompute bounding boxes from Gmsh ───────────────────────
+    # ── precompute bounding boxes from Gmsh (shifted) ─────────────
     all_bboxes = _compute_entity_bboxes(dims)
+    for dt, corners in all_bboxes.items():
+        all_bboxes[dt] = corners - origin
 
     n_entities = 0
 
@@ -254,7 +267,7 @@ def build_brep_scene(
                 ntags, ncoords, _ = gmsh.model.mesh.getNodes(dim=0, tag=tag)
                 if len(ntags) == 0:
                     continue
-                xyz = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)[0]
+                xyz = np.asarray(ncoords, dtype=np.float64).reshape(-1, 3)[0] - origin
                 centers.append(xyz)
                 tags_d0.append(tag)
                 n_d0 += 1
@@ -292,7 +305,7 @@ def build_brep_scene(
                 u = np.linspace(lo[0], hi[0], n_curve_samples)
                 pts = np.array(
                     gmsh.model.getValue(1, tag, u.tolist())
-                ).reshape(-1, 3)
+                ).reshape(-1, 3) - origin
                 n = len(pts)
                 n_lines = n - 1
                 idx = np.arange(n_lines, dtype=np.int64)
