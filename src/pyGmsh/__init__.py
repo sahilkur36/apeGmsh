@@ -39,11 +39,12 @@ from pyGmsh.mesh.FEMData import FEMData, MeshInfo, PhysicalGroupSet
 from pyGmsh.mesh.MshLoader import MshLoader
 from pyGmsh.solvers.Numberer import Numberer, NumberedMesh
 from pyGmsh.viz.Selection import Selection, SelectionComposite
-from pyGmsh.viewers.BaseViewer import BaseViewer
-from pyGmsh.viewers.SelectionPicker import SelectionPicker
-from pyGmsh.viewers.SelectionPickerUI import SelectionPickerWindow
-from pyGmsh.viewers.MeshViewer import MeshViewer
-from pyGmsh.viewers.MeshViewerUI import MeshViewerWindow
+from pyGmsh.viewers.model_viewer import ModelViewer
+from pyGmsh.viewers._mesh_viewer import MeshViewer as MeshViewerV2
+
+# Backward-compatible aliases
+SelectionPicker = ModelViewer
+MeshViewer = MeshViewerV2
 from pyGmsh.results.Results import Results
 import pyGmsh.solvers.Constraints as Constraints
 
@@ -61,11 +62,10 @@ __all__ = [
     "NumberedMesh",
     "Selection",
     "SelectionComposite",
-    "BaseViewer",
+    "ModelViewer",
+    "MeshViewerV2",
     "SelectionPicker",
-    "SelectionPickerWindow",
     "MeshViewer",
-    "MeshViewerWindow",
     "Results",
     "Constraints",
 ]
