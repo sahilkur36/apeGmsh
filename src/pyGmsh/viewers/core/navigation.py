@@ -5,7 +5,7 @@ Installs mouse/keyboard bindings on a PyVista plotter:
 
     Shift + Scroll wheel : quaternion orbit (around pivot or scene centre)
     Scroll click (MMB)   : pan camera
-    Scroll wheel         : zoom (default VTK, not intercepted)
+    Scroll wheel         : zoom toward mouse cursor
     RMB drag             : pan camera (secondary)
 
 LMB is NOT intercepted — the :mod:`pick_engine` handles it.
@@ -194,6 +194,46 @@ def install_navigation(
             style.EndPan()
         _abort(caller, _tags["mmb_release"])
 
+    # ── Scroll: zoom toward cursor ─────────────────────────────────
+    def _zoom_to_cursor(caller, direction: int):
+        """Zoom toward the world point under the mouse cursor."""
+        mx, my = caller.GetEventPosition()
+        cam = renderer.GetActiveCamera()
+
+        # World point under cursor (at the front clipping plane)
+        renderer.SetDisplayPoint(mx, my, 0.0)
+        renderer.DisplayToWorld()
+        wp = renderer.GetWorldPoint()
+        if abs(wp[3]) < 1e-12:
+            return
+        world_pt = (wp[0] / wp[3], wp[1] / wp[3], wp[2] / wp[3])
+
+        factor = 1.1 if direction > 0 else 1.0 / 1.1
+
+        pos = cam.GetPosition()
+        fp = cam.GetFocalPoint()
+
+        # Scale distance from cursor point
+        new_pos = tuple(world_pt[i] + (pos[i] - world_pt[i]) / factor for i in range(3))
+        new_fp = tuple(world_pt[i] + (fp[i] - world_pt[i]) / factor for i in range(3))
+
+        cam.SetPosition(*new_pos)
+        cam.SetFocalPoint(*new_fp)
+
+        if cam.GetParallelProjection():
+            cam.SetParallelScale(cam.GetParallelScale() / factor)
+
+        renderer.ResetCameraClippingRange()
+        plotter.render()
+
+    def on_scroll_fwd(caller, _event):
+        _zoom_to_cursor(caller, +1)
+        _abort(caller, _tags["scroll_fwd"])
+
+    def on_scroll_bwd(caller, _event):
+        _zoom_to_cursor(caller, -1)
+        _abort(caller, _tags["scroll_bwd"])
+
     # ── RMB: pan ────────────────────────────────────────────────────
     def on_rmb_press(caller, _event):
         style.StartPan()
@@ -206,8 +246,10 @@ def install_navigation(
         _abort(caller, _tags["rmb_release"])
 
     # ── register ────────────────────────────────────────────────────
-    _tags["move"]        = iren.AddObserver("MouseMoveEvent",          on_mouse_move,   10.0)
-    _tags["mmb_press"]   = iren.AddObserver("MiddleButtonPressEvent",  on_mmb_press,    10.0)
-    _tags["mmb_release"] = iren.AddObserver("MiddleButtonReleaseEvent",on_mmb_release,  10.0)
-    _tags["rmb_press"]   = iren.AddObserver("RightButtonPressEvent",   on_rmb_press,    10.0)
-    _tags["rmb_release"] = iren.AddObserver("RightButtonReleaseEvent", on_rmb_release,  10.0)
+    _tags["move"]        = iren.AddObserver("MouseMoveEvent",            on_mouse_move,   10.0)
+    _tags["mmb_press"]   = iren.AddObserver("MiddleButtonPressEvent",    on_mmb_press,    10.0)
+    _tags["mmb_release"] = iren.AddObserver("MiddleButtonReleaseEvent",  on_mmb_release,  10.0)
+    _tags["scroll_fwd"]  = iren.AddObserver("MouseWheelForwardEvent",    on_scroll_fwd,   10.0)
+    _tags["scroll_bwd"]  = iren.AddObserver("MouseWheelBackwardEvent",   on_scroll_bwd,   10.0)
+    _tags["rmb_press"]   = iren.AddObserver("RightButtonPressEvent",     on_rmb_press,    10.0)
+    _tags["rmb_release"] = iren.AddObserver("RightButtonReleaseEvent",   on_rmb_release,  10.0)
