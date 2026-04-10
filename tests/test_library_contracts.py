@@ -1,3 +1,19 @@
+"""
+High-level contract tests for the :mod:`apeGmsh` package.
+
+These tests stub out the heavy third-party dependencies (``gmsh``,
+``pandas``, ``pyvista``) so they run without a real Gmsh installation.
+They verify:
+
+* Top-level package imports expose the canonical public names.
+* The ``Gmsh2OpenSees`` wrapper calls into ``gmsh2opensees.gmsh2ops``
+  when the owning session is active.
+* :func:`apeGmsh.mesh._fem_extract.build_fem_data` correctly extracts
+  a 3D element set from a faked Gmsh model.
+* The surface-tessellation helper
+  :func:`apeGmsh.viewers.scene.brep_scene._surface_polydata_from_global_mesh`
+  keeps every triangle whose nodes are present in the global mesh.
+"""
 from __future__ import annotations
 
 import importlib
@@ -8,9 +24,9 @@ import unittest
 import numpy as np
 
 
-def _purge_pygmsh_modules() -> None:
+def _purge_apegmsh_modules() -> None:
     for name in list(sys.modules):
-        if name == "pyGmsh" or name.startswith("pyGmsh."):
+        if name == "apeGmsh" or name.startswith("apeGmsh."):
             del sys.modules[name]
 
 
@@ -23,34 +39,16 @@ def _install_fake_gmsh() -> None:
     sys.modules["gmsh"] = fake_gmsh
 
 
-def _install_fake_pandas() -> None:
-    fake_pandas = types.ModuleType("pandas")
-
-    class _FakeDataFrame:
-        def __init__(self, *args, **kwargs) -> None:
-            pass
-
-    fake_pandas.DataFrame = _FakeDataFrame
-    sys.modules["pandas"] = fake_pandas
-
-
-def _install_fake_pyvista() -> None:
-    sys.modules["pyvista"] = types.ModuleType("pyvista")
-
-
 class LibraryContractTests(unittest.TestCase):
+
     def setUp(self) -> None:
-        _purge_pygmsh_modules()
+        _purge_apegmsh_modules()
         self._saved_gmsh = sys.modules.get("gmsh")
         self._saved_g2o = sys.modules.get("gmsh2opensees")
-        self._saved_pandas = sys.modules.get("pandas")
-        self._saved_pyvista = sys.modules.get("pyvista")
         _install_fake_gmsh()
-        _install_fake_pandas()
-        _install_fake_pyvista()
 
     def tearDown(self) -> None:
-        _purge_pygmsh_modules()
+        _purge_apegmsh_modules()
         if self._saved_gmsh is None:
             sys.modules.pop("gmsh", None)
         else:
@@ -61,133 +59,48 @@ class LibraryContractTests(unittest.TestCase):
         else:
             sys.modules["gmsh2opensees"] = self._saved_g2o
 
-        if self._saved_pandas is None:
-            sys.modules.pop("pandas", None)
-        else:
-            sys.modules["pandas"] = self._saved_pandas
+    # ------------------------------------------------------------------
+    # Package-level API
+    # ------------------------------------------------------------------
 
-        if self._saved_pyvista is None:
-            sys.modules.pop("pyvista", None)
-        else:
-            sys.modules["pyvista"] = self._saved_pyvista
+    def test_top_level_exports_apegmsh_class(self) -> None:
+        pkg = importlib.import_module("apeGmsh")
+        self.assertTrue(hasattr(pkg, "apeGmsh"))
+        self.assertTrue(hasattr(pkg, "Part"))
+        # The v1.0 API does not (and must not) expose Assembly — the
+        # session IS the assembly.
+        self.assertFalse(hasattr(pkg, "Assembly"))
 
-    def test_top_level_import_only_requires_core_dependencies(self) -> None:
-        pkg = importlib.import_module("pyGmsh")
-        self.assertTrue(hasattr(pkg, "pyGmsh"))
-        self.assertTrue(hasattr(pkg, "Assembly"))
+    # ------------------------------------------------------------------
+    # Gmsh2OpenSees live-session wrapper
+    # ------------------------------------------------------------------
 
-    def test_g2o_accepts_assembly_style_active_context(self) -> None:
+    def test_g2o_transfer_calls_gmsh2ops_when_active(self) -> None:
         calls: list[str] = []
         fake_g2o = types.ModuleType("gmsh2opensees")
         fake_g2o.gmsh2ops = lambda: calls.append("gmsh2ops")
         fake_g2o.msh2ops = lambda path: calls.append(path)
         sys.modules["gmsh2opensees"] = fake_g2o
 
-        mod = importlib.import_module("pyGmsh.solvers.Gmsh2OpenSees")
-        wrapper = mod.Gmsh2OpenSees(types.SimpleNamespace(is_active=True, _verbose=False))
+        mod = importlib.import_module("apeGmsh.solvers.Gmsh2OpenSees")
+        wrapper = mod.Gmsh2OpenSees(
+            types.SimpleNamespace(is_active=True, _verbose=False),
+        )
         wrapper.transfer()
 
         self.assertEqual(calls, ["gmsh2ops"])
 
-    def test_equal_dof_uses_instance_scope_without_manual_maps(self) -> None:
-        mod = importlib.import_module("pyGmsh.core.Assembly")
-        asm = mod.Assembly("demo")
-        asm.instances = {
-            "left": mod.Instance(
-                label="left",
-                part_name="left",
-                file_path=types.SimpleNamespace(),
-                bbox=(-1.0, -1.0, -0.1, 1.0, 1.0, 0.0),
-            ),
-            "right": mod.Instance(
-                label="right",
-                part_name="right",
-                file_path=types.SimpleNamespace(),
-                bbox=(-1.0, -1.0, 1e-4, 1.0, 1.0, 0.1),
-            ),
-        }
-        asm.equal_dof("left", "right", tolerance=1e-3)
-
-        node_tags = np.array([1, 2, 3, 4], dtype=int)
-        node_coords = np.array(
-            [
-                [0.0, 0.0, -0.05],
-                [0.0, 0.0, 0.0],
-                [0.0, 0.0, 5e-4],
-                [0.0, 0.0, 0.05],
-            ],
-            dtype=float,
+    def test_g2o_transfer_raises_when_session_inactive(self) -> None:
+        mod = importlib.import_module("apeGmsh.solvers.Gmsh2OpenSees")
+        wrapper = mod.Gmsh2OpenSees(
+            types.SimpleNamespace(is_active=False, _verbose=False),
         )
+        with self.assertRaises(RuntimeError):
+            wrapper.transfer()
 
-        records = asm.resolve_constraints(node_tags, node_coords)
-        pairs = [(rec.master_node, rec.slave_node) for rec in records]
-        self.assertEqual(pairs, [(2, 3)])
-
-    def test_rigid_body_master_is_chosen_from_master_instance(self) -> None:
-        mod = importlib.import_module("pyGmsh.core.Assembly")
-        asm = mod.Assembly("demo")
-        asm.instances = {
-            "master": mod.Instance(
-                label="master",
-                part_name="master",
-                file_path=types.SimpleNamespace(),
-                bbox=(0.1, -1.0, -1.0, 0.3, 1.0, 1.0),
-            ),
-            "slave": mod.Instance(
-                label="slave",
-                part_name="slave",
-                file_path=types.SimpleNamespace(),
-                bbox=(-0.3, -1.0, -1.0, 0.05, 1.0, 1.0),
-            ),
-        }
-        asm.rigid_body("master", "slave", master_point=(0.0, 0.0, 0.0))
-
-        node_tags = np.array([1, 2, 3], dtype=int)
-        node_coords = np.array(
-            [
-                [0.2, 0.0, 0.0],
-                [0.0, 0.0, 0.0],
-                [-0.2, 0.0, 0.0],
-            ],
-            dtype=float,
-        )
-
-        records = asm.resolve_constraints(node_tags, node_coords)
-        self.assertEqual(len(records), 1)
-        self.assertEqual(records[0].master_node, 1)
-
-    def test_public_constraint_api_accepts_entity_filters(self) -> None:
-        mod = importlib.import_module("pyGmsh.core.Assembly")
-        asm = mod.Assembly("demo")
-        asm.instances = {
-            "solid": mod.Instance(
-                label="solid",
-                part_name="solid",
-                file_path=types.SimpleNamespace(),
-            ),
-            "frame": mod.Instance(
-                label="frame",
-                part_name="frame",
-                file_path=types.SimpleNamespace(),
-            ),
-        }
-
-        eq = asm.equal_dof(
-            "solid",
-            "frame",
-            slave_entities=[(0, 10), (0, 11)],
-            dofs=[1, 2, 3],
-        )
-        rl = asm.rigid_link(
-            "frame",
-            "frame",
-            master_point=(1.0, 0.0, 0.0),
-            slave_entities=[(0, 10), (0, 11)],
-        )
-
-        self.assertEqual(eq.slave_entities, [(0, 10), (0, 11)])
-        self.assertEqual(eq.dofs, [1, 2, 3])
-        self.assertEqual(rl.slave_entities, [(0, 10), (0, 11)])
+    # ------------------------------------------------------------------
+    # _fem_extract.build_fem_data (3D path)
+    # ------------------------------------------------------------------
 
     def test_fem_data_dim3_keeps_volume_physical_elements(self) -> None:
         fake_gmsh = sys.modules["gmsh"]
@@ -206,7 +119,7 @@ class LibraryContractTests(unittest.TestCase):
             return flat
 
         class _FakeMesh:
-            def getNodes(self):
+            def getNodes(self, *args, **kwargs):
                 tags = [1, 2, 3, 4]
                 return tags, _flatten(tags), []
 
@@ -219,11 +132,11 @@ class LibraryContractTests(unittest.TestCase):
                     (2, 20): ([2], [[201]], [[1, 2, 3]]),
                     (3, 10): ([4], [[101]], [[1, 2, 3, 4]]),
                 }
-                types, elem_tags, node_tags = data.get((dim, tag), ([], [], []))
+                etypes, elem_tags, node_tags = data.get((dim, tag), ([], [], []))
                 return (
-                    types,
-                    [np.array(tags, dtype=np.int64) for tags in elem_tags],
-                    [np.array(nodes, dtype=np.int64) for nodes in node_tags],
+                    etypes,
+                    [np.array(ts, dtype=np.int64) for ts in elem_tags],
+                    [np.array(ns, dtype=np.int64) for ns in node_tags],
                 )
 
             def getElementProperties(self, etype):
@@ -264,7 +177,7 @@ class LibraryContractTests(unittest.TestCase):
 
         fake_gmsh.model = _FakeModel()
 
-        mod = importlib.import_module("pyGmsh.mesh._fem_extract")
+        mod = importlib.import_module("apeGmsh.mesh._fem_extract")
         fem = mod.build_fem_data(dim=3)
 
         self.assertEqual(fem.info.n_nodes, 4)
@@ -287,20 +200,25 @@ class LibraryContractTests(unittest.TestCase):
         self.assertEqual(edge["connectivity"].shape, (1, 2))
         self.assertEqual(list(map(int, body["element_ids"])), [101])
 
-    def test_fast_surface_helper_keeps_elements_with_embedded_nodes(self) -> None:
-        mod = importlib.import_module("pyGmsh.viewers.SelectionPicker")
+    # ------------------------------------------------------------------
+    # BRep surface tessellation helper
+    # ------------------------------------------------------------------
+
+    def test_surface_polydata_keeps_cells_with_embedded_nodes(self) -> None:
+        # Fake pyvista so brep_scene imports.
+        sys.modules.setdefault("pyvista", types.ModuleType("pyvista"))
+
+        mod = importlib.import_module("apeGmsh.viewers.scene.brep_scene")
 
         node_tags = np.array([10, 20, 30, 40, 50], dtype=np.int64)
-        node_coords = np.array(
-            [
-                [0.0, 0.0, 0.0],
-                [1.0, 0.0, 0.0],
-                [1.0, 1.0, 0.0],
-                [0.0, 1.0, 0.0],
-                [0.5, 0.5, 0.0],
-            ],
-            dtype=float,
-        )
+        node_coords = np.array([
+            [0.0, 0.0, 0.0],
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.5, 0.5, 0.0],
+        ], dtype=float)
+
         tag_to_idx = np.full(51, -1, dtype=np.int64)
         tag_to_idx[node_tags] = np.arange(len(node_tags), dtype=np.int64)
 
@@ -309,24 +227,24 @@ class LibraryContractTests(unittest.TestCase):
             tag_to_idx,
             [2],
             [
-                np.array(
-                    [
-                        10, 20, 50,
-                        20, 30, 50,
-                        30, 40, 50,
-                        40, 10, 50,
-                    ],
-                    dtype=np.int64,
-                )
+                np.array([
+                    10, 20, 50,
+                    20, 30, 50,
+                    30, 40, 50,
+                    40, 10, 50,
+                ], dtype=np.int64),
             ],
         )
 
         self.assertEqual(n_cells, 4)
         self.assertEqual(len(pts), 5)
         self.assertEqual(len(faces_parts), 1)
+        # 4 triangles × (1 prefix + 3 nodes) = 16 entries
         self.assertEqual(len(faces_parts[0]), 16)
         self.assertEqual(int(faces_parts[0].max()), 4)
-        self.assertTrue(any(np.allclose(pt, [0.5, 0.5, 0.0]) for pt in pts))
+        self.assertTrue(
+            any(np.allclose(pt, [0.5, 0.5, 0.0]) for pt in pts),
+        )
 
 
 if __name__ == "__main__":
