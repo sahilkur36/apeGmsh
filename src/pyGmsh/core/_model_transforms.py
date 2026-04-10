@@ -263,3 +263,191 @@ class _TransformsMixin:
             f"\u2192 {len(result)} entities"
         )
         return result
+
+    # ------------------------------------------------------------------
+    # Sweep along a path  (OCC pipe)
+    # ------------------------------------------------------------------
+
+    def sweep(
+        self,
+        profiles : TagsLike,
+        path     : Tag,
+        *,
+        dim       : int        = 2,
+        trihedron : str        = "DiscreteTrihedron",
+        label     : str | None = None,
+        sync      : bool       = True,
+    ) -> list[DimTag]:
+        """
+        Sweep one or more profile entities along an arbitrary wire.
+
+        This is the "constant-section sweep" operation: a single profile
+        (point, curve, or surface) is translated along *path*, generating
+        geometry one dimension up — point → curve, curve → surface,
+        surface → volume.  Unlike :meth:`extrude` the path does not have
+        to be a straight line: it can be any OCC wire built from lines,
+        arcs, splines, or a mix, assembled via
+        :meth:`~Model.add_wire`.
+
+        Parameters
+        ----------
+        profiles : entity or entities to sweep.  For a solid you
+            normally pass a plane surface.
+        path : tag of an OCC wire to sweep along (use
+            :meth:`~Model.add_wire` to build it).  A curve_loop can be
+            used for closed paths.
+        dim : default dimension for bare integer tags in *profiles*
+            (default 2).
+        trihedron : how the profile frame is transported along the
+            path.  One of ``"DiscreteTrihedron"`` (default),
+            ``"CorrectedFrenet"``, ``"Fixed"``, ``"Frenet"``,
+            ``"ConstantNormal"``, ``"Darboux"``, ``"GuideAC"``,
+            ``"GuidePlan"``, ``"GuideACWithContact"``,
+            ``"GuidePlanWithContact"``.  Most structural workflows
+            want the default; use ``"Frenet"`` for smooth curves
+            without inflection and ``"Fixed"`` to keep the profile's
+            orientation constant in world space.
+        label : optional label applied to the highest-dimension
+            survivor of the sweep (the volume for a surface sweep).
+        sync : synchronise the OCC kernel after the call (default
+            True).
+
+        Returns
+        -------
+        list[DimTag]
+            All generated ``(dim, tag)`` pairs.  Index into the list
+            to grab the volume, the lateral faces, or the end caps and
+            assign them to physical groups.
+
+        Example
+        -------
+        ::
+
+            section = g.model.add_plane_surface(loop, label="I_section")
+            path    = g.model.add_wire([arc1, line1, arc2], label="beam_path")
+            out     = g.model.sweep(section, path, label="curved_beam")
+        """
+        dt = self._as_dimtags(profiles, dim)
+        result: list[tuple[int, int]] = gmsh.model.occ.addPipe(
+            dt, int(path), trihedron=trihedron,
+        )
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        if result and label is not None:
+            max_dim = max(d for d, _ in result)
+            for d, t in result:
+                lbl = label if d == max_dim else None
+                self._register(d, t, lbl, 'sweep')
+        else:
+            for d, t in result:
+                self._register(d, t, None, 'sweep')
+
+        self._log(
+            f"sweep({dt}, path={path}, trihedron={trihedron!r}) "
+            f"→ {len(result)} entities"
+        )
+        return result
+
+    # ------------------------------------------------------------------
+    # Variable-section sweep  (OCC thru-sections / loft)
+    # ------------------------------------------------------------------
+
+    def thru_sections(
+        self,
+        wires : list[Tag],
+        *,
+        make_solid     : bool       = True,
+        make_ruled     : bool       = False,
+        max_degree     : int        = -1,
+        continuity     : str        = "",
+        parametrization: str        = "",
+        smoothing      : bool       = False,
+        label          : str | None = None,
+        sync           : bool       = True,
+    ) -> list[DimTag]:
+        """
+        Variable-section sweep — loft a volume (or surface shell)
+        through an ordered list of wires.
+
+        This is the right operation when the cross-section *changes*
+        along the sweep: a tapered column, a transition piece between
+        two different flange shapes, a blended nozzle.  Each wire
+        defines one intermediate section; OCC builds a smooth surface
+        that interpolates between them and (optionally) caps the ends
+        to produce a solid.
+
+        All wires should be topologically similar (same number of
+        sub-curves in the same order) for reliable lofting.  Open wires
+        produce a skin; closed wires with ``make_solid=True`` produce a
+        solid.
+
+        Parameters
+        ----------
+        wires : ordered list of wire tags (build each one with
+            :meth:`~Model.add_wire`).  At least two wires are required.
+        make_solid : if True (default), cap the ends and return a
+            solid; if False, return only the skinned surface(s).
+        make_ruled : if True, force the lateral faces to be ruled
+            surfaces (linear interpolation between adjacent sections).
+        max_degree : maximum degree of the resulting surface
+            (``-1`` = OCC default).
+        continuity : ``"C0"``, ``"G1"``, ``"C1"``, ``"G2"``, ``"C2"``,
+            ``"C3"``, or ``"CN"`` (``""`` = OCC default).
+        parametrization : ``"ChordLength"``, ``"Centripetal"``, or
+            ``"IsoParametric"`` (``""`` = OCC default).
+        smoothing : if True, apply a smoothing pass to the resulting
+            surface.
+        label : optional label applied to the highest-dimension
+            survivor (the volume when ``make_solid=True``).
+        sync : synchronise the OCC kernel after the call (default
+            True).
+
+        Returns
+        -------
+        list[DimTag]
+            All generated ``(dim, tag)`` pairs.
+
+        Example
+        -------
+        ::
+
+            w_base = g.model.add_wire([lb1, lb2, lb3, lb4])
+            w_top  = g.model.add_wire([lt1, lt2, lt3, lt4])
+            out    = g.model.thru_sections(
+                [w_base, w_top],
+                make_solid=True,
+                label="tapered_column",
+            )
+        """
+        if len(wires) < 2:
+            raise ValueError(
+                "thru_sections requires at least two wires (got "
+                f"{len(wires)})."
+            )
+        result: list[tuple[int, int]] = gmsh.model.occ.addThruSections(
+            list(wires),
+            makeSolid      = make_solid,
+            makeRuled      = make_ruled,
+            maxDegree      = max_degree,
+            continuity     = continuity,
+            parametrization= parametrization,
+            smoothing      = smoothing,
+        )
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        if result and label is not None:
+            max_dim = max(d for d, _ in result)
+            for d, t in result:
+                lbl = label if d == max_dim else None
+                self._register(d, t, lbl, 'thru_sections')
+        else:
+            for d, t in result:
+                self._register(d, t, None, 'thru_sections')
+
+        self._log(
+            f"thru_sections(wires={list(wires)}, solid={make_solid}) "
+            f"→ {len(result)} entities"
+        )
+        return result

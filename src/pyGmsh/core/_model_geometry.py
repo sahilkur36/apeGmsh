@@ -262,6 +262,56 @@ class _GeometryMixin:
     # Wire / surface builders  (dim = 1 → 2)
     # ------------------------------------------------------------------
 
+    def add_wire(
+        self,
+        curve_tags: list[Tag],
+        *,
+        check_closed: bool       = False,
+        label       : str | None = None,
+        sync        : bool       = True,
+    ) -> Tag:
+        """
+        Assemble an ordered list of curve tags into an OpenCASCADE wire
+        (open or closed).  Wires are the path input for sweep operations
+        (:meth:`sweep`) and the section input for lofted volumes
+        (:meth:`thru_sections`).
+
+        Unlike :meth:`add_curve_loop`, a wire does **not** need to be
+        closed.  This is what makes it suitable as a sweep path.
+
+        Parameters
+        ----------
+        curve_tags : ordered curve tags.  Curves must be connected
+            end-to-end but may share only geometrically identical
+            endpoints (OCC allows topologically distinct but coincident
+            points).
+        check_closed : if True, the underlying OCC call verifies that
+            the wire forms a closed loop and raises otherwise.
+        label : registry label (for later resolution by name).
+
+        Returns
+        -------
+        int tag of the new wire (a dim-1 entity).
+
+        Example
+        -------
+        ::
+
+            p0 = g.model.add_point(0, 0, 0, sync=False)
+            p1 = g.model.add_point(1, 0, 0, sync=False)
+            p2 = g.model.add_point(1, 1, 0, sync=False)
+            p3 = g.model.add_point(1, 1, 2, sync=False)
+            l1 = g.model.add_line(p0, p1, sync=False)
+            l2 = g.model.add_line(p1, p2, sync=False)
+            l3 = g.model.add_line(p2, p3, sync=False)
+            path = g.model.add_wire([l1, l2, l3], label="sweep_path")
+        """
+        tag = gmsh.model.occ.addWire(curve_tags, checkClosed=check_closed)
+        if sync:
+            gmsh.model.occ.synchronize()
+        self._log(f"add_wire({curve_tags}, closed={check_closed}) → tag {tag}")
+        return self._register(1, tag, label, 'wire')
+
     def add_curve_loop(
         self,
         curve_tags: list[Tag],

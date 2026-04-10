@@ -27,6 +27,9 @@ if TYPE_CHECKING:
 class ModelViewer:
     """Interactive BRep model viewer with physical group management.
 
+    Displays BRep geometry, parts, physical groups, and optional
+    load/mass overlays when a resolved FEMData snapshot is provided.
+
     Parameters
     ----------
     parent : _SessionBase
@@ -41,6 +44,15 @@ class ModelViewer:
         Visual properties forwarded to the scene builder.
     fast : bool
         Ignored (always fast). Kept for backward compatibility.
+    fem : FEMData, optional
+        Resolved FEM snapshot from :meth:`Mesh.get_fem_data`.  Required
+        to enable the **Loads** and **Mass** tabs' 3-D glyph overlays.
+        See :meth:`Model.viewer` for the rationale behind this design
+        choice — in short, snapshot semantics ensure the viewer shows
+        exactly what was resolved, never drifting out of sync with
+        the live session state.  Without ``fem``, the Loads/Mass tabs
+        still display the definition list but the overlays are
+        disabled with an amber warning.
     """
 
     def __init__(
