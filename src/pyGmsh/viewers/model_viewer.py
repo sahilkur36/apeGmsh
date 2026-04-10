@@ -86,7 +86,9 @@ class ModelViewer:
         from .scene.brep_scene import build_brep_scene
         from .ui.viewer_window import ViewerWindow
         from .ui.preferences import PreferencesTab
-        from .ui.model_tabs import BrowserTab, FilterTab, ViewTab, SelectionTreePanel
+        from .ui.model_tabs import (
+            BrowserTab, FilterTab, ViewTab, SelectionTreePanel, PartsTreePanel,
+        )
 
         # Ensure geometry is synced
         gmsh.model.occ.synchronize()
@@ -327,6 +329,40 @@ class ModelViewer:
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
         pick_engine = PickEngine(plotter, registry)
 
+        # ── Parts tree panel (needs registry) ──────────────────────
+        parts_reg = getattr(self._parent, 'parts', None)
+        parts_tree = None
+        if parts_reg is not None:
+            def _parts_select_only(dts):
+                sel.select_batch(dts, replace=True)
+
+            def _parts_add(dts):
+                sel.select_batch(dts)
+
+            def _parts_remove(dts):
+                sel.box_remove(dts)
+
+            def _parts_isolate(dts):
+                sel.select_batch(dts, replace=True)
+                vis_mgr.isolate()
+                plotter.render()
+
+            def _parts_hide(dts):
+                sel.select_batch(dts, replace=True)
+                vis_mgr.hide()
+                plotter.render()
+
+            parts_tree = PartsTreePanel(
+                parts_reg, registry,
+                on_select_only=_parts_select_only,
+                on_add_to_selection=_parts_add,
+                on_remove_from_selection=_parts_remove,
+                on_isolate=_parts_isolate,
+                on_hide=_parts_hide,
+            )
+            # Insert after Browser tab (position 1)
+            win._tab_widget.insertTab(1, parts_tree.widget, "Parts")
+
         # ── Wire callbacks ──────────────────────────────────────────
 
         # Pick → selection
@@ -389,6 +425,11 @@ class ModelViewer:
         sel.on_changed.append(_on_sel_changed)
         sel.on_changed.append(lambda: sel_tree.update(sel.picks))
         sel.on_changed.append(lambda: browser.update_active())
+        if parts_tree is not None:
+            sel.on_changed.append(
+                lambda: parts_tree.highlight_part_for_entity(sel.picks[-1])
+                if sel.picks else None
+            )
         # Write active group to Gmsh on every pick change
         sel.on_changed.append(lambda: sel.commit_active_group())
 
