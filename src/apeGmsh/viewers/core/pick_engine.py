@@ -16,7 +16,7 @@ Usage::
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Callable
 
 import numpy as np
 
@@ -263,7 +263,6 @@ class PickEngine:
 
         if new_dt == self._hover_id:
             return
-        old_dt = self._hover_id
         self._hover_id = new_dt
         if self.on_hover is not None:
             self.on_hover(new_dt)
@@ -275,7 +274,6 @@ class PickEngine:
         entity bounding-box corners in one numpy operation (no per-entity
         VTK calls).
         """
-        import numpy as np
 
         # DPI scaling
         try:

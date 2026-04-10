@@ -28,7 +28,7 @@ class _Transforms:
         *,
         dim : int  = 3,
         sync: bool = True,
-    ) -> Model:
+    ) -> "_Transforms":
         """
         Translate entities by (dx, dy, dz).
 
@@ -51,7 +51,7 @@ class _Transforms:
         cx: float = 0.0, cy: float = 0.0, cz: float = 0.0,
         dim : int  = 3,
         sync: bool = True,
-    ) -> Model:
+    ) -> "_Transforms":
         """
         Rotate entities around an axis through (cx, cy, cz) with direction
         (ax, ay, az) by ``angle`` radians.
@@ -82,7 +82,7 @@ class _Transforms:
         cx: float = 0.0, cy: float = 0.0, cz: float = 0.0,
         dim : int  = 3,
         sync: bool = True,
-    ) -> Model:
+    ) -> "_Transforms":
         """
         Scale (dilate) entities by (sx, sy, sz) from centre (cx, cy, cz).
 
@@ -107,7 +107,7 @@ class _Transforms:
         *,
         dim : int  = 3,
         sync: bool = True,
-    ) -> Model:
+    ) -> "_Transforms":
         """
         Mirror entities through the plane ax + by + cz + d = 0.
 

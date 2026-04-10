@@ -23,7 +23,6 @@ import numpy as np
 import pyvista as pv
 
 from ..core.entity_registry import DimTag, EntityRegistry
-from ..core.color_manager import IDLE_COLORS
 from .glyph_points import build_node_cloud
 
 
@@ -254,7 +253,6 @@ def build_mesh_scene(
     node_tags_raw, node_coords_flat, _ = gmsh.model.mesh.getNodes()
     node_tags = np.asarray(node_tags_raw, dtype=np.int64)
     node_coords = np.asarray(node_coords_flat, dtype=np.float64).reshape(-1, 3)
-    node_tag_to_idx = {int(t): i for i, t in enumerate(node_tags)}
 
     if len(node_tags) > 0:
         max_tag = int(node_tags.max())

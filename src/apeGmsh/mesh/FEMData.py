@@ -46,9 +46,13 @@ Usage
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy import ndarray
+
+if TYPE_CHECKING:
+    from .MeshSelectionSet import MeshSelectionStore
 
 
 # =====================================================================

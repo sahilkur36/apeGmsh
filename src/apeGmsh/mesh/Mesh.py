@@ -42,38 +42,34 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
-
-# ---------------------------------------------------------------------------
-# Type aliases  (mirror Model.py for consistency)
-# ---------------------------------------------------------------------------
-Tag      = int
-DimTag   = tuple[int, int]
-TagsLike = Tag | list[Tag] | DimTag | list[DimTag]
-
-
-# ---------------------------------------------------------------------------
 # Re-export algorithm constants for backwards-compatible imports from
 # ``apeGmsh.mesh.Mesh`` and from the top-level ``apeGmsh`` package.
-# ---------------------------------------------------------------------------
 from ._mesh_algorithms import (
-    Algorithm2D,
-    Algorithm3D,
     ALGORITHM_2D,
     ALGORITHM_3D,
+    Algorithm2D,
+    Algorithm3D,
     MeshAlgorithm2D,
     MeshAlgorithm3D,
     OptimizeMethod,
 )
-
+from ._mesh_editing import _Editing
 from ._mesh_field import FieldHelper
 from ._mesh_generation import _Generation
+from ._mesh_partitioning import _Partitioning
+from ._mesh_queries import _Queries
 from ._mesh_sizing import _Sizing
 from ._mesh_structured import _Structured
-from ._mesh_editing import _Editing
-from ._mesh_queries import _Queries
-from ._mesh_partitioning import _Partitioning
+
+if TYPE_CHECKING:
+    from apeGmsh._core import apeGmsh as _ApeGmshSession
+
+# ---------------------------------------------------------------------------
+# Type aliases  (mirror Model.py for consistency)
+# ---------------------------------------------------------------------------
+Tag = int
+DimTag = tuple[int, int]
+TagsLike = Tag | list[Tag] | DimTag | list[DimTag]
 
 
 __all__ = [
@@ -100,7 +96,7 @@ class Mesh:
         ``physical`` composite during ``_by_physical`` helpers.
     """
 
-    def __init__(self, parent: "_SessionBase") -> None:
+    def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
 
         # Directive log — records every write-only mesh setting that
@@ -234,7 +230,7 @@ class Mesh:
             If False (default), the viewer runs non-blocking.
         """
         if results is not None:
-            from apeGmshViewer import show
+            from apeGmshViewer import show  # type: ignore[import-not-found]
             show(results, blocking=blocking)
         elif point_data is not None or cell_data is not None:
             from ..results.Results import Results
@@ -247,9 +243,11 @@ class Mesh:
             )
             r.viewer(blocking=blocking)
         else:
-            from ..viz.VTKExport import VTKExport
             import tempfile
-            from apeGmshViewer import show
+
+            from apeGmshViewer import show  # type: ignore[import-not-found]
+
+            from ..viz.VTKExport import VTKExport
             vtk_export = VTKExport(self._parent)
             tmp = tempfile.NamedTemporaryFile(suffix=".vtu", delete=False)
             vtk_export.write(tmp.name)

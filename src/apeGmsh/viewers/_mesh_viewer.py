@@ -74,7 +74,7 @@ class MeshViewer:
         from .core.pick_engine import PickEngine
         from .core.visibility import VisibilityManager
         from .core.selection import SelectionState
-        from .scene.mesh_scene import build_mesh_scene, DEFAULT_MESH_RGB
+        from .scene.mesh_scene import build_mesh_scene
         from .ui.viewer_window import ViewerWindow
         from .ui.preferences import PreferencesTab
         from .ui.mesh_tabs import MeshInfoTab, DisplayTab, MeshFilterTab

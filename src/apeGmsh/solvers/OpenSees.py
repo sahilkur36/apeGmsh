@@ -65,7 +65,7 @@ from ._opensees_inspect import _Inspect
 from ._opensees_export import _Export
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._core import apeGmsh as _ApeGmshSession
 
 
 __all__ = ["OpenSees"]
@@ -79,11 +79,11 @@ class OpenSees:
 
     Parameters
     ----------
-    parent : _SessionBase
+    parent : apeGmsh
         The owning session.
     """
 
-    def __init__(self, parent: "_SessionBase") -> None:
+    def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
         self._ndm: int = 3
         self._ndf: int = 3

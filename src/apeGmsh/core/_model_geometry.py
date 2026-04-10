@@ -3,7 +3,7 @@ import math
 import gmsh
 from typing import TYPE_CHECKING
 
-from ._helpers import Tag, DimTag, TagsLike
+from ._helpers import Tag
 
 if TYPE_CHECKING:
     from .Model import Model

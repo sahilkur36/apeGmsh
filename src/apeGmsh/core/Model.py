@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import gmsh
 
-from typing import TYPE_CHECKING
+from ._model_boolean import _Boolean
+from ._model_geometry import _Geometry
+from ._model_io import _IO
+from ._model_queries import _Queries
+from ._model_transforms import _Transforms
 
 if TYPE_CHECKING:
     from apeGmsh._session import _SessionBase
@@ -10,18 +16,9 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Type aliases
 # ---------------------------------------------------------------------------
-Tag      = int
-DimTag   = tuple[int, int]
-TagsLike = Tag | list[Tag] | DimTag | list[DimTag]   # flexible input accepted everywhere
-
-# ---------------------------------------------------------------------------
-# Sub-composite imports
-# ---------------------------------------------------------------------------
-from ._model_geometry import _Geometry
-from ._model_boolean import _Boolean
-from ._model_transforms import _Transforms
-from ._model_io import _IO
-from ._model_queries import _Queries
+Tag = int
+DimTag = tuple[int, int]
+TagsLike = Tag | list[Tag] | DimTag | list[DimTag]  # flexible input accepted everywhere
 
 
 class Model:

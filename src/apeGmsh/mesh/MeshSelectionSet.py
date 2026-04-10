@@ -26,7 +26,7 @@ Usage::
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Callable
 
 import gmsh
 import numpy as np
@@ -168,7 +168,6 @@ class MeshSelectionSet:
         """
         t = self._alloc_tag(dim, tag)
         all_ids, all_coords = self._get_mesh_nodes()
-        id_to_idx = {int(nid): i for i, nid in enumerate(all_ids)}
 
         if dim == 0:
             # Node set

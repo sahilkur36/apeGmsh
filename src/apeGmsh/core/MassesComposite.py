@@ -20,12 +20,12 @@ Targets accept any of:
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._core import apeGmsh as _ApeGmshSession
 
 from apeGmsh.mesh.FEMData import MassSet
 from apeGmsh.solvers.Masses import (
@@ -59,11 +59,13 @@ _DISPATCH: dict[type, dict[str, str]] = {
     },
 }
 
+_MassT = TypeVar("_MassT", bound=MassDef)
+
 
 class MassesComposite:
     """Mass composite — define + resolve nodal masses."""
 
-    def __init__(self, parent: "_SessionBase") -> None:
+    def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
         self.mass_defs: list[MassDef] = []
         self.mass_records: list[MassRecord] = []
@@ -158,7 +160,7 @@ class MassesComposite:
     # Internal: store + validate
     # ------------------------------------------------------------------
 
-    def _add_def(self, defn: MassDef) -> MassDef:
+    def _add_def(self, defn: _MassT) -> _MassT:
         cfg = _DISPATCH.get(type(defn), {})
         if defn.reduction not in cfg:
             raise ValueError(
@@ -209,7 +211,7 @@ class MassesComposite:
         if parts is not None and hasattr(parts, "_instances"):
             inst = parts._instances.get(target)
             if inst is not None:
-                out = []
+                out: list = []
                 for d, ts in inst.entities.items():
                     out.extend((int(d), int(t)) for t in ts)
                 return out
@@ -354,8 +356,8 @@ class MassesComposite:
                     f"reduction={defn.reduction!r}"
                 )
             method = getattr(self, method_name)
-            records = method(resolver, defn, node_map, all_nodes)
-            for r in records:
+            raw_records = method(resolver, defn, node_map, all_nodes)
+            for r in raw_records:
                 vec = np.asarray(r.mass, dtype=float)
                 if r.node_id in accum:
                     accum[r.node_id] += vec

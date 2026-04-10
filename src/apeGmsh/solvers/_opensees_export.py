@@ -94,7 +94,8 @@ class _Export:
         for ops_id, row in ops._elements_df.iterrows():
             lines.append(
                 _render_tcl(
-                    ops_id, row.ops_type, row.slots,
+                    int(ops_id),  # type: ignore[arg-type]
+                    row.ops_type, row.slots,
                     row.nodes, row.mat_tag, row.sec_tag, row.transf_tag,
                     row.extra, row.pg_name,
                 )
@@ -245,7 +246,8 @@ class _Export:
         for ops_id, row in ops._elements_df.iterrows():
             lines.append(
                 _render_py(
-                    ops_id, row.ops_type, row.slots,
+                    int(ops_id),  # type: ignore[arg-type]
+                    row.ops_type, row.slots,
                     row.nodes, row.mat_tag, row.sec_tag, row.transf_tag,
                     row.extra, row.pg_name,
                 )

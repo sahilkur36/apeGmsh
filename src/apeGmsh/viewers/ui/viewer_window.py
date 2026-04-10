@@ -34,6 +34,8 @@ from __future__ import annotations
 import datetime
 from typing import Any, Callable
 
+from .theme import BG_BOTTOM, BG_TOP
+
 
 def _lazy_qt():
     """Import Qt + pyvistaqt on first use."""
@@ -47,9 +49,6 @@ def _lazy_qt():
             "`pip install pyvistaqt PyQt5`."
         ) from err
     return QtWidgets, QtCore, QtGui, QtInteractor
-
-
-from .theme import BG_TOP, BG_BOTTOM
 
 
 class ViewerWindow:

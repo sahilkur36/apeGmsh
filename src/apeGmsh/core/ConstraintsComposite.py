@@ -25,12 +25,12 @@ Usage::
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._core import apeGmsh as _ApeGmshSession
 
 from apeGmsh.mesh.FEMData import ConstraintSet
 from apeGmsh.solvers.Constraints import (
@@ -82,16 +82,18 @@ _RESOLVER_METHOD: dict[type, str] = {
 
 _FACE_TYPES = (TieDef, TiedContactDef, MortarDef)
 
+_ConstraintT = TypeVar("_ConstraintT", bound=ConstraintDef)
+
 
 class ConstraintsComposite:
     """Constraint composite -- define + resolve kinematic interactions."""
 
-    def __init__(self, parent: "_SessionBase") -> None:
+    def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
         self.constraint_defs: list[ConstraintDef] = []
         self.constraint_records: list[ConstraintRecord] = []
 
-    def _add_def(self, defn: ConstraintDef) -> ConstraintDef:
+    def _add_def(self, defn: _ConstraintT) -> _ConstraintT:
         """Validate labels and store a constraint definition.
         Label validation is skipped for NodeToSurfaceDef (bare tags)."""
         if not isinstance(defn, NodeToSurfaceDef):

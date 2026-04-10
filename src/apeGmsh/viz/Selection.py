@@ -237,8 +237,12 @@ class Selection:
         xmaxs, ymaxs, zmaxs = [], [], []
         for d, t in self._dimtags:
             x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(d, t)
-            xmins.append(x0); ymins.append(y0); zmins.append(z0)
-            xmaxs.append(x1); ymaxs.append(y1); zmaxs.append(z1)
+            xmins.append(x0)
+            ymins.append(y0)
+            zmins.append(z0)
+            xmaxs.append(x1)
+            ymaxs.append(y1)
+            zmaxs.append(z1)
         return (min(xmins), min(ymins), min(zmins),
                 max(xmaxs), max(ymaxs), max(zmaxs))
 
@@ -793,7 +797,8 @@ def _apply_filters(
         i = _AXIS_IDX[axis.lower()]
         def _on_plane(dt: DimTag) -> bool:
             x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(*dt)
-            lo = (x0, y0, z0)[i]; hi = (x1, y1, z1)[i]
+            lo = (x0, y0, z0)[i]
+            hi = (x1, y1, z1)[i]
             return (lo - atol) <= val <= (hi + atol)
         out = [dt for dt in out if _on_plane(dt)]
 

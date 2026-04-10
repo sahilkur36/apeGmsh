@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 if TYPE_CHECKING:
-    pass
+    from apeGmsh._core import apeGmsh
 
 # ---------------------------------------------------------------------------
 # VTK cell type codes (subset relevant to structural FEM)

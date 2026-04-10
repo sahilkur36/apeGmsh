@@ -768,8 +768,12 @@ class PartsRegistry:
         for dim, tag in dimtags:
             try:
                 bb = gmsh.model.getBoundingBox(dim, tag)
-                xmin = min(xmin, bb[0]); ymin = min(ymin, bb[1]); zmin = min(zmin, bb[2])
-                xmax = max(xmax, bb[3]); ymax = max(ymax, bb[4]); zmax = max(zmax, bb[5])
+                xmin = min(xmin, bb[0])
+                ymin = min(ymin, bb[1])
+                zmin = min(zmin, bb[2])
+                xmax = max(xmax, bb[3])
+                ymax = max(ymax, bb[4])
+                zmax = max(zmax, bb[5])
             except Exception:
                 pass
         if xmin == float("inf"):

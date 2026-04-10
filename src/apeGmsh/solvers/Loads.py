@@ -456,14 +456,13 @@ class LoadResolver:
         (2 = linear, 3 = quadratic).  When None, all edges are
         treated as linear.
         """
-        if defn.q_xyz is not None:
-            q = np.asarray(defn.q_xyz, dtype=float)
-        else:
-            q = defn.magnitude * _direction_vec(defn.direction)
-        accum: dict[int, ndarray] = {}
         # NOTE: For now, the composite always passes 2-node edges
         # because we don't have higher-order edge connectivity in
-        # general.  This branch matches resolve_line_tributary().
+        # general.  For linear edges the consistent reduction matches
+        # the tributary one, so we delegate directly.  When quadratic
+        # edges land here, re-introduce the per-edge shape-function
+        # integration using ``q = defn.q_xyz`` (or
+        # ``defn.magnitude * _direction_vec(defn.direction)``).
         return self.resolve_line_tributary(defn, edges)
 
     def resolve_surface_consistent(

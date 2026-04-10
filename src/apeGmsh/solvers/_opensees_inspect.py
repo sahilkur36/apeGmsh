@@ -153,7 +153,7 @@ class _Inspect:
                     ops._elements_df
                     .groupby(['ops_type', 'pg_name'])
                     .size()
-                    .reset_index(name='n')
+                    .reset_index(name='n')  # type: ignore[call-overload]
                 )
                 lines.append(f"  elements : {len(ops._elements_df)}")
                 for _, r in by.iterrows():

@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING
 
 import gmsh
 
-from ._helpers import Tag, DimTag, TagsLike
+from ._helpers import Tag, TagsLike
 
 if TYPE_CHECKING:
     from .Model import Model

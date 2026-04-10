@@ -19,12 +19,12 @@ Targets accept any of:
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Iterator
+from typing import TYPE_CHECKING, Iterator, TypeVar
 
 import numpy as np
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._core import apeGmsh as _ApeGmshSession
 
 from apeGmsh.mesh.FEMData import LoadSet
 from apeGmsh.solvers.Loads import (
@@ -71,11 +71,13 @@ _DISPATCH: dict[type, dict[tuple[str, str], str]] = {
     },
 }
 
+_LoadT = TypeVar("_LoadT", bound=LoadDef)
+
 
 class LoadsComposite:
     """Loads composite — define + resolve loads."""
 
-    def __init__(self, parent: "_SessionBase") -> None:
+    def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
         self.load_defs: list[LoadDef] = []
         self.load_records: list[LoadRecord] = []
@@ -165,7 +167,7 @@ class LoadsComposite:
     # Internal: store + validate
     # ------------------------------------------------------------------
 
-    def _add_def(self, defn: LoadDef) -> LoadDef:
+    def _add_def(self, defn: _LoadT) -> _LoadT:
         # Light validation: ensure the dispatch supports this combo
         cfg = _DISPATCH.get(type(defn), {})
         key = (defn.reduction, defn.target_form)
@@ -182,7 +184,7 @@ class LoadsComposite:
     # Target resolution: convert flexible target → DimTag list
     # ------------------------------------------------------------------
 
-    def _resolve_target(self, target) -> list[tuple[int, int]]:
+    def _resolve_target(self, target) -> list:
         """Resolve a target identifier to a list of ``(dim, tag)`` pairs.
 
         Lookup order:
@@ -231,7 +233,7 @@ class LoadsComposite:
         if parts is not None and hasattr(parts, "_instances"):
             inst = parts._instances.get(target)
             if inst is not None:
-                out = []
+                out: list = []
                 for d, ts in inst.entities.items():
                     out.extend((int(d), int(t)) for t in ts)
                 return out
