@@ -319,7 +319,7 @@ class ViewTab:
         dims: list[int],
         *,
         on_labels_changed: Callable[
-            [dict[int, bool], int, bool], None
+            [dict[int, bool], int, bool, bool], None
         ] | None = None,
     ) -> None:
         """
@@ -328,7 +328,7 @@ class ViewTab:
         dims : list[int]
             Available dimensions.
         on_labels_changed : callable
-            ``fn(active_dims_dict, font_size, use_names)`` called when
+            ``fn(active_dims_dict, font_size, use_names, show_parts)`` called when
             any toggle or setting changes.
         """
         QtWidgets, _, _ = _qt()
@@ -352,6 +352,15 @@ class ViewTab:
             self._dim_cbs[d] = cb
 
         layout.addWidget(group)
+
+        # ── Part labels group ───────────────────────────────────────
+        parts_group = QtWidgets.QGroupBox("Part labels")
+        parts_layout = QtWidgets.QVBoxLayout(parts_group)
+        self._show_parts = QtWidgets.QCheckBox("Show part labels")
+        self._show_parts.setChecked(False)
+        self._show_parts.toggled.connect(self._fire)
+        parts_layout.addWidget(self._show_parts)
+        layout.addWidget(parts_group)
 
         # ── Label style ─────────────────────────────────────────────
         style_group = QtWidgets.QGroupBox("Label style")
@@ -378,7 +387,8 @@ class ViewTab:
         active = {d: cb.isChecked() for d, cb in self._dim_cbs.items()}
         font_size = self._font_size.value()
         use_names = self._use_names.isChecked()
-        self._on_labels_changed(active, font_size, use_names)
+        show_parts = self._show_parts.isChecked()
+        self._on_labels_changed(active, font_size, use_names, show_parts)
 
 
 # ======================================================================

@@ -200,7 +200,7 @@ class ModelViewer:
         _label_actors: list = []
         _DIM_ABBR = {0: "P", 1: "C", 2: "S", 3: "V"}
 
-        def _on_labels_changed(active_dims, font_size, use_names):
+        def _on_labels_changed(active_dims, font_size, use_names, show_parts=False):
             # Remove existing labels
             for a in _label_actors:
                 try:
@@ -269,6 +269,50 @@ class ModelViewer:
                     _label_actors.append(actor)
                 except Exception:
                     pass
+
+            # ── Part labels (one per instance, at centroid) ─────────
+            parts_reg_local = getattr(self._parent, 'parts', None)
+            if show_parts and parts_reg_local is not None:
+                part_points = []
+                part_labels = []
+                for label, inst in parts_reg_local.instances.items():
+                    # Use highest-dim entity centroid for placement
+                    placed = False
+                    for d in (3, 2, 1, 0):
+                        for t in inst.entities.get(d, []):
+                            c = registry.centroid((d, t))
+                            if c is not None:
+                                part_points.append(c)
+                                part_labels.append(label)
+                                placed = True
+                                break
+                        if placed:
+                            break
+                    if not placed and inst.bbox is not None:
+                        bb = inst.bbox
+                        part_points.append([
+                            (bb[0] + bb[3]) * 0.5 - registry.origin_shift[0],
+                            (bb[1] + bb[4]) * 0.5 - registry.origin_shift[1],
+                            (bb[2] + bb[5]) * 0.5 - registry.origin_shift[2],
+                        ])
+                        part_labels.append(label)
+
+                if part_points:
+                    try:
+                        actor = plotter.add_point_labels(
+                            np.array(part_points), part_labels,
+                            font_size=font_size + 2,
+                            text_color="#a6e3a1",
+                            shape_color="#1e1e2e",
+                            shape_opacity=0.85,
+                            show_points=False,
+                            always_visible=True,
+                            bold=True,
+                            name="_labels_parts",
+                        )
+                        _label_actors.append(actor)
+                    except Exception:
+                        pass
 
             plotter.render()
 
