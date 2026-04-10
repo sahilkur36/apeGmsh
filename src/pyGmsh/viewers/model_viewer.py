@@ -55,6 +55,7 @@ class ModelViewer:
         surface_opacity: float = 0.35,
         show_surface_edges: bool = False,
         fast: bool = True,
+        fem: object = None,
         **kwargs: Any,
     ) -> None:
         self._parent = parent
@@ -67,6 +68,9 @@ class ModelViewer:
         self._line_width = line_width
         self._surface_opacity = surface_opacity
         self._show_surface_edges = show_surface_edges
+
+        # Optional resolved FEM data for loads/mass overlays
+        self._fem = fem
 
         # Populated during show()
         self._selection_state = None
@@ -89,6 +93,9 @@ class ModelViewer:
         from .ui.model_tabs import (
             BrowserTab, FilterTab, ViewTab, SelectionTreePanel, PartsTreePanel,
         )
+        from .ui.loads_tab import LoadsTabPanel, pattern_color
+        from .ui.mass_tab import MassTabPanel
+        import pyvista as pv
 
         # Ensure geometry is synced
         gmsh.model.occ.synchronize()
@@ -492,6 +499,161 @@ class ModelViewer:
             )
             # Insert after Browser tab (position 1)
             win._tab_widget.insertTab(1, parts_tree.widget, "Parts")
+
+        # ── Loads tab (read-only overlays) ──────────────────────────
+        loads_comp = getattr(self._parent, 'loads', None)
+        loads_tab = None
+        _load_actors: list = []
+
+        def _scene_diagonal() -> float:
+            try:
+                dims_present = sorted(registry.dim_meshes.keys())
+                if not dims_present:
+                    return 1.0
+                mesh = registry.dim_meshes[dims_present[-1]]
+                pts = mesh.points
+                if len(pts) == 0:
+                    return 1.0
+                span = pts.max(axis=0) - pts.min(axis=0)
+                d = float(np.linalg.norm(span))
+                return max(d, 1.0)
+            except Exception:
+                return 1.0
+
+        def _on_loads_patterns_changed(active_patterns):
+            for a in _load_actors:
+                try:
+                    plotter.remove_actor(a)
+                except Exception:
+                    pass
+            _load_actors.clear()
+
+            fem = self._fem
+            if not active_patterns or fem is None or not fem.loads:
+                plotter.render()
+                return
+
+            diag = _scene_diagonal()
+            base_len = diag * 0.05  # 5% of domain diagonal
+            origin = registry.origin_shift
+
+            for pat in active_patterns:
+                positions = []
+                directions = []
+                for r in fem.loads.nodal():
+                    if r.pattern != pat:
+                        continue
+                    try:
+                        xyz = fem.get_node_coords(int(r.node_id)) - origin
+                    except Exception:
+                        continue
+                    fxyz = np.array(r.forces[:3], dtype=float)
+                    if not np.any(fxyz):
+                        continue
+                    positions.append(xyz)
+                    directions.append(fxyz)
+
+                if not positions:
+                    continue
+
+                positions_arr = np.array(positions, dtype=float)
+                directions_arr = np.array(directions, dtype=float)
+
+                cloud = pv.PolyData(positions_arr)
+                cloud['vectors'] = directions_arr
+                glyphs = cloud.glyph(
+                    orient='vectors', scale=False, factor=base_len,
+                )
+                color = pattern_color(pat)
+                actor = plotter.add_mesh(
+                    glyphs, color=color,
+                    name=f"_loads_pattern_{pat}",
+                    reset_camera=False,
+                    pickable=False,
+                )
+                _load_actors.append(actor)
+
+            plotter.render()
+
+        if loads_comp is not None:
+            loads_tab = LoadsTabPanel(
+                loads_comp, fem=self._fem,
+                on_patterns_changed=_on_loads_patterns_changed,
+            )
+            # Insert after Parts (position 2 if parts exists, else 1)
+            insert_pos = 2 if parts_reg is not None else 1
+            win._tab_widget.insertTab(insert_pos, loads_tab.widget, "Loads")
+
+        # ── Mass tab (read-only overlays) ───────────────────────────
+        mass_comp = getattr(self._parent, 'mass', None)
+        mass_tab = None
+        _mass_actors: list = []
+
+        def _on_mass_overlay_changed(show: bool):
+            for a in _mass_actors:
+                try:
+                    plotter.remove_actor(a)
+                except Exception:
+                    pass
+            _mass_actors.clear()
+            try:
+                plotter.remove_scalar_bar()
+            except Exception:
+                pass
+
+            fem = self._fem
+            if not show or fem is None or not fem.mass:
+                plotter.render()
+                return
+
+            positions = []
+            masses = []
+            origin = registry.origin_shift
+            for r in fem.mass:
+                try:
+                    xyz = fem.get_node_coords(int(r.node_id)) - origin
+                except Exception:
+                    continue
+                m = float(r.mass[0])
+                if m <= 0:
+                    continue
+                positions.append(xyz)
+                masses.append(m)
+
+            if not positions:
+                plotter.render()
+                return
+
+            diag = _scene_diagonal()
+            max_mass = max(masses) if masses else 1.0
+            base_r = diag * 0.005
+
+            cloud = pv.PolyData(np.array(positions, dtype=float))
+            cloud['mass'] = np.array(masses, dtype=float)
+            sphere = pv.Sphere(radius=1.0, theta_resolution=10, phi_resolution=10)
+            scale_factor = base_r / (max_mass ** (1.0 / 3.0))
+            glyphs = cloud.glyph(
+                geom=sphere, scale='mass', factor=scale_factor,
+            )
+
+            actor = plotter.add_mesh(
+                glyphs, scalars='mass', cmap='viridis',
+                scalar_bar_args={'title': 'Nodal mass [kg]'},
+                name="_mass_overlays",
+                reset_camera=False,
+                pickable=False,
+            )
+            _mass_actors.append(actor)
+            plotter.render()
+
+        if mass_comp is not None:
+            mass_tab = MassTabPanel(
+                mass_comp, fem=self._fem,
+                on_overlay_changed=_on_mass_overlay_changed,
+            )
+            insert_pos = 3 if (parts_reg is not None and loads_tab is not None) \
+                else (2 if loads_tab is not None or parts_reg is not None else 1)
+            win._tab_widget.insertTab(insert_pos, mass_tab.widget, "Mass")
 
         # ── Wire callbacks ──────────────────────────────────────────
 
