@@ -170,7 +170,14 @@ def extract_physical_groups() -> dict[tuple[int, int], dict]:
 # Full FEMData assembly
 # =====================================================================
 
-def build_fem_data(dim: int = 2, mesh_selection_composite=None):
+def build_fem_data(
+    dim: int = 2,
+    mesh_selection_composite=None,
+    *,
+    parent=None,
+    auto_resolve: bool = True,
+    ndf: int = 6,
+):
     """
     Extract a complete :class:`FEMData` from the live Gmsh session.
 
@@ -183,6 +190,17 @@ def build_fem_data(dim: int = 2, mesh_selection_composite=None):
         Element dimension to extract.
     mesh_selection_composite : MeshSelectionSet, optional
         If provided, a snapshot is taken and attached to FEMData.
+    parent : _SessionBase, optional
+        Owning session.  When provided, ``g.constraints`` and
+        ``g.loads`` are automatically resolved against the extracted
+        mesh and attached to ``fem.constraints`` / ``fem.loads``.
+    auto_resolve : bool
+        If True (default) and *parent* is given, auto-resolve any
+        registered constraints and loads.  Pass ``False`` to skip
+        auto-resolution and assign records manually later.
+    ndf : int
+        Number of DOFs per node (used for load vector padding).
+        Default 6 (full 3D with rotations).
 
     Returns
     -------
@@ -237,5 +255,49 @@ def build_fem_data(dim: int = 2, mesh_selection_composite=None):
         physical=physical,
         mesh_selection=ms_store,
     )
+
+    # ── Auto-resolve constraints and loads ──────────────────────
+    if auto_resolve and parent is not None:
+        parts_comp = getattr(parent, "parts", None)
+        node_map = None
+        face_map = None
+        if parts_comp is not None and getattr(parts_comp, "_instances", None):
+            try:
+                node_map = parts_comp.build_node_map(result.node_ids, result.node_coords)
+                face_map = parts_comp.build_face_map(node_map)
+            except Exception:
+                node_map = None
+                face_map = None
+
+        # Constraints
+        constraints_comp = getattr(parent, "constraints", None)
+        if constraints_comp is not None and getattr(
+            constraints_comp, "constraint_defs", None
+        ):
+            try:
+                cs = constraints_comp.resolve(
+                    result.node_ids, result.node_coords,
+                    elem_tags=result.element_ids,
+                    connectivity=result.connectivity,
+                    node_map=node_map, face_map=face_map,
+                )
+                object.__setattr__(result, 'constraints', cs)
+            except Exception as exc:
+                print(f"[FEMData] WARNING: constraint auto-resolve failed: {exc}")
+
+        # Loads
+        loads_comp = getattr(parent, "loads", None)
+        if loads_comp is not None and getattr(loads_comp, "load_defs", None):
+            try:
+                ls = loads_comp.resolve(
+                    result.node_ids, result.node_coords,
+                    elem_tags=result.element_ids,
+                    connectivity=result.connectivity,
+                    node_map=node_map, face_map=face_map,
+                    ndf=ndf,
+                )
+                object.__setattr__(result, 'loads', ls)
+            except Exception as exc:
+                print(f"[FEMData] WARNING: load auto-resolve failed: {exc}")
 
     return result

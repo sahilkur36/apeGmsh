@@ -24,7 +24,13 @@ TagsLike = Tag | list[Tag] | DimTag | list[DimTag]
 # ---------------------------------------------------------------------------
 
 class Algorithm2D(IntEnum):
-    """2-D meshing algorithm selector — use with ``Mesh.set_algorithm``."""
+    """
+    2-D meshing algorithm selector (legacy IntEnum form).
+
+    Prefer passing a string name to :meth:`Mesh.set_algorithm` — see
+    :data:`ALGORITHM_2D` and :class:`MeshAlgorithm2D` for the canonical
+    names and the accepted aliases.
+    """
     MESH_ADAPT             = 1
     AUTOMATIC              = 2
     INITIAL_MESH_ONLY      = 3
@@ -37,13 +43,153 @@ class Algorithm2D(IntEnum):
 
 
 class Algorithm3D(IntEnum):
-    """3-D meshing algorithm selector — use with ``Mesh.set_algorithm``."""
+    """
+    3-D meshing algorithm selector (legacy IntEnum form).
+
+    Prefer passing a string name to :meth:`Mesh.set_algorithm` — see
+    :data:`ALGORITHM_3D` and :class:`MeshAlgorithm3D` for the canonical
+    names and the accepted aliases.
+    """
     DELAUNAY          = 1
     INITIAL_MESH_ONLY = 3
     FRONTAL           = 4
     MMG3D             = 7
     R_TREE            = 9
     HXT               = 10
+
+
+# ---------------------------------------------------------------------------
+# Name-based algorithm API
+# ---------------------------------------------------------------------------
+#
+# ``set_algorithm`` accepts three forms:
+#
+#   1. A string — looked up (case-/separator-insensitive) in ``ALGORITHM_2D``
+#      or ``ALGORITHM_3D``.  Typos raise ``ValueError`` with the full list of
+#      canonical names.
+#   2. An ``Algorithm2D`` / ``Algorithm3D`` member (legacy IntEnum).
+#   3. A raw ``int`` — passed straight to Gmsh for forward compatibility with
+#      algorithms that ship ahead of this wrapper.
+#
+# The ``MeshAlgorithm2D`` / ``MeshAlgorithm3D`` classes below expose the
+# canonical names as string class attributes, which gives IDE autocomplete
+# while still letting users type plain strings when they want to.
+
+ALGORITHM_2D: dict[str, int] = {
+    # canonical
+    "mesh_adapt":             1,
+    "automatic":              2,
+    "initial_mesh_only":      3,
+    "delaunay":               5,
+    "frontal_delaunay":       6,
+    "bamg":                   7,
+    "frontal_delaunay_quads": 8,
+    "packing_parallelograms": 9,
+    "quasi_structured_quad":  11,
+    # aliases
+    "auto":                   2,
+    "default":                2,
+    "meshadapt":              1,
+    "front":                  6,
+    "frontal":                6,
+    "quad":                   8,
+    "quads":                  8,
+    "tri":                    6,
+    "tris":                   6,
+    "pack":                   9,
+    "packing":                9,
+    "quasi_structured":       11,
+    "qsq":                    11,
+}
+
+ALGORITHM_3D: dict[str, int] = {
+    # canonical
+    "delaunay":          1,
+    "initial_mesh_only": 3,
+    "frontal":           4,
+    "mmg3d":             7,
+    "r_tree":            9,
+    "hxt":               10,
+    # aliases
+    "auto":              10,
+    "default":           10,
+    "automatic":         10,
+    "rtree":             9,
+    "mmg":               7,
+}
+
+
+class MeshAlgorithm2D:
+    """
+    Canonical 2-D algorithm names as string constants.
+
+    Use these for IDE autocomplete — every value here is a valid key in
+    :data:`ALGORITHM_2D` and may be passed directly to
+    :meth:`Mesh.set_algorithm`.
+    """
+    MESH_ADAPT             = "mesh_adapt"
+    AUTOMATIC              = "automatic"
+    AUTO                   = "automatic"            # alias
+    INITIAL_MESH_ONLY      = "initial_mesh_only"
+    DELAUNAY               = "delaunay"
+    FRONTAL_DELAUNAY       = "frontal_delaunay"
+    BAMG                   = "bamg"
+    FRONTAL_DELAUNAY_QUADS = "frontal_delaunay_quads"
+    QUAD                   = "frontal_delaunay_quads"  # alias — practical default for quads
+    QUADS                  = "frontal_delaunay_quads"  # alias
+    PACKING_PARALLELOGRAMS = "packing_parallelograms"
+    QUASI_STRUCTURED_QUAD  = "quasi_structured_quad"
+    QSQ                    = "quasi_structured_quad"   # alias
+
+
+class MeshAlgorithm3D:
+    """
+    Canonical 3-D algorithm names as string constants.
+
+    Use these for IDE autocomplete — every value here is a valid key in
+    :data:`ALGORITHM_3D` and may be passed directly to
+    :meth:`Mesh.set_algorithm`.
+    """
+    DELAUNAY          = "delaunay"
+    INITIAL_MESH_ONLY = "initial_mesh_only"
+    FRONTAL           = "frontal"
+    MMG3D             = "mmg3d"
+    R_TREE            = "r_tree"
+    HXT               = "hxt"
+    AUTO              = "hxt"   # alias — modern default
+
+
+def _normalize_algorithm(alg, dim: int) -> int:
+    """
+    Resolve ``alg`` (str | int | IntEnum) into the integer code Gmsh wants.
+
+    Raises ``ValueError`` with the full list of canonical names on an
+    unknown string, so users get immediate, actionable feedback instead of
+    a silent Gmsh error later.
+    """
+    if isinstance(alg, bool):       # bool is an int subclass — reject early
+        raise TypeError(f"set_algorithm: algorithm must not be a bool, got {alg!r}")
+    if isinstance(alg, int):
+        return int(alg)
+    if isinstance(alg, str):
+        table = ALGORITHM_2D if dim == 2 else ALGORITHM_3D
+        key = alg.strip().lower().replace("-", "_").replace(" ", "_")
+        if key in table:
+            return table[key]
+        canonical = sorted({
+            name for name in table
+            if name not in {"auto", "default", "automatic",  # 3D-only aliases
+                            "meshadapt", "front", "quad", "quads",
+                            "tri", "tris", "pack", "packing",
+                            "quasi_structured", "qsq", "rtree", "mmg"}
+        })
+        raise ValueError(
+            f"set_algorithm: unknown {dim}-D algorithm {alg!r}.\n"
+            f"Known names (dim={dim}): {canonical}"
+        )
+    raise TypeError(
+        f"set_algorithm: algorithm must be str, int, or IntEnum — got {type(alg).__name__}"
+    )
 
 
 class OptimizeMethod:
@@ -639,7 +785,7 @@ class Mesh:
     def set_algorithm(
         self,
         tag      : int,
-        algorithm: int,
+        algorithm,
         *,
         dim      : int = 2,
     ) -> Mesh:
@@ -650,7 +796,18 @@ class Mesh:
         Parameters
         ----------
         tag       : surface tag (dim=2); ignored for dim=3
-        algorithm : use ``Algorithm2D.*`` (dim=2) or ``Algorithm3D.*`` (dim=3)
+        algorithm : algorithm selector — any of:
+
+                    * a **string name** such as ``"hxt"``, ``"frontal_delaunay_quads"``,
+                      ``"auto"``, or any alias in :data:`ALGORITHM_2D` /
+                      :data:`ALGORITHM_3D`. Matching is case- and
+                      separator-insensitive (``"Frontal-Delaunay"`` works).
+                    * an attribute of :class:`MeshAlgorithm2D` /
+                      :class:`MeshAlgorithm3D` — same strings, exposed as
+                      class constants for IDE autocomplete.
+                    * an :class:`Algorithm2D` / :class:`Algorithm3D` member
+                      (legacy IntEnum).
+                    * a raw ``int`` — passed straight to Gmsh.
         dim       : entity dimension — must be 2 or 3
 
         Note
@@ -659,29 +816,190 @@ class Mesh:
         selection).  For dim=3, the algorithm is applied globally via
         ``gmsh.option.setNumber("Mesh.Algorithm3D", ...)``.
 
+        Unknown string names raise ``ValueError`` with the full list of
+        canonical names for the requested dimension.
+
         Example
         -------
         ::
 
+            # Preferred: name-based
+            g.mesh.set_algorithm(surf_tag, "frontal_delaunay_quads")
+            g.mesh.set_algorithm(0, "hxt", dim=3)
+
+            # With the autocomplete-friendly constants class
+            g.mesh.set_algorithm(surf_tag, MeshAlgorithm2D.QUADS)
+            g.mesh.set_algorithm(0, MeshAlgorithm3D.HXT, dim=3)
+
+            # Legacy IntEnum still works
             g.mesh.set_algorithm(surf_tag, Algorithm2D.FRONTAL_DELAUNAY_QUADS)
-            g.mesh.set_algorithm(0, Algorithm3D.HXT, dim=3)
         """
+        if dim not in (2, 3):
+            raise ValueError(f"set_algorithm: dim must be 2 or 3, got {dim!r}")
+
+        alg_int = _normalize_algorithm(algorithm, dim)
+
         if dim == 2:
-            gmsh.model.mesh.setAlgorithm(2, tag, int(algorithm))
+            gmsh.model.mesh.setAlgorithm(2, tag, alg_int)
             self._directives.append({
                 'kind': 'algorithm', 'dim': 2, 'tag': tag,
-                'algorithm': int(algorithm),
+                'algorithm': alg_int, 'requested': algorithm,
             })
-            self._log(f"set_algorithm(dim=2, tag={tag}, alg={algorithm!r})")
-        elif dim == 3:
-            gmsh.option.setNumber("Mesh.Algorithm3D", int(algorithm))
+            self._log(
+                f"set_algorithm(dim=2, tag={tag}, alg={algorithm!r} -> {alg_int})"
+            )
+        else:  # dim == 3
+            gmsh.option.setNumber("Mesh.Algorithm3D", alg_int)
             self._directives.append({
                 'kind': 'algorithm', 'dim': 3, 'tag': tag,
-                'algorithm': int(algorithm),
+                'algorithm': alg_int, 'requested': algorithm,
             })
-            self._log(f"set_algorithm(dim=3, alg={algorithm!r})  [global option]")
+            self._log(
+                f"set_algorithm(dim=3, alg={algorithm!r} -> {alg_int})  [global option]"
+            )
+        return self
+
+    # ------------------------------------------------------------------
+    # Physical-group convenience wrappers
+    # ------------------------------------------------------------------
+    #
+    # These helpers resolve a physical group name to its entity tags via
+    # ``self._parent.physical.entities(name, dim=...)`` and fan the
+    # corresponding per-entity mesh command out over the list.  They are
+    # strictly convenience — every one of them could be written as a
+    # two-line loop at the call site — but they keep the "mesh by PG"
+    # pattern discoverable and match the name-based style of
+    # ``set_algorithm``.
+
+    def _resolve_physical(self, name: str, dim: int) -> list[int]:
+        """Look up the entity tags behind a physical group name."""
+        return self._parent.physical.entities(name, dim=dim)
+
+    def set_algorithm_by_physical(
+        self,
+        name     : str,
+        algorithm,
+        *,
+        dim      : int = 2,
+    ) -> Mesh:
+        """
+        Apply :meth:`set_algorithm` to every entity in a physical group.
+
+        Only meaningful for ``dim=2`` (per-surface algorithm selection).
+        With ``dim=3`` this still calls ``set_algorithm`` once because
+        ``Mesh.Algorithm3D`` is a global option — the PG name is used
+        only to document intent in the log.
+
+        Parameters
+        ----------
+        name      : physical group name
+        algorithm : string / IntEnum / int (see :meth:`set_algorithm`)
+        dim       : entity dimension — must be 2 or 3
+        """
+        if dim not in (2, 3):
+            raise ValueError(
+                f"set_algorithm_by_physical: dim must be 2 or 3, got {dim!r}"
+            )
+        tags = self._resolve_physical(name, dim)
+        self._log(
+            f"set_algorithm_by_physical(name={name!r}, dim={dim}, "
+            f"tags={tags}, alg={algorithm!r})"
+        )
+        if dim == 3:
+            # Algorithm3D is global; calling once is enough.
+            return self.set_algorithm(0, algorithm, dim=3)
+        for t in tags:
+            self.set_algorithm(t, algorithm, dim=2)
+        return self
+
+    def set_recombine_by_physical(
+        self,
+        name : str,
+        *,
+        dim  : int = 2,
+        angle: float = 45.0,
+    ) -> Mesh:
+        """Apply :meth:`set_recombine` to every entity in a physical group."""
+        tags = self._resolve_physical(name, dim)
+        self._log(
+            f"set_recombine_by_physical(name={name!r}, dim={dim}, tags={tags})"
+        )
+        for t in tags:
+            self.set_recombine(t, dim=dim, angle=angle)
+        return self
+
+    def set_smoothing_by_physical(
+        self,
+        name: str,
+        val : int,
+        *,
+        dim : int = 2,
+    ) -> Mesh:
+        """Apply :meth:`set_smoothing` to every entity in a physical group."""
+        tags = self._resolve_physical(name, dim)
+        self._log(
+            f"set_smoothing_by_physical(name={name!r}, dim={dim}, "
+            f"tags={tags}, val={val})"
+        )
+        for t in tags:
+            self.set_smoothing(t, val, dim=dim)
+        return self
+
+    def set_size_by_physical(
+        self,
+        name : str,
+        size : float,
+        *,
+        dim  : int = 0,
+    ) -> Mesh:
+        """
+        Apply :meth:`set_size` to every entity in a physical group.
+
+        Only effective for ``dim=0`` (points) — Gmsh ignores characteristic
+        lengths set on higher-dimensional entities.  For surface or volume
+        size control prefer a mesh field (see ``g.mesh.field``).
+        """
+        tags = self._resolve_physical(name, dim)
+        self._log(
+            f"set_size_by_physical(name={name!r}, dim={dim}, "
+            f"tags={tags}, size={size})"
+        )
+        self.set_size(tags, size, dim=dim)
+        return self
+
+    def set_transfinite_by_physical(
+        self,
+        name : str,
+        *,
+        dim  : int,
+        **kwargs,
+    ) -> Mesh:
+        """
+        Apply the appropriate ``set_transfinite_*`` call to every entity in
+        a physical group.
+
+        ``dim`` selects the entity dimension (1=curve, 2=surface, 3=volume)
+        and the remaining keyword arguments are forwarded to
+        :meth:`set_transfinite_curve`, :meth:`set_transfinite_surface`, or
+        :meth:`set_transfinite_volume`.
+        """
+        tags = self._resolve_physical(name, dim)
+        self._log(
+            f"set_transfinite_by_physical(name={name!r}, dim={dim}, tags={tags})"
+        )
+        if dim == 1:
+            for t in tags:
+                self.set_transfinite_curve(t, **kwargs)
+        elif dim == 2:
+            for t in tags:
+                self.set_transfinite_surface(t, **kwargs)
+        elif dim == 3:
+            for t in tags:
+                self.set_transfinite_volume(t, **kwargs)
         else:
-            raise ValueError(f"set_algorithm: dim must be 2 or 3, got {dim!r}")
+            raise ValueError(
+                f"set_transfinite_by_physical: dim must be 1, 2, or 3, got {dim!r}"
+            )
         return self
 
     def set_compound(self, dim: int, tags: list[int]) -> Mesh:
@@ -1301,7 +1619,11 @@ class Mesh:
         from ._fem_extract import build_fem_data
 
         ms_composite = getattr(self._parent, 'mesh_selection', None)
-        result = build_fem_data(dim=dim, mesh_selection_composite=ms_composite)
+        result = build_fem_data(
+            dim=dim,
+            mesh_selection_composite=ms_composite,
+            parent=self._parent,
+        )
 
         self._log(
             f"get_fem_data(dim={dim}) → "

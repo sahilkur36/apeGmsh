@@ -451,23 +451,25 @@ class OpenSees:
         """
         Schedule an equal nodal force on every node in a physical group.
 
-        Multiple calls with the same *pattern_name* accumulate loads inside
-        one OpenSees ``pattern Plain`` block.
+        .. deprecated::
+            Use the solver-agnostic loads composite instead::
 
-        Parameters
-        ----------
-        pattern_name : load-pattern label
-        pg_name      : physical-group name
-        force        : force vector of length ``ndf``
-        dim          : dimension hint for disambiguation
+                with g.loads.pattern("Wind"):
+                    g.loads.point("WindwardFace", force_xyz=(1e4, 0, 0))
 
-        Example
-        -------
-        ::
-
-            g.opensees.add_nodal_load("Wind", "WindwardFace",
-                                      force=[1e4, 0, 0])
+            Then ``fem.loads`` is auto-populated by ``get_fem_data()``.
+            The OpenSees bridge consumes it via
+            :meth:`consume_loads_from_fem` (auto-called from
+            :meth:`build_from_fem`).
         """
+        import warnings
+        warnings.warn(
+            "OpenSees.add_nodal_load() is deprecated. Use "
+            "g.loads.point(target, force_xyz=...) inside a "
+            "g.loads.pattern(name) block instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if len(force) != self._ndf:
             raise ValueError(
                 f"add_nodal_load: len(force)={len(force)} != ndf={self._ndf}"
@@ -483,6 +485,53 @@ class OpenSees:
         self._log(
             f"add_nodal_load(pattern={pattern_name!r}, "
             f"pg={pg_name!r}, force={force})"
+        )
+        return self
+
+    def consume_loads_from_fem(self, fem) -> OpenSees:
+        """Ingest resolved load records from a :class:`FEMData` snapshot.
+
+        Translates ``fem.loads`` (populated by ``g.loads`` auto-resolve)
+        into the internal load-pattern dict consumed by :meth:`build`.
+
+        After calling this, :meth:`build` will emit the loads as
+        ``pattern Plain`` blocks alongside any legacy ``add_nodal_load``
+        entries.
+
+        Parameters
+        ----------
+        fem : FEMData
+            Snapshot from ``g.mesh.get_fem_data()``.
+
+        Returns
+        -------
+        self
+        """
+        loads = getattr(fem, "loads", None)
+        if not loads:
+            return self
+        from pyGmsh.solvers.Loads import NodalLoadRecord, ElementLoadRecord
+
+        for rec in loads:
+            pat = rec.pattern
+            if pat not in self._load_patterns:
+                self._load_patterns[pat] = []
+            if isinstance(rec, NodalLoadRecord):
+                self._load_patterns[pat].append({
+                    "type":    "nodal_direct",
+                    "node_id": int(rec.node_id),
+                    "forces":  list(rec.forces),
+                })
+            elif isinstance(rec, ElementLoadRecord):
+                self._load_patterns[pat].append({
+                    "type":       "element_direct",
+                    "element_id": int(rec.element_id),
+                    "load_type":  rec.load_type,
+                    "params":     dict(rec.params),
+                })
+        self._log(
+            f"consume_loads_from_fem(): {len(loads)} load record(s) "
+            f"across {len(loads.patterns())} pattern(s)"
         )
         return self
 
@@ -702,18 +751,21 @@ class OpenSees:
 
         for loads in self._load_patterns.values():
             for load_def in loads:
-                if load_def["type"] != "nodal":
-                    continue
-                pg_name = load_def["pg_name"]
-                pg_dim, pg_tag = self._find_pg(
-                    pg_name, load_def.get("dim")
-                )
-                raw_pg, _ = gmsh.model.mesh.getNodesForPhysicalGroup(
-                    pg_dim, pg_tag
-                )
-                connected_gmsh.update(
-                    int(t) for t in raw_pg if int(t) in all_gmsh_tags
-                )
+                if load_def["type"] == "nodal":
+                    pg_name = load_def["pg_name"]
+                    pg_dim, pg_tag = self._find_pg(
+                        pg_name, load_def.get("dim")
+                    )
+                    raw_pg, _ = gmsh.model.mesh.getNodesForPhysicalGroup(
+                        pg_dim, pg_tag
+                    )
+                    connected_gmsh.update(
+                        int(t) for t in raw_pg if int(t) in all_gmsh_tags
+                    )
+                elif load_def["type"] == "nodal_direct":
+                    nid = int(load_def["node_id"])
+                    if nid in all_gmsh_tags:
+                        connected_gmsh.add(nid)
 
         n_total   = len(self._node_map)
         n_pruned  = n_total - len(connected_gmsh)
@@ -802,17 +854,26 @@ class OpenSees:
 
         for loads in self._load_patterns.values():
             for load_def in loads:
-                if load_def["type"] != "nodal":
-                    continue
-                ops_ids = self._nodes_for_pg(
-                    load_def["pg_name"],
-                    load_def.get("dim"),
-                )
-                if not ops_ids:
-                    continue
-                for dof_idx, force in enumerate(load_def["force"], start=1):
-                    if force:
-                        df.loc[ops_ids, f"load_{dof_idx}"] += float(force)
+                if load_def["type"] == "nodal":
+                    ops_ids = self._nodes_for_pg(
+                        load_def["pg_name"],
+                        load_def.get("dim"),
+                    )
+                    if not ops_ids:
+                        continue
+                    for dof_idx, force in enumerate(load_def["force"], start=1):
+                        if force:
+                            df.loc[ops_ids, f"load_{dof_idx}"] += float(force)
+                elif load_def["type"] == "nodal_direct":
+                    gmsh_tag = load_def["node_id"]
+                    ops_id = self._node_map.get(int(gmsh_tag))
+                    if ops_id is None:
+                        continue
+                    for dof_idx, force in enumerate(
+                        load_def["forces"][: self._ndf], start=1
+                    ):
+                        if force:
+                            df.loc[ops_id, f"load_{dof_idx}"] += float(force)
 
         return df
 
@@ -982,6 +1043,7 @@ class OpenSees:
             lines.append(f"    ;# pattern: {pat_name!r}")
             for ld in loads:
                 if ld["type"] == "nodal":
+                    # Legacy: equal force on all nodes of a PG
                     ops_ids = self._nodes_for_pg(ld["pg_name"], ld.get("dim"))
                     f_str   = "  ".join(str(v) for v in ld["force"])
                     lines.append(
@@ -989,6 +1051,37 @@ class OpenSees:
                     )
                     for nid in ops_ids:
                         lines.append(f"    load {nid}  {f_str}")
+                elif ld["type"] == "nodal_direct":
+                    # New: explicit per-node force vector from g.loads
+                    gmsh_tag = ld["node_id"]
+                    ops_id = self._node_map.get(int(gmsh_tag))
+                    if ops_id is None:
+                        continue
+                    forces = ld["forces"][: self._ndf]
+                    f_str = "  ".join(f"{v:.10g}" for v in forces)
+                    lines.append(f"    load {ops_id}  {f_str}")
+                elif ld["type"] == "element_direct":
+                    # New: eleLoad command from g.loads (target_form="element")
+                    eid = ld["element_id"]
+                    lt = ld["load_type"]
+                    params = ld.get("params", {})
+                    if lt == "beamUniform":
+                        wy = params.get("wy", 0.0)
+                        wz = params.get("wz", 0.0)
+                        wx = params.get("wx", 0.0)
+                        lines.append(
+                            f"    eleLoad -ele {eid} -type -beamUniform "
+                            f"{wy:.10g} {wz:.10g} {wx:.10g}"
+                        )
+                    elif lt == "surfacePressure":
+                        p = params.get("p", 0.0)
+                        lines.append(
+                            f"    eleLoad -ele {eid} -type -surfaceLoad {p:.10g}"
+                        )
+                    else:
+                        lines.append(
+                            f"    ;# unsupported eleLoad type {lt!r} for element {eid}"
+                        )
             lines.append("}")
 
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -1100,6 +1193,35 @@ class OpenSees:
                     )
                     for nid in ops_ids:
                         lines.append(f"ops.load({nid}, {f_str})")
+                elif ld["type"] == "nodal_direct":
+                    gmsh_tag = ld["node_id"]
+                    ops_id = self._node_map.get(int(gmsh_tag))
+                    if ops_id is None:
+                        continue
+                    forces = ld["forces"][: self._ndf]
+                    f_str = ", ".join(f"{v:.10g}" for v in forces)
+                    lines.append(f"ops.load({ops_id}, {f_str})")
+                elif ld["type"] == "element_direct":
+                    eid = ld["element_id"]
+                    lt = ld["load_type"]
+                    params = ld.get("params", {})
+                    if lt == "beamUniform":
+                        wy = params.get("wy", 0.0)
+                        wz = params.get("wz", 0.0)
+                        wx = params.get("wx", 0.0)
+                        lines.append(
+                            f"ops.eleLoad('-ele', {eid}, '-type', '-beamUniform', "
+                            f"{wy:.10g}, {wz:.10g}, {wx:.10g})"
+                        )
+                    elif lt == "surfacePressure":
+                        p = params.get("p", 0.0)
+                        lines.append(
+                            f"ops.eleLoad('-ele', {eid}, '-type', '-surfaceLoad', {p:.10g})"
+                        )
+                    else:
+                        lines.append(
+                            f"# unsupported eleLoad type {lt!r} for element {eid}"
+                        )
 
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         self._log(f"export_py → {path}  ({len(lines)} lines)")

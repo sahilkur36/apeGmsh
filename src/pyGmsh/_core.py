@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from .viz.Inspect import Inspect
     from .core.Model import Model
     from .core.ConstraintsComposite import ConstraintsComposite
+    from .core.LoadsComposite import LoadsComposite
     from .core._parts_registry import PartsRegistry
     from .mesh.Mesh import Mesh
     from .mesh.MshLoader import MshLoader
@@ -36,6 +37,7 @@ class pyGmsh(_SessionBase):
         ("model",           ".core.Model",                 "Model",                 False),
         ("parts",           ".core._parts_registry",       "PartsRegistry",         False),
         ("constraints",     ".core.ConstraintsComposite",  "ConstraintsComposite",  False),
+        ("loads",           ".core.LoadsComposite",        "LoadsComposite",        False),
         ("mesh",            ".mesh.Mesh",                  "Mesh",                  False),
         ("loader",          ".mesh.MshLoader",             "MshLoader",             False),
         ("physical",        ".mesh.PhysicalGroups",        "PhysicalGroups",        False),
@@ -52,6 +54,7 @@ class pyGmsh(_SessionBase):
     model: Model
     parts: PartsRegistry
     constraints: ConstraintsComposite
+    loads: LoadsComposite
     mesh: Mesh
     loader: MshLoader
     physical: PhysicalGroups
