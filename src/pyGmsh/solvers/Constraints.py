@@ -41,6 +41,13 @@ Constraint taxonomy
 ``kinematic``        general: user picks which DOFs
 =================  ================================================
 
+**Level 2b — Mixed-DOF coupling** (1 6-DOF master, N 3-DOF slaves)
+
+=================  ================================================
+``node_to_surface`` 6-DOF master → phantom nodes → 3-DOF solid slaves
+                   via rigid link + equalDOF (translations only)
+=================  ================================================
+
 **Level 3 — Node-to-Surface** (1 node, 1 element face)
 
 =================  ================================================
@@ -333,6 +340,57 @@ class EmbeddedDef(ConstraintDef):
     host_entities: list[tuple[int, int]] | None = None
     embedded_entities: list[tuple[int, int]] | None = None
     tolerance: float = 1.0
+
+
+# ── Level 2b: Mixed-DOF coupling ────────────────────────────────────
+
+@dataclass
+class NodeToSurfaceDef(ConstraintDef):
+    """
+    6-DOF node to 3-DOF surface coupling via phantom (duplicate) nodes.
+
+    Connects a 6-DOF master node (beam, frame, or any reference
+    point) to a group of 3-DOF slave nodes on a surface (solid
+    elements) through an intermediate layer of phantom nodes that
+    carry full 6-DOF kinematics.
+
+    The resolver:
+
+    1. **Duplicates** each slave node → creates phantom node tags
+       at the same coordinates (6-DOF intermediaries).
+    2. **Rigid links** master → each phantom node (``rigid_beam``),
+       propagating rotational effects through the offset arm::
+
+           u_phantom = u_master + θ_master × r
+
+    3. **EqualDOF** phantom → original slave, translations only
+       ``[1, 2, 3]`` (rotations discarded since the solid has none).
+
+    This is the standard technique for mixed-dimensionality
+    coupling (Abaqus ``*COUPLING, KINEMATIC`` on solids; OpenSees
+    manual rigid-link + equalDOF pattern).
+
+    Unlike other constraint definitions that take string labels,
+    this one accepts **bare tags**:
+
+    - ``master_label``: node tag (int, dim=0) — the 6-DOF node.
+    - ``slave_label``: surface entity tag (int, dim=2) — the
+      Gmsh surface whose nodes become the 3-DOF slaves.
+
+    Parameters
+    ----------
+    master_point : (x, y, z) or None
+        Explicit master node location.  If None, the node tag in
+        ``master_label`` is used directly.
+    dofs : list[int] or None
+        Translational DOFs coupled to the solid.  Default [1, 2, 3].
+    tolerance : float
+        For auto-detecting master node by proximity.
+    """
+    kind: str = field(init=False, default="node_to_surface")
+    master_point: tuple[float, float, float] | None = None
+    dofs: list[int] | None = None
+    tolerance: float = 1e-6
 
 
 # ── Level 4: Surface-to-Surface ──────────────────────────────────────
@@ -629,6 +687,60 @@ class SurfaceCouplingRecord(ConstraintRecord):
     master_nodes: list[int] = field(default_factory=list)
     slave_nodes: list[int] = field(default_factory=list)
     dofs: list[int] = field(default_factory=list)
+
+
+@dataclass
+class NodeToSurfaceRecord(ConstraintRecord):
+    """
+    Compound record for 6-DOF node to 3-DOF surface coupling via phantom nodes.
+
+    This record encapsulates the three-step coupling:
+
+    1. Phantom nodes duplicated from the original slave positions.
+    2. Rigid links from the 6-DOF master to each phantom node.
+    3. EqualDOF from each phantom node to the original slave (translations only).
+
+    Solvers consume this by:
+    - Creating the phantom nodes (6-DOF, same coords as slaves).
+    - Emitting ``rigid_beam`` constraints master → phantom.
+    - Emitting ``equal_dof`` constraints phantom → slave for DOFs [1,2,3].
+
+    Attributes
+    ----------
+    master_node : int
+        The 6-DOF master node tag.
+    slave_nodes : list[int]
+        Original 3-DOF slave node tags (from the surface mesh).
+    phantom_nodes : list[int]
+        Generated 6-DOF phantom node tags (one per slave, same
+        coordinates).  Tag generation is handled by the resolver
+        using an offset above the maximum existing node tag.
+    phantom_coords : ndarray
+        Coordinates of phantom nodes, shape (n_slaves, 3).
+        Identical to the slave coordinates.
+    rigid_link_records : list[NodePairRecord]
+        Master → phantom rigid beam records (with offset vectors).
+    equal_dof_records : list[NodePairRecord]
+        Phantom → slave equalDOF records (translations only).
+    dofs : list[int]
+        Translational DOFs coupled to the surface (default [1,2,3]).
+    """
+    master_node: int = 0
+    slave_nodes: list[int] = field(default_factory=list)
+    phantom_nodes: list[int] = field(default_factory=list)
+    phantom_coords: ndarray | None = None
+    rigid_link_records: list[NodePairRecord] = field(default_factory=list)
+    equal_dof_records: list[NodePairRecord] = field(default_factory=list)
+    dofs: list[int] = field(default_factory=lambda: [1, 2, 3])
+
+    def expand(self) -> list[NodePairRecord]:
+        """
+        Flatten into individual :class:`NodePairRecord` objects.
+
+        Returns the rigid link records followed by the equalDOF
+        records — the natural emission order for solvers.
+        """
+        return list(self.rigid_link_records) + list(self.equal_dof_records)
 
 
 # =====================================================================
@@ -1297,7 +1409,7 @@ class ConstraintResolver:
         """
         dofs = defn.dofs or [1, 2, 3]
 
-        # Forward: slave nodes → master faces
+        # Forward: slave nodes -> master faces
         tie_fwd = TieDef(
             master_label=defn.master_label,
             slave_label=defn.slave_label,
@@ -1308,7 +1420,7 @@ class ConstraintResolver:
             tie_fwd, master_face_conn, slave_nodes,
         )
 
-        # Backward: master nodes → slave faces
+        # Backward: master nodes -> slave faces
         tie_bwd = TieDef(
             master_label=defn.slave_label,
             slave_label=defn.master_label,
@@ -1343,7 +1455,7 @@ class ConstraintResolver:
         .. note::
 
            The mortar operator requires numerical integration over
-           the overlapping surface segments — a significant algorithm.
+           the overlapping surface segments -- a significant algorithm.
            This implementation provides the *architecture* (the
            SurfaceCouplingRecord with mortar_operator field) but uses
            a **simplified** node-to-surface projection as a placeholder.
@@ -1392,5 +1504,86 @@ class ConstraintResolver:
             mortar_operator=B,
             master_nodes=m_list,
             slave_nodes=s_list,
+            dofs=list(dofs),
+        )
+
+    def resolve_node_to_surface(
+        self,
+        defn: NodeToSurfaceDef,
+        master_tag: int,
+        slave_nodes: set[int],
+    ) -> NodeToSurfaceRecord:
+        """
+        Resolve a 6-DOF node to 3-DOF surface coupling.
+
+        Steps:
+
+        1. Use the master node tag directly (already resolved from
+           ``master_label`` as bare node tag).
+        2. Generate phantom node tags — one per slave, starting at
+           ``max(all_existing_tags) + 1``.
+        3. Build rigid-beam records: master → each phantom.
+        4. Build equalDOF records: each phantom → original slave
+           (translations only).
+
+        Parameters
+        ----------
+        defn : NodeToSurfaceDef
+        master_tag : int
+            The 6-DOF master node tag (dim=0).
+        slave_nodes : set[int]
+            Node tags belonging to the slave surface (dim=2, 3-DOF).
+
+        Returns
+        -------
+        NodeToSurfaceRecord
+        """
+
+        master_xyz = self._coords_of(master_tag)
+        slave_list = sorted(slave_nodes - {master_tag})
+        dofs = defn.dofs or [1, 2, 3]
+
+        # -- 2. Generate phantom node tags --
+        max_tag = int(self.node_tags.max())
+        phantom_tags = list(range(max_tag + 1, max_tag + 1 + len(slave_list)))
+
+        phantom_coords = np.array([
+            self._coords_of(t) for t in slave_list
+        ])
+
+        # -- 3. Rigid beam: master -> phantom --
+        rigid_records = []
+        for phantom_tag, slave_tag in zip(phantom_tags, slave_list):
+            slave_xyz = self._coords_of(slave_tag)
+            offset = slave_xyz - master_xyz
+            rigid_records.append(NodePairRecord(
+                kind="rigid_beam",
+                name=defn.name,
+                master_node=master_tag,
+                slave_node=phantom_tag,
+                dofs=[1, 2, 3, 4, 5, 6],
+                offset=offset,
+            ))
+
+        # -- 4. EqualDOF: phantom -> slave (translations only) --
+        edof_records = []
+        for phantom_tag, slave_tag in zip(phantom_tags, slave_list):
+            edof_records.append(NodePairRecord(
+                kind="equal_dof",
+                name=defn.name,
+                master_node=phantom_tag,
+                slave_node=slave_tag,
+                dofs=list(dofs),
+            ))
+
+        return NodeToSurfaceRecord(
+            kind="node_to_surface",
+            name=defn.name,
+            master_node=master_tag,
+            slave_nodes=slave_list,
+            phantom_nodes=phantom_tags,
+            phantom_coords=phantom_coords,
+            rigid_link_records=rigid_records,
+            equal_dof_records=edof_records,
             dofs=list(dofs),
         )

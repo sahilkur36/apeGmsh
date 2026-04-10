@@ -334,6 +334,223 @@ class PhysicalGroupSet:
 
 
 # =====================================================================
+# Constraint snapshot
+# =====================================================================
+
+class ConstraintSet:
+    """
+    Solver-ready snapshot of resolved multi-point constraints.
+
+    Accessed via ``fem.constraints``.  Holds the full
+    :class:`ConstraintRecord` list **and** any extra nodes
+    (e.g. phantom nodes from :class:`NodeToSurfaceRecord`) that
+    solvers must create before emitting constraint commands.
+
+    The class is **solver-agnostic** — it exposes flat iterators
+    that any exporter (OpenSees, Abaqus, Code_Aster, …) can consume.
+
+    Construction
+    ------------
+    ::
+
+        records = g.constraints.resolve(...)
+        cs = ConstraintSet(records)
+        fem = g.mesh.get_fem_data(dim=3)
+        fem.constraints = cs           # or pass at construction
+
+    Iteration
+    ---------
+    ::
+
+        # Extra nodes that solvers must create first
+        for nid, xyz in fem.constraints.extra_nodes():
+            ops.node(nid, *xyz)
+
+        # Flat constraint pairs (covers ALL constraint types)
+        for c in fem.constraints.node_pairs():
+            # c is a NodePairRecord: master_node, slave_node, dofs,
+            # offset, penalty_stiffness, kind
+            ...
+
+        # All records, ungrouped
+        for rec in fem.constraints:
+            ...
+    """
+
+    def __init__(self, records: list | None = None) -> None:
+        self._records: list = list(records) if records else []
+
+    # ── Extra nodes (phantom nodes from compound constraints) ──
+
+    def extra_nodes(self):
+        """Iterate ``(node_id, coords)`` for nodes that solvers must
+        create **before** emitting constraint commands.
+
+        Currently produced by :class:`NodeToSurfaceRecord` (phantom nodes).
+        Returns Python-native types safe for OpenSees.
+
+        Yields
+        ------
+        (int, list[float])
+            Node ID and ``[x, y, z]`` coordinates.
+
+        Example
+        -------
+        ::
+
+            for nid, xyz in fem.constraints.extra_nodes():
+                ops.node(nid, *xyz)
+        """
+        from pyGmsh.solvers.Constraints import NodeToSurfaceRecord
+
+        for rec in self._records:
+            if isinstance(rec, NodeToSurfaceRecord):
+                coords = rec.phantom_coords
+                if coords is None:
+                    continue
+                for tag, xyz in zip(rec.phantom_nodes, coords):
+                    yield int(tag), xyz.tolist()
+
+    # ── Flat node-pair iteration ─────────────────────────────────
+
+    def node_pairs(self):
+        """Iterate over every constraint as individual
+        :class:`NodePairRecord` objects.
+
+        Compound records (:class:`NodeGroupRecord`,
+        :class:`NodeToSurfaceRecord`) are expanded automatically.
+        :class:`InterpolationRecord` and :class:`SurfaceCouplingRecord`
+        are skipped here — use :meth:`interpolations` for those.
+
+        Yields
+        ------
+        NodePairRecord
+
+        Example
+        -------
+        ::
+
+            for c in fem.constraints.node_pairs():
+                if c.kind == "equal_dof":
+                    ops.equalDOF(c.master_node, c.slave_node, *c.dofs)
+                elif c.kind == "rigid_beam":
+                    ops.rigidLink("beam", c.master_node, c.slave_node)
+        """
+        from pyGmsh.solvers.Constraints import (
+            NodePairRecord, NodeGroupRecord, NodeToSurfaceRecord,
+        )
+
+        for rec in self._records:
+            if isinstance(rec, NodePairRecord):
+                yield rec
+            elif isinstance(rec, NodeGroupRecord):
+                yield from rec.expand_to_pairs()
+            elif isinstance(rec, NodeToSurfaceRecord):
+                yield from rec.expand()
+
+    # ── Interpolation iteration ──────────────────────────────────
+
+    def interpolations(self):
+        """Iterate over :class:`InterpolationRecord` objects.
+
+        Covers ``tie``, ``distributing``, and the slave records
+        inside ``tied_contact`` / ``mortar``.
+
+        Yields
+        ------
+        InterpolationRecord
+        """
+        from pyGmsh.solvers.Constraints import (
+            InterpolationRecord, SurfaceCouplingRecord,
+        )
+
+        for rec in self._records:
+            if isinstance(rec, InterpolationRecord):
+                yield rec
+            elif isinstance(rec, SurfaceCouplingRecord):
+                yield from rec.slave_records
+
+    # ── Filter by kind ───────────────────────────────────────────
+
+    def by_kind(self, kind: str) -> list:
+        """Return all records matching a constraint kind.
+
+        Parameters
+        ----------
+        kind : str
+            e.g. ``"equal_dof"``, ``"rigid_beam"``, ``"node_to_surface"``,
+            ``"tie"``, ``"mortar"``.
+        """
+        return [r for r in self._records if r.kind == kind]
+
+    # ── Summary ──────────────────────────────────────────────────
+
+    def summary(self):
+        """Build a DataFrame summarising the constraint set.
+
+        Returns
+        -------
+        pd.DataFrame
+            Columns: ``kind``, ``count``, ``n_node_pairs``.
+        """
+        import pandas as pd
+        from pyGmsh.solvers.Constraints import (
+            NodePairRecord, NodeGroupRecord,
+            InterpolationRecord, SurfaceCouplingRecord,
+            NodeToSurfaceRecord,
+        )
+
+        counts: dict[str, dict] = {}
+        for rec in self._records:
+            kind = rec.kind
+            if kind not in counts:
+                counts[kind] = {"count": 0, "n_node_pairs": 0}
+            counts[kind]["count"] += 1
+
+            if isinstance(rec, NodePairRecord):
+                counts[kind]["n_node_pairs"] += 1
+            elif isinstance(rec, NodeGroupRecord):
+                counts[kind]["n_node_pairs"] += len(rec.slave_nodes)
+            elif isinstance(rec, NodeToSurfaceRecord):
+                counts[kind]["n_node_pairs"] += len(rec.rigid_link_records) + len(rec.equal_dof_records)
+            elif isinstance(rec, InterpolationRecord):
+                counts[kind]["n_node_pairs"] += 1
+            elif isinstance(rec, SurfaceCouplingRecord):
+                counts[kind]["n_node_pairs"] += len(rec.slave_records)
+
+        if not counts:
+            return pd.DataFrame(columns=["kind", "count", "n_node_pairs"])
+
+        rows = [
+            {"kind": k, "count": v["count"], "n_node_pairs": v["n_node_pairs"]}
+            for k, v in counts.items()
+        ]
+        return pd.DataFrame(rows).set_index("kind").sort_index()
+
+    # ── Dunder ───────────────────────────────────────────────────
+
+    def __iter__(self):
+        """Iterate over the raw record list."""
+        return iter(self._records)
+
+    def __len__(self) -> int:
+        return len(self._records)
+
+    def __bool__(self) -> bool:
+        return len(self._records) > 0
+
+    def __repr__(self) -> str:
+        if not self._records:
+            return "ConstraintSet(empty)"
+        kinds = {}
+        for r in self._records:
+            kinds[r.kind] = kinds.get(r.kind, 0) + 1
+        parts = ", ".join(f"{k}={v}" for k, v in sorted(kinds.items()))
+        return f"ConstraintSet({len(self._records)} records: {parts})"
+
+
+
+# =====================================================================
 # FEM data container
 # =====================================================================
 
@@ -401,9 +618,9 @@ class FEMData:
     info:          MeshInfo          = field(repr=False)
     physical:      PhysicalGroupSet  = field(repr=False)
     mesh_selection: "MeshSelectionStore" = field(repr=False, default=None)
-    constraints: list | None = field(repr=False, default=None)
+    constraints: ConstraintSet = field(repr=False, default=None)
 
-    # ── Lazy lookup caches (not part of __init__) ────────────
+    # -- Lazy lookup caches (not part of __init__) --
 
     _node_id_to_idx: dict = field(default=None, init=False, repr=False)
     _elem_id_to_idx: dict = field(default=None, init=False, repr=False)
@@ -430,13 +647,16 @@ class FEMData:
         if self.mesh_selection is None:
             from .MeshSelectionSet import MeshSelectionStore
             object.__setattr__(self, 'mesh_selection', MeshSelectionStore({}))
+        # Default constraints to empty ConstraintSet if not provided
+        if self.constraints is None:
+            object.__setattr__(self, 'constraints', ConstraintSet())
 
-    # ── Solver-friendly iterators ────────────────────────────
+    # -- Solver-friendly iterators --
 
     def nodes(self):
         """Iterate ``(node_id, coords)`` as Python-native types.
 
-        Yields ``(int, list[float])`` — safe for OpenSees.
+        Yields ``(int, list[float])`` -- safe for OpenSees.
 
         Example
         -------
@@ -451,7 +671,7 @@ class FEMData:
     def elements(self):
         """Iterate ``(element_id, connectivity)`` as Python-native types.
 
-        Yields ``(int, list[int])`` — safe for OpenSees.
+        Yields ``(int, list[int])`` -- safe for OpenSees.
 
         Example
         -------
@@ -463,10 +683,10 @@ class FEMData:
         for i in range(len(self.element_ids)):
             yield int(self.element_ids[i]), [int(n) for n in self.connectivity[i]]
 
-    # ── Lookup maps ──────────────────────────────────────────
+    # -- Lookup maps --
 
     def _build_node_map(self) -> dict[int, int]:
-        """Build and cache the node-ID → array-index map."""
+        """Build and cache the node-ID -> array-index map."""
         if self._node_id_to_idx is None:
             self._node_id_to_idx = {
                 int(nid): i for i, nid in enumerate(self.node_ids)
@@ -474,14 +694,14 @@ class FEMData:
         return self._node_id_to_idx
 
     def _build_elem_map(self) -> dict[int, int]:
-        """Build and cache the element-ID → array-index map."""
+        """Build and cache the element-ID -> array-index map."""
         if self._elem_id_to_idx is None:
             self._elem_id_to_idx = {
                 int(eid): i for i, eid in enumerate(self.element_ids)
             }
         return self._elem_id_to_idx
 
-    # ── Node lookups ─────────────────────────────────────────
+    # -- Node lookups --
 
     def node_index(self, nid: int) -> int:
         """
@@ -507,7 +727,7 @@ class FEMData:
         ::
 
             idx = fem.node_index(42)
-            fem.node_coords[idx]   # → array([x, y, z])
+            fem.node_coords[idx]   # -> array([x, y, z])
         """
         m = self._build_node_map()
         try:
@@ -515,7 +735,7 @@ class FEMData:
         except KeyError:
             raise KeyError(
                 f"Node ID {nid} not found. "
-                f"Valid range: {int(self.node_ids.min())}–"
+                f"Valid range: {int(self.node_ids.min())}-"
                 f"{int(self.node_ids.max())} "
                 f"({len(self.node_ids)} nodes)"
             ) from None
@@ -542,7 +762,7 @@ class FEMData:
         """
         return self.node_coords[self.node_index(nid)]
 
-    # ── Element lookups ──────────────────────────────────────
+    # -- Element lookups --
 
     def elem_index(self, eid: int) -> int:
         """
@@ -568,7 +788,7 @@ class FEMData:
         ::
 
             idx = fem.elem_index(10)
-            fem.connectivity[idx]   # → array([n1, n2, n3])
+            fem.connectivity[idx]   # -> array([n1, n2, n3])
         """
         m = self._build_elem_map()
         try:
@@ -576,7 +796,7 @@ class FEMData:
         except KeyError:
             raise KeyError(
                 f"Element ID {eid} not found. "
-                f"Valid range: {int(self.element_ids.min())}–"
+                f"Valid range: {int(self.element_ids.min())}-"
                 f"{int(self.element_ids.max())} "
                 f"({len(self.element_ids)} elements)"
             ) from None
