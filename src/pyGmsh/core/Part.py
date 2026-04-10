@@ -32,22 +32,21 @@ Typical usage
     plate.save()                          # → plate.step (default)
     plate.end()
 
-    # ── Reuse it in an Assembly ────────────────────────────────
-    from pyGmsh import Assembly
+    # ── Reuse it in a pyGmsh session ─────────────────────────
+    from pyGmsh import pyGmsh
 
-    asm = Assembly("bridge")
-    asm.begin()
-    asm.add_part(plate, translate=(0, 0, 0))
-    asm.add_part(plate, translate=(5000, 0, 0), label="plate_2")
-    asm.fragment_all()
-    asm.mesh.generate(dim=2)              # meshing lives HERE
-    ...
-    asm.end()
+    g = pyGmsh(model_name="bridge")
+    g.begin()
+    g.parts.add(plate, translate=(0, 0, 0))
+    g.parts.add(plate, translate=(5000, 0, 0), label="plate_2")
+    g.parts.fragment_all()
+    g.mesh.generate(dim=2)
+    g.end()
 
 Why STEP?
 ~~~~~~~~~
 STEP preserves the full parametric OCC geometry (exact NURBS,
-topology, tolerances).  After import, the Assembly can:
+topology, tolerances).  After import, pyGmsh can:
 
 * Apply boolean operations (fragment, fuse, cut)
 * Set transfinite meshing / recombine / mesh fields

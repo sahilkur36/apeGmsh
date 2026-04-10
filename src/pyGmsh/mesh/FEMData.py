@@ -401,6 +401,7 @@ class FEMData:
     info:          MeshInfo          = field(repr=False)
     physical:      PhysicalGroupSet  = field(repr=False)
     mesh_selection: "MeshSelectionStore" = field(repr=False, default=None)
+    constraints: list | None = field(repr=False, default=None)
 
     # ── Lazy lookup caches (not part of __init__) ────────────
 
