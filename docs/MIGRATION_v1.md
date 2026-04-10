@@ -1,11 +1,16 @@
 # Migrating to pyGmsh → apeGmsh v1.0
 
-v1.0 bundles two breaking changes into a single release:
+v1.0 bundles three breaking changes into a single release:
 
 1. **Package rename**: `pyGmsh` → `apeGmsh`
-2. **API restructure**: `g.model.*` methods split into five focused
-   sub-composites (`geometry`, `boolean`, `transforms`, `io`, `queries`),
-   plus several smaller cleanups.
+2. **Model API restructure**: `g.model.*` methods split into five focused
+   sub-composites (`geometry`, `boolean`, `transforms`, `io`, `queries`).
+3. **Mesh API restructure**: `g.mesh.*` methods split into seven focused
+   sub-composites (`generation`, `sizing`, `field`, `structured`,
+   `editing`, `queries`, `partitioning`).
+
+Plus several smaller cleanups (`g.mass` → `g.masses`, lifecycle aliases,
+legacy deprecation removals).
 
 This guide is a drop-in find/replace checklist. Most codebases can
 migrate in one pass with a single search across the project.
@@ -195,7 +200,231 @@ And the existing `g.parts`, `g.physical`, `g.constraints`, `g.loads`,
 
 ---
 
-## 3. Rename: `g.mass` → `g.masses`
+## 3. Mesh methods → sub-composites
+
+`Mesh` is now a thin composition container.  Every action method moved
+behind one of seven focused sub-composites.  The old flat methods
+(`g.mesh.generate(3)`, `g.mesh.set_global_size(0.5)`, ...) are **gone**
+— there are no shortcuts, and no backwards-compatible aliases.
+
+The mapping is mechanical — every old method went to exactly one
+sub-composite.  Pick the right namespace, prefix the method, done.
+
+### Generation & algorithm (`g.mesh.generation.*`)
+
+```diff
+-g.mesh.generate(3)
++g.mesh.generation.generate(3)
+
+-g.mesh.set_order(2)
++g.mesh.generation.set_order(2)
+
+-g.mesh.refine()
++g.mesh.generation.refine()
+
+-g.mesh.optimize("Netgen", niter=3)
++g.mesh.generation.optimize("Netgen", niter=3)
+
+-g.mesh.set_algorithm(surf_tag, "frontal_delaunay_quads")
++g.mesh.generation.set_algorithm(surf_tag, "frontal_delaunay_quads")
+
+-g.mesh.set_algorithm_by_physical("Flanges", "quads")
++g.mesh.generation.set_algorithm_by_physical("Flanges", "quads")
+```
+
+### Size control (`g.mesh.sizing.*`)
+
+```diff
+-g.mesh.set_global_size(6000)
++g.mesh.sizing.set_global_size(6000)
+
+-g.mesh.set_size_global(min_size=15, max_size=25)
++g.mesh.sizing.set_size_global(min_size=15, max_size=25)
+
+-g.mesh.set_size_sources(from_points=False)
++g.mesh.sizing.set_size_sources(from_points=False)
+
+-g.mesh.set_size([p1, p2], 0.05)
++g.mesh.sizing.set_size([p1, p2], 0.05)
+
+-g.mesh.set_size_all_points(6000)
++g.mesh.sizing.set_size_all_points(6000)
+
+-g.mesh.set_size_callback(my_size_fn)
++g.mesh.sizing.set_size_callback(my_size_fn)
+
+-g.mesh.set_size_by_physical("Corners", 0.05)
++g.mesh.sizing.set_size_by_physical("Corners", 0.05)
+```
+
+`g.mesh.field` (the `FieldHelper`) is **unchanged** — it was already a
+sub-composite and lives alongside `g.mesh.sizing`.
+
+### Structured meshing (`g.mesh.structured.*`)
+
+```diff
+-g.mesh.set_transfinite_curve(c, 20, coef=1.3)
++g.mesh.structured.set_transfinite_curve(c, 20, coef=1.3)
+
+-g.mesh.set_transfinite_surface(s, arrangement="Left")
++g.mesh.structured.set_transfinite_surface(s, arrangement="Left")
+
+-g.mesh.set_transfinite_volume(v, corners=[...])
++g.mesh.structured.set_transfinite_volume(v, corners=[...])
+
+-g.mesh.set_transfinite_automatic()
++g.mesh.structured.set_transfinite_automatic()
+
+-g.mesh.set_transfinite_by_physical("Web", dim=1, n_nodes=40)
++g.mesh.structured.set_transfinite_by_physical("Web", dim=1, n_nodes=40)
+
+-g.mesh.set_recombine(s)
++g.mesh.structured.set_recombine(s)
+
+-g.mesh.recombine()
++g.mesh.structured.recombine()
+
+-g.mesh.set_recombine_by_physical("Flanges")
++g.mesh.structured.set_recombine_by_physical("Flanges")
+
+-g.mesh.set_smoothing(s, 5)
++g.mesh.structured.set_smoothing(s, 5)
+
+-g.mesh.set_smoothing_by_physical("Web", 5)
++g.mesh.structured.set_smoothing_by_physical("Web", 5)
+
+-g.mesh.set_compound(2, [s1, s2, s3])
++g.mesh.structured.set_compound(2, [s1, s2, s3])
+
+-g.mesh.remove_constraints()
++g.mesh.structured.remove_constraints()
+```
+
+### Editing (`g.mesh.editing.*`)
+
+Topology editing, periodicity, STL → discrete pipeline, and embed.
+
+```diff
+-g.mesh.embed(crack_surf, body_tag, dim=2, in_dim=3)
++g.mesh.editing.embed(crack_surf, body_tag, dim=2, in_dim=3)
+
+-g.mesh.set_periodic([2], [1], transform)
++g.mesh.editing.set_periodic([2], [1], transform)
+
+-g.mesh.clear()
++g.mesh.editing.clear()
+
+-g.mesh.reverse()
++g.mesh.editing.reverse()
+
+-g.mesh.relocate_nodes()
++g.mesh.editing.relocate_nodes()
+
+-g.mesh.remove_duplicate_nodes()
++g.mesh.editing.remove_duplicate_nodes()
+
+-g.mesh.remove_duplicate_elements()
++g.mesh.editing.remove_duplicate_elements()
+
+-g.mesh.affine_transform(matrix)
++g.mesh.editing.affine_transform(matrix)
+
+-g.mesh.import_stl()
++g.mesh.editing.import_stl()
+
+-g.mesh.classify_surfaces(math.radians(30))
++g.mesh.editing.classify_surfaces(math.radians(30))
+
+-g.mesh.create_geometry()
++g.mesh.editing.create_geometry()
+```
+
+### Queries (`g.mesh.queries.*`)
+
+Every read-only extractor.  `get_fem_data` lives here — this is the
+single most-touched rewrite in most projects.
+
+```diff
+-nodes = g.mesh.get_nodes(dim=2)
++nodes = g.mesh.queries.get_nodes(dim=2)
+
+-elems = g.mesh.get_elements(dim=3)
++elems = g.mesh.queries.get_elements(dim=3)
+
+-props = g.mesh.get_element_properties(4)
++props = g.mesh.queries.get_element_properties(4)
+
+-fem = g.mesh.get_fem_data(dim=3)
++fem = g.mesh.queries.get_fem_data(dim=3)
+
+-q = g.mesh.get_element_qualities(tags, "minSICN")
++q = g.mesh.queries.get_element_qualities(tags, "minSICN")
+
+-df = g.mesh.quality_report()
++df = g.mesh.queries.quality_report()
+```
+
+### Partitioning & renumbering (`g.mesh.partitioning.*`)
+
+MPI-style partitioning and node/element renumbering now live in the
+same namespace — they are the "reorganise DOFs" surface.
+
+```diff
+-g.mesh.partition(4)
++g.mesh.partitioning.partition(4)
+
+-g.mesh.unpartition()
++g.mesh.partitioning.unpartition()
+
+-old, new = g.mesh.compute_renumbering("RCMK")
++old, new = g.mesh.partitioning.compute_renumbering("RCMK")
+
+-g.mesh.renumber_nodes(old, new)
++g.mesh.partitioning.renumber_nodes(old, new)
+
+-g.mesh.renumber_elements(old, new)
++g.mesh.partitioning.renumber_elements(old, new)
+
+-g.mesh.renumber_mesh(method="rcm", base=1)
++g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+```
+
+### What stays on `Mesh` directly
+
+Only two entry points remain flat on `g.mesh` — both open interactive
+windows and neither makes sense inside a sub-composite:
+
+- `g.mesh.viewer(**kwargs)`        — open the interactive mesh viewer
+- `g.mesh.results_viewer(...)`     — open the results viewer
+
+Plus the `FieldHelper` sub-composite which was already in place:
+
+- `g.mesh.field.*`                 — unchanged from v0.x
+
+### Chaining inside a composite
+
+Every non-query method on a sub-composite returns `self` (the
+sub-composite) so chaining works the same way it used to — just inside
+one composite at a time:
+
+```python
+(g.mesh.sizing
+    .set_size_sources(from_points=False)
+    .set_global_size(6000))
+
+(g.mesh.generation
+    .set_algorithm(0, "hxt", dim=3)
+    .generate(3)
+    .set_order(2))
+```
+
+To chain across composites, break the chain — the cross-composite
+`g.mesh.sizing.set_global_size(...).generate(...)` form does **not**
+work, because `generate` is on `generation`, not `sizing`.
+
+---
+
+## 4. Rename: `g.mass` → `g.masses`
 
 Every other composite is plural. The last outlier is fixed.
 
@@ -230,7 +459,7 @@ and `ops.mass(...)` (OpenSees solver command).
 
 ---
 
-## 4. Removed legacy aliases and deprecated methods
+## 5. Removed legacy aliases and deprecated methods
 
 These had lived as shims or `DeprecationWarning` for one or more releases.
 v1.0 deletes them entirely.
@@ -314,54 +543,113 @@ parts. The auto-mapping collapsed this richness.
 
 ---
 
-## 5. Automated migration
+## 6. Automated migration
 
 For a mechanical find-replace across your own codebase, this Python
-script handles every transform in this guide:
+script handles every transform in this guide — including both the
+Model and Mesh sub-composite splits:
 
 ```python
 #!/usr/bin/env python3
 """Migrate pyGmsh v0.x → apeGmsh v1.0 across a project."""
 import re, os, sys
 
-GEOMETRY = {
+# --- Model methods → sub-composites ---
+MODEL_GEOMETRY = {
     'add_point', 'add_line', 'add_arc', 'add_circle', 'add_ellipse',
     'add_spline', 'add_bspline', 'add_bezier', 'add_wire',
     'add_curve_loop', 'add_plane_surface', 'add_surface_filling',
     'add_rectangle', 'add_box', 'add_sphere', 'add_cylinder',
     'add_cone', 'add_torus', 'add_wedge',
 }
-BOOLEAN = {'fuse', 'cut', 'intersect', 'fragment'}
-TRANSFORMS = {
+MODEL_BOOLEAN = {'fuse', 'cut', 'intersect', 'fragment'}
+MODEL_TRANSFORMS = {
     'translate', 'rotate', 'scale', 'mirror', 'copy',
     'extrude', 'revolve', 'sweep', 'thru_sections',
 }
-IO = {
+MODEL_IO = {
     'load_iges', 'load_step', 'load_dxf', 'load_msh',
     'save_iges', 'save_step', 'save_dxf', 'save_msh', 'heal_shapes',
 }
-QUERIES = {
+MODEL_QUERIES = {
     'remove', 'remove_duplicates', 'make_conformal', 'fragment_all',
     'bounding_box', 'center_of_mass', 'mass', 'boundary',
     'adjacencies', 'entities_in_bounding_box', 'registry',
 }
 
-def sub_for(m):
-    if m in GEOMETRY: return 'geometry'
-    if m in BOOLEAN: return 'boolean'
-    if m in TRANSFORMS: return 'transforms'
-    if m in IO: return 'io'
-    if m in QUERIES: return 'queries'
+# --- Mesh methods → sub-composites ---
+MESH_MAPPING = {
+    # generation
+    'generate': 'generation', 'set_order': 'generation',
+    'refine': 'generation', 'optimize': 'generation',
+    'set_algorithm': 'generation',
+    'set_algorithm_by_physical': 'generation',
+    # sizing
+    'set_global_size': 'sizing', 'set_size_sources': 'sizing',
+    'set_size_global': 'sizing', 'set_size': 'sizing',
+    'set_size_all_points': 'sizing', 'set_size_callback': 'sizing',
+    'set_size_by_physical': 'sizing',
+    # structured
+    'set_transfinite_curve': 'structured',
+    'set_transfinite_surface': 'structured',
+    'set_transfinite_volume': 'structured',
+    'set_transfinite_automatic': 'structured',
+    'set_transfinite_by_physical': 'structured',
+    'set_recombine': 'structured',
+    'set_recombine_by_physical': 'structured',
+    'recombine': 'structured', 'set_smoothing': 'structured',
+    'set_smoothing_by_physical': 'structured',
+    'set_compound': 'structured',
+    'remove_constraints': 'structured',
+    # editing
+    'embed': 'editing', 'set_periodic': 'editing',
+    'import_stl': 'editing', 'classify_surfaces': 'editing',
+    'create_geometry': 'editing', 'clear': 'editing',
+    'reverse': 'editing', 'relocate_nodes': 'editing',
+    'remove_duplicate_nodes': 'editing',
+    'remove_duplicate_elements': 'editing',
+    'affine_transform': 'editing',
+    # queries
+    'get_nodes': 'queries', 'get_elements': 'queries',
+    'get_element_properties': 'queries',
+    'get_fem_data': 'queries',
+    'get_element_qualities': 'queries',
+    'quality_report': 'queries',
+    # partitioning
+    'partition': 'partitioning', 'unpartition': 'partitioning',
+    'compute_renumbering': 'partitioning',
+    'renumber_nodes': 'partitioning',
+    'renumber_elements': 'partitioning',
+    'renumber_mesh': 'partitioning',
+}
+
+def model_sub_for(m):
+    if m in MODEL_GEOMETRY: return 'geometry'
+    if m in MODEL_BOOLEAN: return 'boolean'
+    if m in MODEL_TRANSFORMS: return 'transforms'
+    if m in MODEL_IO: return 'io'
+    if m in MODEL_QUERIES: return 'queries'
     return None
 
 pat_model = re.compile(r'(\.model\.)([a-zA-Z_][a-zA-Z_0-9]*)')
+# NB: (?<!model\.) skips `gmsh.model.mesh.<method>(`
+pat_mesh = re.compile(
+    r'(?<!model\.)(?<!_)(\bmesh)\.(' +
+    '|'.join(sorted(MESH_MAPPING, key=len, reverse=True)) +
+    r')(?=\()'
+)
 
 def transform(src):
-    def repl(m):
+    def model_repl(m):
         method = m.group(2)
-        sub = sub_for(method)
+        sub = model_sub_for(method)
         return f'.model.{sub}.{method}' if sub else m.group(0)
-    out = pat_model.sub(repl, src)
+
+    def mesh_repl(m):
+        return f'mesh.{MESH_MAPPING[m.group(2)]}.{m.group(2)}'
+
+    out = pat_model.sub(model_repl, src)
+    out = pat_mesh.sub(mesh_repl, out)
     out = out.replace('from pyGmsh', 'from apeGmsh')
     out = out.replace('import pyGmsh', 'import apeGmsh')
     out = re.sub(r'\bpyGmsh\(', 'apeGmsh(', out)
@@ -393,19 +681,22 @@ Save as `migrate_v1.py` and run: `python migrate_v1.py /path/to/your/project`
 
 **Caveats:**
 - Backup first. Run it on a clean git branch.
+- The `(?<!model\.)` lookbehind on `pat_mesh` intentionally skips
+  raw `gmsh.model.mesh.<method>(` calls — those are the real Gmsh API
+  and must stay untouched.
 - The regex `\bg\.mass\.` requires a dot after `mass` — it will catch
   `g.mass.point(...)` but not a bare `g.mass` reference. Grep manually
   for any leftover bare references.
 - `gmsh.initialize()` / `gmsh.finalize()` at the raw Gmsh level are
   preserved — the script only rewrites `g.initialize` (our wrapper).
-- If your project has custom subclasses of `Model` that referenced
-  the old `_GeometryMixin` etc. classes directly, those need manual
-  updates (the mixin classes are gone — replaced with `_Geometry`
-  etc. that take a `model` arg in `__init__`).
+- If your project has custom subclasses of `Model` or `Mesh` that
+  referenced the old mixin classes directly, those need manual updates
+  (the mixins are gone — replaced with `_Geometry`, `_Generation`,
+  etc. that take a parent reference in `__init__`).
 
 ---
 
-## 6. What didn't change
+## 7. What didn't change
 
 - The session lifecycle contract (`g.begin()` / `g.end()` / context manager)
 - `g.parts`, `g.physical`, `g.constraints`, `g.loads`, `g.mesh_selection`
@@ -415,11 +706,13 @@ Save as `migrate_v1.py` and run: `python migrate_v1.py /path/to/your/project`
 - The OpenSees bridge's `consume_*_from_fem` / `build` / `export_tcl` /
   `export_py` pipeline
 - `Part` and `PartsRegistry` APIs (only docstring examples were swept)
-- `g.mesh.generation.generate()`, `g.mesh.sizing.set_global_size()`, `g.mesh.field.*`, etc.
+- `g.mesh.field.*` — the FieldHelper sub-composite was already in place
+- `g.mesh.viewer()` and `g.mesh.results_viewer()` — the two interactive
+  entry points stay flat on `g.mesh`
 
 ---
 
-## 7. Full example — old vs new
+## 8. Full example — old vs new
 
 ### Old (v0.x pyGmsh)
 
@@ -439,9 +732,9 @@ with g.loads.pattern("dead"):
     g.loads.gravity("concrete", g=(0, 0, -9.81), density=2400)
 g.mass.volume("concrete", density=2400)
 
-g.mesh.sizing.set_global_size(0.5)
-g.mesh.generation.generate(3)
-fem = g.mesh.queries.get_fem_data(3)
+g.mesh.set_global_size(0.5)
+g.mesh.generate(3)
+fem = g.mesh.get_fem_data(3)
 
 print(f"total mass: {fem.mass.total_mass():.0f} kg")
 g.finalize()
@@ -465,11 +758,16 @@ with apeGmsh(model_name="cantilever") as g:
 
     g.mesh.sizing.set_global_size(0.5)
     g.mesh.generation.generate(3)
-    fem = g.mesh.queries.get_fem_data(3)
+    g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+    fem = g.mesh.queries.get_fem_data(dim=3)
 
     print(f"total mass: {fem.masses.total_mass():.0f} kg")
 ```
 
-Note: this example also uses the context manager (`with`) — that's
-not new in v1.0 but it replaces the old `g.initialize()` / `g.finalize()`
-pattern shown in the "old" version.
+Compared to v0.x:
+
+- `with apeGmsh(...) as g:` replaces `g.initialize()` / `g.finalize()`.
+- Model methods now live under `geometry`, `transforms`, `queries`.
+- Mesh methods now live under `sizing`, `generation`, `partitioning`,
+  `queries`.
+- `g.mass` is now `g.masses`; `fem.mass` is now `fem.masses`.

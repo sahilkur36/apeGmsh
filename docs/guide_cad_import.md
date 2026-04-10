@@ -1,7 +1,7 @@
 # Importing CAD and meshes — STEP, IGES, and `.msh`
 
 A practical guide to getting external geometry and external meshes into
-pyGmsh. Three sources are covered:
+apeGmsh. Three sources are covered:
 
 - **STEP** (`.step`, `.stp`) — the industry-standard CAD exchange format
 - **IGES** (`.iges`, `.igs`) — the older CAD exchange format
@@ -10,17 +10,17 @@ pyGmsh. Three sources are covered:
 STEP and IGES go through the OpenCASCADE kernel and land in the session
 as **geometry** — you still have to define physical groups and mesh
 them. MSH is different: it already contains nodes, elements, and
-(usually) physical groups, and the pyGmsh pipeline treats it as a
+(usually) physical groups, and the apeGmsh pipeline treats it as a
 direct path into the **FEM broker**, skipping geometry and meshing
 entirely.
 
 The guide is grounded in the current source on `nmb_WIP`:
 
-- `src/pyGmsh/core/_model_io.py` — `load_iges`, `load_step`,
+- `src/apeGmsh/core/_model_io.py` — `load_iges`, `load_step`,
   `heal_shapes`, `load_msh`, `save_*`
-- `src/pyGmsh/mesh/MshLoader.py` — standalone and composite `.msh`
+- `src/apeGmsh/mesh/MshLoader.py` — standalone and composite `.msh`
   loader
-- `src/pyGmsh/mesh/_fem_extract.py` — the broker builder used by both
+- `src/apeGmsh/mesh/_fem_extract.py` — the broker builder used by both
   paths
 
 All snippets assume `from apeGmsh import apeGmsh, MshLoader`.
@@ -56,7 +56,7 @@ format differs.
 The OCC importer returns every sub-entity (faces, edges, vertices) of
 the imported shape by default, which is almost never what you want for
 structural work — it pollutes the registry with hundreds of low-dim tags
-you will never reference. pyGmsh flips this on its head: the default is
+you will never reference. apeGmsh flips this on its head: the default is
 `highest_dim_only=True`, meaning the returned dict only contains the
 top-dimensional entities.
 
@@ -79,7 +79,7 @@ when you actually need them.
 
 ### 1.3 `sync` — when to skip synchronisation
 
-Every pyGmsh load method takes `sync=True` as the default and calls
+Every apeGmsh load method takes `sync=True` as the default and calls
 `gmsh.model.occ.synchronize()` before returning. You can turn this off
 when you are about to chain several kernel-level calls and want to pay
 the synchronisation cost only once:
@@ -105,7 +105,7 @@ exporters produce:
 - Open shells that should be closed solids
 - Degenerate triangular faces collapsed to a line
 
-Gmsh's OCC kernel exposes `occ.healShapes` for exactly this, and pyGmsh
+Gmsh's OCC kernel exposes `occ.healShapes` for exactly this, and apeGmsh
 wraps it as `Model.heal_shapes`:
 
 ```python
@@ -172,7 +172,7 @@ g.end()
 
 The important distinction: `load_step` only gives you **geometry and a
 registry of tags**. Physical groups, mesh sizing, and meshing are still
-your job, exactly as if you had built the geometry inside pyGmsh. STEP
+your job, exactly as if you had built the geometry inside apeGmsh. STEP
 import is not a shortcut to a solver-ready model — it is a shortcut to
 a solver-ready *geometry*.
 
@@ -209,7 +209,7 @@ g.model.io.save_iges("rebuilt.iges")
 These write whatever geometry is currently in the model. They are
 useful for checkpointing a mid-construction state, or for sending a
 cleaned-up part back to a CAD tool after healing and boolean operations
-in pyGmsh.
+in apeGmsh.
 
 Note: STEP/IGES export does **not** carry mesh, physical groups, or
 constraints. If you want the whole session state on disk, use
@@ -220,7 +220,7 @@ constraints. If you want the whole session state on disk, use
 
 MSH is Gmsh's native format, and unlike STEP/IGES it preserves
 **everything**: geometry, mesh nodes and elements, physical groups,
-element tags, and partition information. For pyGmsh this means an
+element tags, and partition information. For apeGmsh this means an
 imported `.msh` can go straight to the FEM broker without any
 remeshing — the geometry is just there to keep Gmsh happy.
 
@@ -228,7 +228,7 @@ There are two entry points, and they serve genuinely different needs.
 
 ### 3.1 Round-tripping: `Model.load_msh` / `Model.save_msh`
 
-When you already hold an active pyGmsh session and want to bring in a
+When you already hold an active apeGmsh session and want to bring in a
 previously-saved mesh, use the model-level helpers:
 
 ```python
@@ -280,7 +280,7 @@ This is the path to use when:
 - You only care about the mesh data, not the geometry or the live
   Gmsh model
 - You are chaining `.msh` files into a solver pipeline from a script
-  or notebook that doesn't need pyGmsh's other composites
+  or notebook that doesn't need apeGmsh's other composites
 - You want to run a study over many `.msh` files and the session
   boilerplate gets in the way
 
@@ -423,6 +423,6 @@ All import/export lives in `core/_model_io.py` and
 | `g.loader.from_msh(path, dim=)` | in        | `FEMData` (+ live session)     |
 
 Everything else is composition: once geometry is in the session you
-use the rest of pyGmsh the same way you would with natively-built
+use the rest of apeGmsh the same way you would with natively-built
 geometry; once a broker is in hand you use it the same way as any
 other `FEMData` — see `guide_fem_broker.md`.

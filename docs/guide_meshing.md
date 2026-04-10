@@ -1,8 +1,8 @@
 # Meshing guide
 
-Reference-style guide to the meshing layer of pyGmsh. This document is grounded
+Reference-style guide to the meshing layer of apeGmsh. This document is grounded
 in the current source tree and mirrors the symbols that actually exist. It
-assumes you are already familiar with the Part / Assembly workflow described in
+assumes you are already familiar with the Part workflow described in
 `guide_parts_assembly.md` and `guide_parts_vs_session.md`.
 
 The meshing layer sits between geometry (`core/Model.py`, `core/Part.py`,
@@ -12,26 +12,38 @@ from several parts — into a solver-ready mesh and expose enough handles
 (physical groups, mesh selection sets, node/face maps) for `Constraints` and
 the solver bridges to consume it.
 
-The composites involved are attached to a `pyGmsh` session as:
+The composites involved are attached to an `apeGmsh` session as:
 
 - `g.model` — OCC geometry wrapper (`core/Model.py`)
 - `g.parts` — instance registry (`core/_parts_registry.py`)
-- `g.mesh` — mesh composite (`mesh/Mesh.py`)
-- `g.mesh.field` — size-field helper (`mesh/_mesh_field.py`)
+- `g.mesh` — thin composition container (`mesh/Mesh.py`) with seven focused
+  sub-composites:
+  - `g.mesh.generation` — generate, set_order, refine, optimize, set_algorithm
+  - `g.mesh.sizing`     — global / per-entity size control
+  - `g.mesh.field`      — `FieldHelper` (size fields)
+  - `g.mesh.structured` — transfinite, recombine, smoothing, compound
+  - `g.mesh.editing`    — clear, embed, periodic, STL, topology editing
+  - `g.mesh.queries`    — get_nodes, get_elements, get_fem_data, quality_report
+  - `g.mesh.partitioning` — partition / unpartition / renumber_*
 - `g.physical` — physical group API (`mesh/PhysicalGroups.py`)
 - `g.mesh_selection` — post-mesh selection sets (`mesh/MeshSelectionSet.py`)
 - `g.constraints` — constraint definitions / resolver (`core/ConstraintsComposite.py`, `solvers/Constraints.py`)
 
+Every action method on a mesh sub-composite returns `self` (the
+sub-composite) so chaining works inside one namespace at a time. To chain
+across composites, break the chain — this is a deliberate v1.0 design
+choice in favour of a flat, discoverable API.
+
 
 ## 1. Parts and the session
 
-pyGmsh separates two different uses of a Gmsh "session":
+apeGmsh separates two different uses of a Gmsh "session":
 
 1. A **Part** (`core/Part.py`) owns its own isolated Gmsh session and is a pure
    geometry container. It only exists to build a shape and export it to STEP or
    IGES via `Part.save()`. Parts know nothing about meshing, physical groups,
    or constraints.
-2. A **pyGmsh session** (the `pyGmsh` object users normally work with) owns the
+2. A **apeGmsh session** (the `apeGmsh` object users normally work with) owns the
    *assembly-level* Gmsh session — the one the mesher will actually run on. It
    wraps the same `gmsh.model.occ` API through `g.model`, and it keeps its own
    book-keeping in two places:
@@ -48,11 +60,11 @@ composite:
 
 | Entry point | File / line | Use case |
 |---|---|---|
-| `g.parts.add(part, *, label=None, translate=..., rotate=..., highest_dim_only=True)` | `_parts_registry.py:265` | Import a `Part` object (auto STEP round-trip) |
-| `g.parts.import_step(file_path, *, label=None, translate=..., rotate=...)` | `_parts_registry.py:307` | Import a CAD file directly |
+| `g.parts.add(part, *, label=None, translate=..., rotate=..., highest_dim_only=True)` | `_parts_registry.py` | Import a `Part` object (auto STEP round-trip) |
+| `g.parts.import_step(file_path, *, label=None, translate=..., rotate=...)` | `_parts_registry.py` | Import a CAD file directly |
 | `with g.parts.part(label): ...` | `_parts_registry.py` | Inline geometry block; entities created in the block are auto-tagged |
-| `g.parts.register(label, dimtags)` | `_parts_registry.py:138` | Manually tag existing entities as an instance |
-| `g.parts.from_model(label, *, dim=None, tags=None)` | `_parts_registry.py:181` | Adopt entities already sitting in `gmsh.model` |
+| `g.parts.register(label, dimtags)` | `_parts_registry.py` | Manually tag existing entities as an instance |
+| `g.parts.from_model(label, *, dim=None, tags=None)` | `_parts_registry.py` | Adopt entities already sitting in `gmsh.model` |
 
 All five converge on the same `Instance` dataclass. Once an instance exists,
 the mesher and the constraint resolver can address its entities by *label*
@@ -108,7 +120,7 @@ nodes on both sides automatically.
 `PartsRegistry` wraps this pattern in three higher-level operations so you do
 not have to track tags by hand:
 
-- **`g.parts.fragment_all(*, dim=None)`** (`_parts_registry.py:348`) —
+- **`g.parts.fragment_all(*, dim=None)`** (`_parts_registry.py`) —
   fragments every instance in the registry against every other instance at the
   requested dimension (auto-detected if `None`). After it runs, each
   `Instance.entities` is updated in place with the *new* surviving tags. Use
@@ -118,7 +130,7 @@ not have to track tags by hand:
   conformal and want to keep the rest of the assembly unfragmented for
   performance.
 - **`g.parts.fuse_group(labels, *, label=None, dim=None, properties=None)`**
-  (`_parts_registry.py:460`) — fuses a list of instances into a single new
+  (`_parts_registry.py`) — fuses a list of instances into a single new
   instance. The old instances are removed from the registry and a fresh one
   is created with the surviving tags. See `plan_fuse_group.md` for the design
   motivation.
@@ -132,7 +144,7 @@ many small STEP pieces that should be treated as one component).
 
 ## 3. Dimension and higher-dimensional meshing
 
-Gmsh meshes are always indexed by a dimension between 0 and 3. pyGmsh exposes
+Gmsh meshes are always indexed by a dimension between 0 and 3. apeGmsh exposes
 the dimension explicitly rather than hiding it, because the same session
 frequently carries elements of multiple dimensions at once (for example, a
 3D solid with 2D shells glued to its surface, or 1D beam lines sharing nodes
@@ -141,7 +153,7 @@ with a 3D volume).
 Generation is controlled by a single entry point:
 
 ```python
-g.mesh.generation.generate(dim: int = 3) -> Mesh   # Mesh.py:143
+g.mesh.generation.generate(dim: int = 3) -> Mesh
 ```
 
 - `dim=1` produces only 1D elements on curves.
@@ -155,9 +167,9 @@ Once the mesh exists, most query methods accept `dim` as a filter with the
 same convention: `dim=-1` means "all dimensions", and any positive value
 restricts the query. The most useful ones are:
 
-- `g.mesh.queries.get_nodes(*, dim=-1, tag=-1, ...) -> dict` — `Mesh.py:1098`
-- `g.mesh.queries.get_elements(*, dim=-1, tag=-1) -> dict` — `Mesh.py:1137`
-- `g.mesh.queries.get_fem_data(dim: int = 2) -> FEMData` — `Mesh.py:1257`
+- `g.mesh.queries.get_nodes(*, dim=-1, tag=-1, ...) -> dict`
+- `g.mesh.queries.get_elements(*, dim=-1, tag=-1) -> dict`
+- `g.mesh.queries.get_fem_data(dim: int = 2) -> FEMData`
 
 `get_fem_data` is the bridge to the FEM broker. Its `dim` argument selects the
 *element* dimension you want the solver to see, not the dimension of the mesh
@@ -172,7 +184,7 @@ not special-case either source.
 High-order elements are toggled globally through `set_order`:
 
 ```python
-g.mesh.generation.set_order(order: int) -> Mesh    # Mesh.py:155
+g.mesh.generation.set_order(order: int) -> Mesh
 ```
 
 `order=1` is the default (linear). `order=2` promotes edges, faces and volumes
@@ -180,14 +192,14 @@ to their quadratic variants (9-node quads, 10-node tets, 20/27-node hexes
 depending on recombination). Order changes must be applied *after*
 `generate()`.
 
-`g.mesh.generation.refine()` (`Mesh.py:167`) performs one round of uniform subdivision.
+`g.mesh.generation.refine()` performs one round of uniform subdivision.
 It is cheap for diagnostics but rarely what you want for production meshes —
 prefer size fields (Section 5) for targeted refinement.
 
 
 ## 4. Mesh algorithms
 
-pyGmsh exposes the Gmsh algorithm catalogues in three equivalent forms, and
+apeGmsh exposes the Gmsh algorithm catalogues in three equivalent forms, and
 `set_algorithm` accepts any of them. **Strings are the preferred form** — they
 are easier to remember, they tolerate aliases and separator/case variation,
 and typos raise a helpful `ValueError` listing every canonical name.
@@ -195,7 +207,7 @@ and typos raise a helpful `ValueError` listing every canonical name.
 ### The name-based API
 
 The canonical lookup tables live in `mesh/Mesh.py` and are exported as
-`pyGmsh.ALGORITHM_2D` and `pyGmsh.ALGORITHM_3D`:
+`apeGmsh.ALGORITHM_2D` and `apeGmsh.ALGORITHM_3D`:
 
 ```python
 ALGORITHM_2D = {
@@ -242,7 +254,7 @@ running. New code should prefer the string form.
 Selection happens through a single method whose behaviour depends on `dim`:
 
 ```python
-g.mesh.generation.set_algorithm(tag: int, algorithm, *, dim: int = 2) -> Mesh   # Mesh.py
+g.mesh.generation.set_algorithm(tag: int, algorithm, *, dim: int = 2) -> Mesh
 ```
 
 `algorithm` accepts:
@@ -290,9 +302,9 @@ Rules of thumb from the Gmsh docs as they apply here:
 Quad recombination and smoothing are controlled separately:
 
 ```python
-g.mesh.structured.set_recombine(tag, *, dim=2, angle=45.0) -> Mesh   # Mesh.py:593
-g.mesh.structured.recombine() -> Mesh                                # Mesh.py:617
-g.mesh.structured.set_smoothing(tag, val, *, dim=2) -> Mesh          # Mesh.py:623
+g.mesh.structured.set_recombine(tag, *, dim=2, angle=45.0) -> Mesh
+g.mesh.structured.recombine() -> Mesh
+g.mesh.structured.set_smoothing(tag, val, *, dim=2) -> Mesh
 ```
 
 `set_recombine` requests recombination on a single surface (or volume, when
@@ -303,13 +315,13 @@ arguments. `set_smoothing` applies `val` Laplacian passes to a surface.
 
 ## 5. Size control and mesh fields
 
-pyGmsh gives you three layers of size control, from coarse to fine:
+apeGmsh gives you three layers of size control, from coarse to fine:
 
 **Global bounds** — set a floor and ceiling on element size:
 
 ```python
-g.mesh.sizing.set_global_size(max_size, min_size=0.0) -> Mesh      # Mesh.py:206
-g.mesh.sizing.set_size_global(*, min_size=None, max_size=None)     # Mesh.py:300
+g.mesh.sizing.set_global_size(max_size, min_size=0.0) -> Mesh
+g.mesh.sizing.set_size_global(*, min_size=None, max_size=None)
 ```
 
 The second form lets you change only one bound at a time. Both map to
@@ -320,7 +332,7 @@ size at a point:
 
 ```python
 g.mesh.sizing.set_size_sources(*, from_points=None, from_curvature=None,
-                            extend_from_boundary=None) -> Mesh   # Mesh.py:244
+                            extend_from_boundary=None) -> Mesh
 ```
 
 A common gotcha after importing IGES or STEP is that the file carries
@@ -331,9 +343,9 @@ global bound authoritative again.
 **Per-point sizes:**
 
 ```python
-g.mesh.sizing.set_size(tags, size, *, dim=0) -> Mesh               # Mesh.py:338
-g.mesh.sizing.set_size_all_points(size) -> Mesh                    # Mesh.py:376
-g.mesh.sizing.set_size_callback(func) -> Mesh                      # Mesh.py:420
+g.mesh.sizing.set_size(tags, size, *, dim=0) -> Mesh
+g.mesh.sizing.set_size_all_points(size) -> Mesh
+g.mesh.sizing.set_size_callback(func) -> Mesh
 ```
 
 The callback signature is `func(dim, tag, x, y, z, lc) -> float` and lets you
@@ -374,9 +386,9 @@ Transfinite meshing produces structured (mapped) grids from topologically
 quadrilateral or hexahedral regions. The three primitives mirror Gmsh:
 
 ```python
-g.mesh.structured.set_transfinite_curve(tag, n_nodes, *, mesh_type="Progression", coef=1.0)   # Mesh.py:457
-g.mesh.structured.set_transfinite_surface(tag, *, arrangement="Left", corners=None)           # Mesh.py:495
-g.mesh.structured.set_transfinite_volume(tag, *, corners=None)                                # Mesh.py:531
+g.mesh.structured.set_transfinite_curve(tag, n_nodes, *, mesh_type="Progression", coef=1.0)
+g.mesh.structured.set_transfinite_surface(tag, *, arrangement="Left", corners=None)
+g.mesh.structured.set_transfinite_volume(tag, *, corners=None)
 ```
 
 - On a curve, `n_nodes` counts endpoints. `mesh_type` is `"Progression"` for
@@ -394,7 +406,7 @@ itself, use:
 
 ```python
 g.mesh.structured.set_transfinite_automatic(dim_tags=None, *, corner_angle=2.35,
-                                 recombine=True) -> Mesh     # Mesh.py:553
+                                 recombine=True) -> Mesh
 ```
 
 `corner_angle` (in radians; default ≈ 135°) controls how sharp a vertex has
@@ -414,7 +426,7 @@ else.
 Physical groups are named bags of OCC entity tags — they carry no meshing
 semantics on their own, because every Gmsh mesh-control call
 (`setAlgorithm`, `setRecombine`, `setTransfiniteCurve`, `setSize`, field
-`CurvesList` / `SurfacesList`, …) takes raw entity tags. pyGmsh bridges the
+`CurvesList` / `SurfacesList`, …) takes raw entity tags. apeGmsh bridges the
 gap with a single resolver on `g.physical` plus a small family of
 `*_by_physical` wrappers on `g.mesh` that fan per-entity commands out over
 every member of a named group. The goal is to let you write code in terms
@@ -428,7 +440,7 @@ g.physical.entities(name_or_tag, *, dim=None) -> list[Tag]     # PhysicalGroups.
 ```
 
 - Pass a **name** (`"Concrete"`) and optionally a `dim`. With no `dim`,
-  pyGmsh searches every dimension from 0 to 3 and returns the tags of the
+  apeGmsh searches every dimension from 0 to 3 and returns the tags of the
   first match, so a name that is unambiguous across dimensions just works.
 - Pass a raw PG tag and `dim` is required.
 - Missing groups raise `KeyError`; passing a raw tag without `dim` raises
@@ -456,7 +468,7 @@ rebar_curves = g.physical.entities("Rebars", dim=1)
 g.mesh.editing.embed(rebar_curves, in_tag=concrete_vol, dim=1, in_dim=3)
 ```
 
-Because `g.parts.add_physical_groups()` (`_parts_registry.py:640`) already
+Because `g.parts.add_physical_groups()` (`_parts_registry.py`) already
 creates one PG per registered instance, the resolver also doubles as a
 "by part label" lookup for the common case — `g.physical.entities("col")`
 and `g.parts.instances["col"].entities[dim]` give the same tags. Where the
@@ -537,7 +549,7 @@ post-processing, or constraints.
 
 Once the mesh exists you need named handles to address subsets of it —
 boundary faces, node sets for constraints, element sets for material
-assignment, and so on. pyGmsh has two composites for this, and they are
+assignment, and so on. apeGmsh has two composites for this, and they are
 deliberately complementary.
 
 **`g.physical` (PhysicalGroups, `mesh/PhysicalGroups.py`)** is the
@@ -557,7 +569,7 @@ g.physical.get_nodes(dim, tag) -> dict
 g.physical.summary() -> DataFrame
 ```
 
-`g.parts.add_physical_groups(dim=None)` (`_parts_registry.py:640`) is the
+`g.parts.add_physical_groups(dim=None)` (`_parts_registry.py`) is the
 one-liner that creates one physical group per registered instance, so you get
 named handles for every part without touching raw tags.
 
@@ -618,8 +630,8 @@ the resolver:
 
 ```python
 fem = g.mesh.queries.get_fem_data(dim=3)
-node_map = g.parts.build_node_map(fem.node_ids, fem.node_coords)   # _parts_registry.py:598
-face_map = g.parts.build_face_map(node_map)                        # _parts_registry.py:614
+node_map = g.parts.build_node_map(fem.node_ids, fem.node_coords)
+face_map = g.parts.build_face_map(node_map)
 records  = g.constraints.resolve(
     fem.node_ids, fem.node_coords,
     node_map=node_map,
@@ -639,7 +651,7 @@ records  = g.constraints.resolve(
   the same shape.
 
 The resolver currently does **not** implement embedded-constraint resolution
-— `ConstraintsComposite.py:330` raises `NotImplementedError` for that path.
+— `ConstraintsComposite.py` raises `NotImplementedError` for that path.
 Everything else in the definition catalogue is wired end to end.
 
 This is also where the no-proxy rule matters: there is no "ConstraintEntity"
@@ -654,48 +666,46 @@ The assembly workflow collapses to the following sequence, with each step
 mapping to one section of this guide:
 
 ```python
-import apeGmsh as pg
+from apeGmsh import apeGmsh
 
-g = pg.apeGmsh("demo")
-g.begin()
+with apeGmsh(model_name="demo") as g:
+    # 1. Instances — either import parts or build inline
+    col = g.parts.import_step("column.step", label="col")
+    bm  = g.parts.import_step("beam.step",   label="bm",
+                              translate=(0, 0, 3.0))
 
-# 1. Instances — either import parts or build inline
-col = g.parts.import_step("column.step", label="col")
-bm  = g.parts.import_step("beam.step",   label="bm", translate=(0, 0, 3.0))
+    # 2. Conformal topology — fragment so the interface becomes shared
+    g.parts.fragment_all()
 
-# 2. Conformal topology — fragment so the interface becomes shared
-g.parts.fragment_all()
+    # 3. Physical groups per part (explicit in v1.0)
+    g.physical.add_volume(g.parts.instances["col"].entities[3], name="col")
+    g.physical.add_volume(g.parts.instances["bm"].entities[3],  name="bm")
 
-# 3. Physical groups per part, so the solver sees them by name
-g.parts.add_physical_groups()
+    # 4. Size + algorithm + field control
+    (g.mesh.sizing
+        .set_size_sources(from_points=False)
+        .set_global_size(0.15))
+    g.mesh.generation.set_algorithm(0, "hxt", dim=3)
 
-# 4. Size + algorithm + field control
-g.mesh.sizing.set_size_sources(from_points=False)
-g.mesh.sizing.set_global_size(0.15)
-g.mesh.generation.set_algorithm(0, "hxt", dim=3)
+    # 5. Generate the mesh at the target dimension
+    (g.mesh.generation
+        .generate(dim=3)
+        .set_order(2))
+    g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
 
-# 5. Generate the mesh at the target dimension
-g.mesh.generation.generate(dim=3)
-g.mesh.generation.set_order(2)
-g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+    # 6. Declare constraints against part labels (pre-resolution)
+    g.constraints.tie(master_label="col", slave_label="bm")
 
-# 6. Declare constraints against part labels (pre-resolution)
-g.constraints.tie(master_label="col", slave_label="bm")
-
-# 7. Extract FEM data and resolve constraints against the real mesh
-fem   = g.mesh.queries.get_fem_data(dim=3)
-nm    = g.parts.build_node_map(fem.node_ids, fem.node_coords)
-fm    = g.parts.build_face_map(nm)
-recs  = g.constraints.resolve(fem.node_ids, fem.node_coords,
-                              node_map=nm, face_map=fm)
-
-g.end()
+    # 7. Extract FEM data (resolves constraints automatically)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    print(fem.info)
 ```
 
 Every method shown above is a direct reference to the symbols listed earlier
-in the guide. When in doubt, the definitions in `src/pyGmsh/mesh/Mesh.py`,
-`src/pyGmsh/core/_parts_registry.py`, `src/pyGmsh/core/_model_boolean.py` and
-`src/pyGmsh/core/ConstraintsComposite.py` are the authoritative source.
+in the guide. When in doubt, the definitions in
+`src/apeGmsh/mesh/_mesh_*.py`, `src/apeGmsh/core/_parts_registry.py`,
+`src/apeGmsh/core/_model_boolean.py` and
+`src/apeGmsh/core/ConstraintsComposite.py` are the authoritative source.
 
 
 ## See also

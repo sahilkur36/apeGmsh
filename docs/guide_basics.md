@@ -1,6 +1,6 @@
-# pyGmsh basics
+# apeGmsh basics
 
-A first-contact guide to working inside a pyGmsh session. This is the
+A first-contact guide to working inside a apeGmsh session. This is the
 document to read before `guide_parts_assembly.md` or `guide_meshing.md`:
 it covers only the fundamentals — how a session starts, how geometry is
 built, and how the OCC boolean operations (`fragment`, `fuse`,
@@ -8,9 +8,9 @@ built, and how the OCC boolean operations (`fragment`, `fuse`,
 
 The guide is grounded in the current source:
 
-- `src/pyGmsh/_session.py` — session lifecycle (`begin`/`end`)
-- `src/pyGmsh/_core.py` — the `pyGmsh` composite container
-- `src/pyGmsh/core/Model.py` + `_model_geometry.py` + `_model_boolean.py`
+- `src/apeGmsh/_session.py` — session lifecycle (`begin`/`end`)
+- `src/apeGmsh/_core.py` — the `apeGmsh` composite container
+- `src/apeGmsh/core/Model.py` + `_model_geometry.py` + `_model_boolean.py`
   — geometry creation and boolean operations
 
 All code snippets assume `from apeGmsh import apeGmsh`.
@@ -24,7 +24,7 @@ a named model with `gmsh.model.add(...)`, and eventually release the
 state with `gmsh.finalize()`. Forgetting any of the three is the single
 most common source of Gmsh errors.
 
-pyGmsh wraps this lifecycle behind two calls on a session object, and
+apeGmsh wraps this lifecycle behind two calls on a session object, and
 supports two equivalent usage patterns. Both produce the exact same
 result — pick whichever fits the situation better.
 
@@ -82,11 +82,11 @@ Both patterns go through the same `begin()` implementation, which does
 three things in order:
 
 1. Calls `gmsh.initialize()` and `gmsh.model.add(self.name)`.
-2. Instantiates every composite listed in `pyGmsh._COMPOSITES` — `model`,
+2. Instantiates every composite listed in `apeGmsh._COMPOSITES` — `model`,
    `mesh`, `physical`, `mesh_selection`, `constraints`, `loads`,
    `opensees`, and so on — and attaches them as attributes on `g`.
    Those composites share a single `_registry` (the book-keeping dict
-   that tracks every entity created through pyGmsh) so nothing in the
+   that tracks every entity created through apeGmsh) so nothing in the
    pipeline needs to read raw Gmsh tags.
 3. Marks the session as active. Any composite method that touches gmsh
    asserts `g._active` first; this is what prevents the "I forgot
@@ -144,7 +144,7 @@ with apeGmsh(model_name="demo") as g:
 
 Two things are worth noting:
 
-1. **Labels are the primary addressing mechanism in pyGmsh.** The raw
+1. **Labels are the primary addressing mechanism in apeGmsh.** The raw
    integer tags are unstable across boolean operations (fragment can
    split one box into several new tags), but labels can be re-resolved
    against the registry at any time. Always label anything you plan to
@@ -161,7 +161,7 @@ Two things are worth noting:
 
 For non-primitive shapes (an I-beam cross-section, a gusset plate, a
 fillet profile) the pattern is the standard Gmsh sketch workflow, just
-with pyGmsh wrappers:
+with apeGmsh wrappers:
 
 ```python
 # 1. Points
@@ -184,7 +184,7 @@ label + registry conventions as the primitives.
 ## 3. OCC operations: fragment, fuse, cut, intersect
 
 Once you have more than one body in the model you are almost always
-going to need a boolean operation. pyGmsh exposes four of them on
+going to need a boolean operation. apeGmsh exposes four of them on
 `g.model`, all implemented in `core/_model_boolean.py` through a single
 internal helper `_bool_op` that:
 

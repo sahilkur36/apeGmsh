@@ -2,14 +2,14 @@
 
 ## Why the broker exists
 
-Gmsh is a wonderful mesher, but a live Gmsh session is a *stateful* thing: tags shift as you regenerate, physical groups live behind API calls, and every solver that wants to consume the mesh has to re-learn the same query dance. pyGmsh's FEM broker — the `FEMData` container returned by `g.mesh.queries.get_fem_data(dim=...)` — breaks that coupling.
+Gmsh is a wonderful mesher, but a live Gmsh session is a *stateful* thing: tags shift as you regenerate, physical groups live behind API calls, and every solver that wants to consume the mesh has to re-learn the same query dance. apeGmsh's FEM broker — the `FEMData` container returned by `g.mesh.queries.get_fem_data(dim=...)` — breaks that coupling.
 
 The broker is a **frozen snapshot** of everything a solver needs to build a model:
 
 - Nodes (IDs and coordinates)
 - Elements (IDs and connectivity)
 - Physical groups (named sets of nodes and elements)
-- Mesh-selection sets (the pyGmsh-side grouping primitive)
+- Mesh-selection sets (the apeGmsh-side grouping primitive)
 - Constraints, loads, and masses (already resolved to node-level records)
 - Mesh statistics (counts and bandwidth)
 
@@ -85,7 +85,7 @@ The broker carries two parallel grouping sources:
 
 ```python
 fem.physical         # PhysicalGroupSet — snapshots of Gmsh physical groups
-fem.mesh_selection   # MeshSelectionStore — pyGmsh native selection sets
+fem.mesh_selection   # MeshSelectionStore — apeGmsh native selection sets
 ```
 
 Both answer the same kinds of questions — "give me the node IDs of this set", "give me the element connectivity of that set" — and both produce the same dict shapes:

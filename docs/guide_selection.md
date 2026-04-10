@@ -1,6 +1,6 @@
-# Selection in pyGmsh — OCC entities and mesh entities
+# Selection in apeGmsh — OCC entities and mesh entities
 
-pyGmsh has two complementary selection systems that sit on opposite sides of the meshing step. They intentionally look alike so that downstream code (constraints, loads, solver adapters) does not care which one a group came from — but they answer fundamentally different questions about the model.
+apeGmsh has two complementary selection systems that sit on opposite sides of the meshing step. They intentionally look alike so that downstream code (constraints, loads, solver adapters) does not care which one a group came from — but they answer fundamentally different questions about the model.
 
 | System | Lives on | Operates on | Created | Exposed on the broker |
 |---|---|---|---|---|
@@ -39,7 +39,7 @@ All query methods take the same keyword-argument vocabulary. Filters are **AND-c
 **Identity filters**
 
 - `tags=[...]` / `exclude_tags=[...]` — keep or drop by raw entity tag
-- `labels="col_*"` — glob match against pyGmsh's registry labels (labels are the `name=...` you attach when creating geometry)
+- `labels="col_*"` — glob match against apeGmsh's registry labels (labels are the `name=...` you attach when creating geometry)
 - `kinds="box"` — match against the kind recorded by the geometry factory (`"box"`, `"cylinder"`, `"disk"`, ...)
 - `physical="fixed"` — members of a physical group by name or tag
 
@@ -240,7 +240,7 @@ The `get_nodes` / `get_elements` return shapes are **identical** to the ones ret
 
 ## 3. Bridging the two systems
 
-Geometric and mesh selections are complementary, not alternatives. Real workflows use both, and pyGmsh gives you three explicit bridges.
+Geometric and mesh selections are complementary, not alternatives. Real workflows use both, and apeGmsh gives you three explicit bridges.
 
 ### 3.1 `Selection.to_physical(...)` — geometric → physical group
 
@@ -287,12 +287,12 @@ Under the hood this calls `top_faces.to_mesh_nodes()` (or `.to_mesh_elements()`)
 Two rules of thumb:
 
 - Use **`to_physical` + `from_physical`** when you want the group to appear in the msh/vtu output or be visible to another tool.
-- Use **`from_geometric`** when the group is purely an internal handle and you just want the mesh IDs on the pyGmsh side.
+- Use **`from_geometric`** when the group is purely an internal handle and you just want the mesh IDs on the apeGmsh side.
 
 
 ## 4. Selection on the FEM broker
 
-When you call `g.mesh.queries.get_fem_data(dim=...)`, pyGmsh captures a frozen snapshot of the current state: nodes, elements, physical groups, mesh selections, constraints, loads, and masses. The broker then becomes the single object you hand to a solver adapter.
+When you call `g.mesh.queries.get_fem_data(dim=...)`, apeGmsh captures a frozen snapshot of the current state: nodes, elements, physical groups, mesh selections, constraints, loads, and masses. The broker then becomes the single object you hand to a solver adapter.
 
 Selections show up on the broker under two mirror accessors with the same API:
 
@@ -303,7 +303,7 @@ fem.physical         # PhysicalGroupSet  — snapshot of Gmsh physical groups
 fem.mesh_selection   # MeshSelectionStore — snapshot of g.mesh_selection
 ```
 
-Both are immutable and both expose the same query methods. The broker-side classes live in `pyGmsh.mesh.FEMData.PhysicalGroupSet` and `pyGmsh.mesh.MeshSelectionSet.MeshSelectionStore`, and they share this contract:
+Both are immutable and both expose the same query methods. The broker-side classes live in `apeGmsh.mesh.FEMData.PhysicalGroupSet` and `apeGmsh.mesh.MeshSelectionSet.MeshSelectionStore`, and they share this contract:
 
 ```python
 store.get_all(dim=-1)                 # list of (dim, tag)
@@ -384,7 +384,7 @@ It is worth stepping back from the API and keeping a few principles in mind.
 
 **Let physical groups carry the named geometry across the mesher.** That is what they were designed for, and that is what the msh/vtu writers and every third-party post-processor expect. If your workflow exports the mesh to another tool, the groups must be physical groups.
 
-**Use mesh selections as the pyGmsh-internal handle.** They are where spatial, topology-blind, or post-processing-derived queries live. They are also the only system that cleanly expresses set algebra over node and element IDs.
+**Use mesh selections as the apeGmsh-internal handle.** They are where spatial, topology-blind, or post-processing-derived queries live. They are also the only system that cleanly expresses set algebra over node and element IDs.
 
 **Do not create both sides for the same concept unless you need to.** Either promote a geometric selection to a physical group (and let `fem.physical` carry it), or bridge it into a mesh selection (and let `fem.mesh_selection` carry it). Both directions are supported, but maintaining two mirror handles for the same concept is just extra book-keeping.
 

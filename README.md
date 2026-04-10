@@ -1,156 +1,259 @@
-# pyGmsh
+# apeGmsh
 
-Gmsh wrapper for structural FEM workflows with an Abaqus-style Part/Assembly architecture and OpenSees integration.
+Structural-FEM wrapper around [Gmsh](https://gmsh.info) with a composition-based API and a
+snapshot FEM broker. Designed to make it cheap to describe a model
+once (geometry + physical groups + loads + constraints) and feed it
+to any solver. OpenSees has first-class support; other solvers can be
+plugged in through the same `FEMData` contract.
 
 ## Installation
 
 ```bash
-cd pyGmsh
+git clone https://github.com/<your-fork>/apeGmsh.git
+cd apeGmsh
 pip install -e .
 
-# With all optional dependencies
+# With all optional dependencies (plotting, OpenSees bridge, viewer)
 pip install -e ".[all]"
 ```
 
-Requires Gmsh (with Python bindings), NumPy, and Pandas. Optional extras: matplotlib (plotting), openseespy (analysis), gmsh2opensees (one-liner mesh transfer).
+Requires Gmsh (with Python bindings), NumPy, and Pandas. Optional
+extras: `matplotlib` (plotting), `openseespy` (analysis),
+`gmsh2opensees` (one-liner mesh transfer), `pyvista` + `PyQt6` (Qt
+viewers).
 
 ## Quick start
-
-### Standalone (single model)
 
 ```python
 from apeGmsh import apeGmsh
 
-g = apeGmsh(model_name="plate", verbose=True)
-g.begin()
+with apeGmsh(model_name="plate") as g:
+    # 1. Geometry — sub-composites under g.model
+    p1 = g.model.geometry.add_point(0,   0,  0, lc=10)
+    p2 = g.model.geometry.add_point(100, 0,  0, lc=10)
+    p3 = g.model.geometry.add_point(100, 50, 0, lc=10)
+    p4 = g.model.geometry.add_point(0,   50, 0, lc=10)
+    l1 = g.model.geometry.add_line(p1, p2)
+    l2 = g.model.geometry.add_line(p2, p3)
+    l3 = g.model.geometry.add_line(p3, p4)
+    l4 = g.model.geometry.add_line(p4, p1)
+    loop = g.model.geometry.add_curve_loop([l1, l2, l3, l4])
+    surf = g.model.geometry.add_plane_surface(loop)
 
-p1 = g.model.geometry.add_point(0, 0, 0, lc=10)
-p2 = g.model.geometry.add_point(100, 0, 0, lc=10)
-p3 = g.model.geometry.add_point(100, 50, 0, lc=10)
-p4 = g.model.geometry.add_point(0, 50, 0, lc=10)
+    # 2. Mesh — sub-composites under g.mesh
+    g.mesh.sizing.set_global_size(10)
+    g.mesh.generation.generate(dim=2)
+    g.mesh.partitioning.renumber_mesh(method="simple", base=1)
 
-l1 = g.model.geometry.add_line(p1, p2)
-l2 = g.model.geometry.add_line(p2, p3)
-l3 = g.model.geometry.add_line(p3, p4)
-l4 = g.model.geometry.add_line(p4, p1)
-
-loop = g.model.geometry.add_curve_loop([l1, l2, l3, l4])
-surf = g.model.geometry.add_plane_surface(loop)
-
-g.mesh.generation.generate(2)
-g.mesh.partitioning.renumber_mesh(method="simple", base=1)
-fem = g.mesh.queries.get_fem_data(dim=2)
-print(fem.summary())
-
-g.end()
-```
-
-### Part / Assembly (multi-part)
-
-```python
-from apeGmsh import Part, Assembly
-
-# Build geometry in isolated sessions
-web = Part("web")
-web.begin()
-# ... build geometry with web.model.geometry.add_point(), add_line(), etc.
-web.save("web.step")
-web.end()
-
-flange = Part("flange")
-flange.begin()
-# ... build geometry
-flange.save("flange.step")
-flange.end()
-
-# Assemble, fragment, mesh
-asm = Assembly("I_beam")
-asm.begin()
-asm.add_part(web)
-asm.add_part(flange, translate=(0, 0, 200), label="top_flange")
-asm.add_part(flange, label="bot_flange")
-
-asm.fragment_all()
-asm.mesh.generation.generate(dim=2)
-asm.mesh.partitioning.renumber_mesh(method="rcm", base=1)
-fem = asm.mesh.queries.get_fem_data(dim=2)
-
-# fem.node_ids, fem.node_coords, fem.connectivity → feed to any solver
-asm.end()
+    # 3. Snapshot for the solver
+    fem = g.mesh.queries.get_fem_data(dim=2)
+    print(fem.info)
 ```
 
 ## Architecture
 
-Two main classes with a clean separation:
+`apeGmsh` is a session object that owns a single `gmsh` kernel and a
+set of focused composites. **There is no Assembly class** — the
+session *is* the assembly. Parts are registered into
+`g.parts`, meshed together, and queried by label.
 
-- **Part** -- geometry modeler. Creates points, lines, surfaces, volumes in an isolated Gmsh session. Exports to STEP. Has only `model` and `inspect` composites.
+### Session composites
 
-- **Assembly** -- full Gmsh wrapper. Imports Parts, positions them, fragments for conformal interfaces, meshes, assigns physical groups, extracts FEM data, resolves constraints. Has all composites: `mesh`, `model`, `physical`, `view`, `plot`, `inspect`, `partition`, `g2o`.
+| Access | Purpose |
+|---|---|
+| `g.model`        | OCC geometry (see sub-composites below) |
+| `g.parts`        | Part instances & assembly-level bookkeeping |
+| `g.physical`     | Named physical groups (pre-mesh, entity-driven) |
+| `g.mesh`         | Meshing (see sub-composites below) |
+| `g.mesh_selection` | Post-mesh node/element selection sets |
+| `g.constraints`  | Solver-agnostic constraint definitions & resolver |
+| `g.loads`        | Load patterns & definitions (resolved into `fem.loads`) |
+| `g.masses`       | Mass definitions (resolved into `fem.masses`) |
+| `g.opensees`     | OpenSees bridge (`build_from_fem`, `export_tcl`, ...) |
+| `g.g2o`          | Legacy one-liner `gmsh2opensees` transfer |
+| `g.inspect`      | Session-level diagnostics |
+| `g.plot`         | Matplotlib visualisations (optional) |
+| `g.view`         | Gmsh post-processing scalar/vector views |
 
-The STEP file is the only contract between Part and Assembly -- they are fully decoupled.
+### `g.model` sub-composites
 
-### Composites
+Five focused namespaces for OCC geometry:
 
-| Composite        | Access           | Purpose                                  |
-|:-----------------|:-----------------|:-----------------------------------------|
-| `Model`          | `.model`         | Geometry building, sync, export          |
-| `Mesh`           | `.mesh`          | Generation, size control, FEM extraction |
-| `PhysicalGroups` | `.physical`      | Named entity groups for BCs/loads        |
-| `View`           | `.view`          | Gmsh post-processing scalar/vector views |
-| `Plot`           | `.plot`          | Matplotlib visualisations                |
-| `Inspect`        | `.inspect`       | Geometry and mesh queries                |
-| `Partition`      | `.partition`     | Mesh partitioning                        |
-| `Gmsh2OpenSees`  | `.g2o`           | One-liner mesh transfer to OpenSees      |
+| Access | Methods |
+|---|---|
+| `g.model.geometry`   | `add_point`, `add_line`, `add_box`, `add_sphere`, `add_cylinder`, ... |
+| `g.model.boolean`    | `fuse`, `cut`, `intersect`, `fragment` |
+| `g.model.transforms` | `translate`, `rotate`, `scale`, `mirror`, `copy`, `extrude`, `revolve`, `sweep`, `thru_sections` |
+| `g.model.io`         | `load_step`, `load_iges`, `load_dxf`, `save_step`, `save_msh`, `heal_shapes` |
+| `g.model.queries`    | `bounding_box`, `center_of_mass`, `mass`, `boundary`, `adjacencies`, `entities_in_bounding_box`, `registry`, `remove`, `remove_duplicates`, `make_conformal`, `fragment_all` |
 
-### Renumbering & FEM Data
+Plus `g.model.selection` (entity selection) and flat `g.model.sync()`,
+`g.model.viewer()`.
 
-`renumber_mesh()` remaps non-contiguous Gmsh tags to contiguous 1-based solver IDs directly in the Gmsh model. After renumbering, `get_fem_data()` returns a `FEMData` object with solver-ready IDs, coordinates, and connectivity. Supports simple sequential numbering and RCM bandwidth optimisation.
+### `g.mesh` sub-composites
+
+Seven focused namespaces for meshing:
+
+| Access | Methods |
+|---|---|
+| `g.mesh.generation`   | `generate`, `set_order`, `refine`, `optimize`, `set_algorithm` |
+| `g.mesh.sizing`       | `set_global_size`, `set_size`, `set_size_sources`, `set_size_callback`, `set_size_by_physical` |
+| `g.mesh.field`        | `distance`, `threshold`, `box`, `math_eval`, `boundary_layer`, `minimum`, `set_background` |
+| `g.mesh.structured`   | `set_transfinite_{curve,surface,volume,automatic}`, `set_recombine`, `recombine`, `set_smoothing`, `set_compound` |
+| `g.mesh.editing`      | `embed`, `set_periodic`, `clear`, `reverse`, `relocate_nodes`, `remove_duplicate_{nodes,elements}`, `affine_transform`, `import_stl`, `classify_surfaces`, `create_geometry` |
+| `g.mesh.queries`      | `get_nodes`, `get_elements`, `get_fem_data`, `get_element_properties`, `get_element_qualities`, `quality_report` |
+| `g.mesh.partitioning` | `partition`, `unpartition`, `compute_renumbering`, `renumber_{nodes,elements,mesh}` |
+
+Plus flat `g.mesh.viewer()` and `g.mesh.results_viewer()` for
+interactive windows.
+
+### The FEM broker
+
+`get_fem_data(dim)` returns a `FEMData` snapshot — a solver-agnostic
+container with node IDs, coordinates, element connectivity, physical
+groups, mesh selection sets, and the resolved load/mass/constraint
+records. It's the single contract between Gmsh and any downstream
+solver.
 
 ```python
 g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
-fem = g.mesh.queries.get_fem_data(dim=2)
+fem = g.mesh.queries.get_fem_data(dim=3)
+
 # fem.node_ids, fem.element_ids, fem.node_coords, fem.connectivity
+# fem.info           → mesh statistics (n_nodes, n_elems, bandwidth)
+# fem.physical       → physical group lookup
+# fem.mesh_selection → post-mesh selection sets
+# fem.loads          → resolved NodalLoadRecord / ElementLoadRecord
+# fem.masses         → resolved MassRecord
+# fem.constraints    → resolved ConstraintRecord
 ```
 
-### Constraints
+### Constraints, loads, masses
 
-Solver-agnostic two-stage constraint pipeline on the Assembly:
+Two-stage pipeline:
 
-1. **Define** (pre-mesh): `asm.equal_dof(...)`, `asm.tie(...)`, `asm.rigid_link(...)`, etc.
-2. **Resolve** (post-mesh): `asm.resolve_constraints(...)` produces concrete node pairs, weights, and constraint matrices for any solver.
+1. **Define** (pre-mesh): `g.constraints.equal_dof(...)`,
+   `g.loads.point("TopFace", force_xyz=...)`,
+   `g.masses.volume("Concrete", density=2400)`, etc. Returns
+   lightweight definition dataclasses that reference *labels*, not raw
+   tags.
+2. **Resolve** (post-mesh, automatic): `get_fem_data()` resolves every
+   definition against the mesh and attaches the results to
+   `fem.constraints`, `fem.loads`, `fem.masses`.
 
-Four levels: node-to-node, node-to-group, node-to-surface, surface-to-surface.
+The resolver is pure NumPy math with no Gmsh dependency — solver
+bridges consume the records directly.
+
+## Parts
+
+A `Part` owns an isolated Gmsh session, builds a shape, and exports it
+to STEP. The session-level `g.parts` registry imports those STEPs back
+into the assembly session, tracks which tags belong to which label,
+and offers higher-level operations (`fragment_all`, `fuse_group`,
+`build_node_map`, `build_face_map`) that keep working through
+fragmentation and re-tagging.
+
+```python
+from apeGmsh import apeGmsh, Part
+
+web = Part("web")
+web.begin()
+# ... web.model.geometry.add_... to build the shape
+web.save("web.step")
+web.end()
+
+with apeGmsh(model_name="I_beam") as g:
+    g.parts.import_step("web.step", label="web")
+    g.parts.import_step("flange.step", label="top_flange",
+                        translate=(0, 0, 200))
+    g.parts.import_step("flange.step", label="bot_flange")
+
+    g.parts.fragment_all()   # conformal interfaces
+
+    g.mesh.generation.generate(dim=3)
+    g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+```
 
 ## Project layout
 
 ```
-pyGmsh/
+apeGmsh/
   pyproject.toml
   README.md
+  CHANGELOG.md
+  docs/
+    MIGRATION_v1.md
+    guide_basics.md
+    guide_meshing.md
+    guide_cad_import.md
+    guide_fem_broker.md
+    guide_parts_assembly.md
+    guide_parts_vs_session.md
+    guide_selection.md
+  examples/         # runnable notebooks and scripts
+  tests/            # pytest suite (no Gmsh required)
   src/
-    pyGmsh/
+    apeGmsh/
       __init__.py
-      _core.py           # standalone pyGmsh class
-      Part.py
-      Assembly.py
-      Mesh.py
-      Model.py
-      View.py
-      Plot.py
-      Inspect.py
-      PhysicalGroups.py
-      Partition.py
-      Gmsh2OpenSees.py
-      VTKExport.py
-      Constraints.py
-      Numberer.py
-      OpenSees.py
-  examples/
-    example_plate_pyGmsh.ipynb
-    example_assembly.ipynb
-    ...
+      _core.py                 # apeGmsh session class
+      _session.py              # _SessionBase + composite wiring
+      core/
+        Model.py               # g.model composite container
+        _model_geometry.py     # g.model.geometry
+        _model_boolean.py      # g.model.boolean
+        _model_transforms.py   # g.model.transforms
+        _model_io.py           # g.model.io
+        _model_queries.py      # g.model.queries
+        Part.py
+        _parts_registry.py
+        ConstraintsComposite.py
+        LoadsComposite.py
+        MassesComposite.py
+      mesh/
+        Mesh.py                # g.mesh composite container
+        _mesh_generation.py    # g.mesh.generation
+        _mesh_sizing.py        # g.mesh.sizing
+        _mesh_field.py         # g.mesh.field (FieldHelper)
+        _mesh_structured.py    # g.mesh.structured
+        _mesh_editing.py       # g.mesh.editing
+        _mesh_queries.py       # g.mesh.queries
+        _mesh_partitioning.py  # g.mesh.partitioning
+        _mesh_algorithms.py    # Algorithm2D/3D, OptimizeMethod
+        FEMData.py
+        PhysicalGroups.py
+        MeshSelectionSet.py
+        MshLoader.py
+        Partition.py
+      solvers/
+        OpenSees.py
+        Constraints.py
+        Loads.py
+        Masses.py
+        Numberer.py
+        Gmsh2OpenSees.py
+      viewers/                  # PyQt/PyVista viewers
+      results/                  # VTU export + Results container
+      viz/                      # Selection, Inspect, Plot, VTKExport
 ```
 
 ## Examples
 
-See the `examples/` directory. After `pip install -e .`, all notebooks can be run directly without sys.path manipulation.
+See the `examples/` directory — every notebook runs in-place after
+`pip install -e .`. Recommended order for learning the API:
+
+1. `examples/example_plate_basic.ipynb` — minimal plate workflow
+2. `examples/example_ibeam_modal.ipynb` — I-beam modal analysis
+3. `examples/01_embedded_rebars.ipynb` — embedded 1D rebars in a
+   concrete volume
+4. `examples/example_frame3D_slab.ipynb` — mixed 1D frame + 2D slab
+5. `examples/example_gusset.ipynb` — imported CAD gusset plate
+
+## Migrating from v0.x
+
+See [`docs/MIGRATION_v1.md`](docs/MIGRATION_v1.md) for the full
+checklist. In short: package rename (`pyGmsh → apeGmsh`), `g.model.*`
+methods split into five sub-composites, `g.mesh.*` methods split into
+seven sub-composites, `g.mass → g.masses`, `g.initialize/finalize →
+g.begin/end`. The migration guide ships a ~100-line Python script
+that handles every mechanical rewrite on an existing project.

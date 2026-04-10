@@ -1,7 +1,7 @@
 # Working with Parts to Build an Assembly
 
-pyGmsh follows an Abaqus-inspired Part/Assembly philosophy: geometry is built in
-isolated **Parts**, then imported and combined inside a **pyGmsh session** that
+apeGmsh follows an Abaqus-inspired Part/Assembly philosophy: geometry is built in
+isolated **Parts**, then imported and combined inside a **apeGmsh session** that
 acts as the assembly.  This separation keeps geometry reusable, meshing
 independent, and constraints declarative.
 
@@ -12,7 +12,7 @@ create points, curves, surfaces, and volumes.  It has no meshing, no physical
 groups, and no solver awareness.  When you are done, you export the geometry to a
 STEP file.
 
-**pyGmsh** (the main session) is the assembly.  It imports Parts, positions
+**apeGmsh** (the main session) is the assembly.  It imports Parts, positions
 them, fragments interfaces so the mesh is conformal, generates the mesh, defines
 constraints, and exports to a solver.  Everything that happens after geometry is
 done—meshing, physical groups, mesh selections, constraints, OpenSees export—lives
@@ -68,7 +68,7 @@ beam.end()
 
 ## Phase 2 — Create the Assembly Session
 
-Open a pyGmsh session and import parts via `g.parts`.  There are multiple entry
+Open a apeGmsh session and import parts via `g.parts`.  There are multiple entry
 points depending on where your geometry comes from.
 
 ### Entry Point A — Import a Part object
@@ -319,7 +319,7 @@ g.end()
 ## Complete Example — Portal Frame
 
 ```python
-from apeGmsh import Part, pyGmsh
+from apeGmsh import Part, apeGmsh
 
 # ── Define reusable parts ─────────────────────────────────
 column = Part("column")
@@ -370,7 +370,7 @@ g.end()
 ## Summary of the Pipeline
 
 ```
-Part                          pyGmsh (Assembly)
+Part                          apeGmsh (Assembly)
 ─────                         ─────────────────
 1. Build geometry              3. Import & position parts
 2. Save to STEP                4. Fragment interfaces

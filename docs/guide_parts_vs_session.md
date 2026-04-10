@@ -1,8 +1,8 @@
 # Parts vs. Direct Session: When to Use Each
 
-pyGmsh gives you two ways to build geometry for a finite element model. You can
+apeGmsh gives you two ways to build geometry for a finite element model. You can
 define reusable **Parts** that get imported into a session, or you can build
-everything **directly inside a single pyGmsh session**. Both paths end at the
+everything **directly inside a single apeGmsh session**. Both paths end at the
 same place — a meshed, solver-ready model — but they suit different problems.
 
 This guide explains the tradeoffs, then digs into what actually happens to the
@@ -18,7 +18,7 @@ Each component is built in its own Gmsh session, exported to STEP, and imported
 into the assembly session.
 
 ```python
-from apeGmsh import Part, pyGmsh
+from apeGmsh import Part, apeGmsh
 
 # Build in isolation
 col = Part("column")
@@ -38,7 +38,7 @@ g.mesh.generation.generate(dim=3)
 
 ### Approach B — Direct Session
 
-Everything is created inside one pyGmsh session. You can optionally wrap
+Everything is created inside one apeGmsh session. You can optionally wrap
 geometry in `g.parts.part()` blocks to give it a name and track it for
 fragmentation and constraints.
 
@@ -82,7 +82,7 @@ projects.
 FreeCAD STEP file, `g.parts.import_step()` brings it in without touching
 the original. The Part class itself is optional here — you can import STEP files
 directly — but the mental model is the same: geometry is defined elsewhere,
-assembly happens in pyGmsh.
+assembly happens in apeGmsh.
 
 **You want clean separation of concerns.** Part sessions cannot mesh, cannot
 define physical groups, cannot set constraints. This is by design. It forces
@@ -421,7 +421,7 @@ Is the model a single body?
                         ├── Yes → Use g.parts without fragment,
                         │         couple via constraints
                         └── No → They are independent models,
-                                  consider separate pyGmsh sessions
+                                  consider separate apeGmsh sessions
 ```
 
 
