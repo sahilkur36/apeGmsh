@@ -34,6 +34,11 @@ opensees_venv/
 *.brep
 *.pos
 
+# AutoCAD lock/backup files (should never be tracked)
+*.dwl
+*.dwl2
+*.bak
+
 # VTK output
 *.vtu
 *.vtk
