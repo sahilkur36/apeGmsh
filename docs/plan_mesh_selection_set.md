@@ -24,7 +24,7 @@ PRE-MESH                              POST-MESH
   (dim, tag) + name               │
   add_surface([s1], name="slab")  │
                                   ▼
-  g.model.selection ──────> g.mesh.generate() ──────> g.mesh_selection
+  g.model.selection ──────> g.mesh.generation.generate() ──────> g.mesh_selection
   geometry queries            ▲                       (dim, tag) + name
   .to_physical()              │                       add_nodes(on_plane=...)
                               │                       add_elements(in_box=...)
@@ -232,7 +232,7 @@ g.physical.add_surface([slab], name="slab")
 g.physical.add_curve([1, 3], name="supports")
 
 # Mesh
-g.mesh.generate(2)
+g.mesh.generation.generate(2)
 
 # Mesh selections (post-mesh)
 g.mesh_selection.add_nodes(on_plane=("z", 0.0, 1e-3), name="base_nodes")
@@ -259,7 +259,7 @@ elems = g.mesh_selection.get_elements(dim=2, tag=3)
 # → {'element_ids': ndarray(E,), 'connectivity': ndarray(E, npe)}
 
 # FEM broker — both sources available
-fem = g.mesh.get_fem_data(dim=2)
+fem = g.mesh.queries.get_fem_data(dim=2)
 fem.physical.get_nodes(0, 1)          # from physical groups
 fem.mesh_selection.get_nodes(0, 1)    # from mesh selections
 

@@ -16,12 +16,12 @@ snapshot :class:`MeshSelectionStore` is captured into ``FEMData`` at
 
 Usage::
 
-    g.mesh.generate(2)
+    g.mesh.generation.generate(2)
 
     g.mesh_selection.add_nodes(on_plane=("z", 0.0, 1e-3), name="base")
     g.mesh_selection.add_elements(dim=2, in_box=[0,0,-1, 10,10,1], name="zone")
 
-    fem = g.mesh.get_fem_data(dim=2)
+    fem = g.mesh.queries.get_fem_data(dim=2)
     fem.mesh_selection.get_nodes(0, 1)  # same shape as fem.physical.get_nodes()
 """
 from __future__ import annotations
@@ -779,7 +779,7 @@ class MeshSelectionStore:
     -------
     ::
 
-        fem = g.mesh.get_fem_data(dim=2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
         fem.mesh_selection.get_all()
         fem.mesh_selection.get_nodes(0, 1)
         fem.mesh_selection.get_elements(2, 1)

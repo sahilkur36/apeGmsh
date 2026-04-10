@@ -355,7 +355,7 @@ class Results:
         Parameters
         ----------
         fem : FEMData
-            Mesh geometry (from ``g.mesh.get_fem_data()``).
+            Mesh geometry (from ``g.mesh.queries.get_fem_data()``).
         point_data : dict, optional
             Static nodal fields: ``{name: ndarray (N,) or (N,3)}``.
         cell_data : dict, optional

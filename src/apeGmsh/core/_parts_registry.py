@@ -23,7 +23,7 @@ Usage::
     g.parts.fragment_all()
 
     # Build node map for constraint resolution
-    fem = g.mesh.get_fem_data(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
     nm  = g.parts.build_node_map(fem.node_ids, fem.node_coords)
 """
 from __future__ import annotations

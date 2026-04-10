@@ -141,7 +141,7 @@ with a 3D volume).
 Generation is controlled by a single entry point:
 
 ```python
-g.mesh.generate(dim: int = 3) -> Mesh   # Mesh.py:143
+g.mesh.generation.generate(dim: int = 3) -> Mesh   # Mesh.py:143
 ```
 
 - `dim=1` produces only 1D elements on curves.
@@ -155,9 +155,9 @@ Once the mesh exists, most query methods accept `dim` as a filter with the
 same convention: `dim=-1` means "all dimensions", and any positive value
 restricts the query. The most useful ones are:
 
-- `g.mesh.get_nodes(*, dim=-1, tag=-1, ...) -> dict` — `Mesh.py:1098`
-- `g.mesh.get_elements(*, dim=-1, tag=-1) -> dict` — `Mesh.py:1137`
-- `g.mesh.get_fem_data(dim: int = 2) -> FEMData` — `Mesh.py:1257`
+- `g.mesh.queries.get_nodes(*, dim=-1, tag=-1, ...) -> dict` — `Mesh.py:1098`
+- `g.mesh.queries.get_elements(*, dim=-1, tag=-1) -> dict` — `Mesh.py:1137`
+- `g.mesh.queries.get_fem_data(dim: int = 2) -> FEMData` — `Mesh.py:1257`
 
 `get_fem_data` is the bridge to the FEM broker. Its `dim` argument selects the
 *element* dimension you want the solver to see, not the dimension of the mesh
@@ -172,7 +172,7 @@ not special-case either source.
 High-order elements are toggled globally through `set_order`:
 
 ```python
-g.mesh.set_order(order: int) -> Mesh    # Mesh.py:155
+g.mesh.generation.set_order(order: int) -> Mesh    # Mesh.py:155
 ```
 
 `order=1` is the default (linear). `order=2` promotes edges, faces and volumes
@@ -180,7 +180,7 @@ to their quadratic variants (9-node quads, 10-node tets, 20/27-node hexes
 depending on recombination). Order changes must be applied *after*
 `generate()`.
 
-`g.mesh.refine()` (`Mesh.py:167`) performs one round of uniform subdivision.
+`g.mesh.generation.refine()` (`Mesh.py:167`) performs one round of uniform subdivision.
 It is cheap for diagnostics but rarely what you want for production meshes —
 prefer size fields (Section 5) for targeted refinement.
 
@@ -242,7 +242,7 @@ running. New code should prefer the string form.
 Selection happens through a single method whose behaviour depends on `dim`:
 
 ```python
-g.mesh.set_algorithm(tag: int, algorithm, *, dim: int = 2) -> Mesh   # Mesh.py
+g.mesh.generation.set_algorithm(tag: int, algorithm, *, dim: int = 2) -> Mesh   # Mesh.py
 ```
 
 `algorithm` accepts:
@@ -255,14 +255,14 @@ g.mesh.set_algorithm(tag: int, algorithm, *, dim: int = 2) -> Mesh   # Mesh.py
 Examples (all four equivalent):
 
 ```python
-g.mesh.set_algorithm(surf_tag, "frontal_delaunay_quads")
-g.mesh.set_algorithm(surf_tag, "quads")                   # alias
-g.mesh.set_algorithm(surf_tag, MeshAlgorithm2D.QUADS)
-g.mesh.set_algorithm(surf_tag, Algorithm2D.FRONTAL_DELAUNAY_QUADS)
+g.mesh.generation.set_algorithm(surf_tag, "frontal_delaunay_quads")
+g.mesh.generation.set_algorithm(surf_tag, "quads")                   # alias
+g.mesh.generation.set_algorithm(surf_tag, MeshAlgorithm2D.QUADS)
+g.mesh.generation.set_algorithm(surf_tag, Algorithm2D.FRONTAL_DELAUNAY_QUADS)
 
-g.mesh.set_algorithm(0, "hxt", dim=3)
-g.mesh.set_algorithm(0, "auto", dim=3)                    # also hxt
-g.mesh.set_algorithm(0, MeshAlgorithm3D.HXT, dim=3)
+g.mesh.generation.set_algorithm(0, "hxt", dim=3)
+g.mesh.generation.set_algorithm(0, "auto", dim=3)                    # also hxt
+g.mesh.generation.set_algorithm(0, MeshAlgorithm3D.HXT, dim=3)
 ```
 
 - With `dim=2`, the algorithm is set **per surface** via
@@ -290,9 +290,9 @@ Rules of thumb from the Gmsh docs as they apply here:
 Quad recombination and smoothing are controlled separately:
 
 ```python
-g.mesh.set_recombine(tag, *, dim=2, angle=45.0) -> Mesh   # Mesh.py:593
-g.mesh.recombine() -> Mesh                                # Mesh.py:617
-g.mesh.set_smoothing(tag, val, *, dim=2) -> Mesh          # Mesh.py:623
+g.mesh.structured.set_recombine(tag, *, dim=2, angle=45.0) -> Mesh   # Mesh.py:593
+g.mesh.structured.recombine() -> Mesh                                # Mesh.py:617
+g.mesh.structured.set_smoothing(tag, val, *, dim=2) -> Mesh          # Mesh.py:623
 ```
 
 `set_recombine` requests recombination on a single surface (or volume, when
@@ -308,8 +308,8 @@ pyGmsh gives you three layers of size control, from coarse to fine:
 **Global bounds** — set a floor and ceiling on element size:
 
 ```python
-g.mesh.set_global_size(max_size, min_size=0.0) -> Mesh      # Mesh.py:206
-g.mesh.set_size_global(*, min_size=None, max_size=None)     # Mesh.py:300
+g.mesh.sizing.set_global_size(max_size, min_size=0.0) -> Mesh      # Mesh.py:206
+g.mesh.sizing.set_size_global(*, min_size=None, max_size=None)     # Mesh.py:300
 ```
 
 The second form lets you change only one bound at a time. Both map to
@@ -319,7 +319,7 @@ The second form lets you change only one bound at a time. Both map to
 size at a point:
 
 ```python
-g.mesh.set_size_sources(*, from_points=None, from_curvature=None,
+g.mesh.sizing.set_size_sources(*, from_points=None, from_curvature=None,
                             extend_from_boundary=None) -> Mesh   # Mesh.py:244
 ```
 
@@ -331,9 +331,9 @@ global bound authoritative again.
 **Per-point sizes:**
 
 ```python
-g.mesh.set_size(tags, size, *, dim=0) -> Mesh               # Mesh.py:338
-g.mesh.set_size_all_points(size) -> Mesh                    # Mesh.py:376
-g.mesh.set_size_callback(func) -> Mesh                      # Mesh.py:420
+g.mesh.sizing.set_size(tags, size, *, dim=0) -> Mesh               # Mesh.py:338
+g.mesh.sizing.set_size_all_points(size) -> Mesh                    # Mesh.py:376
+g.mesh.sizing.set_size_callback(func) -> Mesh                      # Mesh.py:420
 ```
 
 The callback signature is `func(dim, tag, x, y, z, lc) -> float` and lets you
@@ -364,7 +364,7 @@ d = g.mesh.field.distance(curves=crack_tip_curves)
 t = g.mesh.field.threshold(d, size_min=0.1, size_max=5.0,
                                dist_min=0.5, dist_max=10.0)
 g.mesh.field.set_background(t)
-g.mesh.generate(3)
+g.mesh.generation.generate(3)
 ```
 
 
@@ -374,9 +374,9 @@ Transfinite meshing produces structured (mapped) grids from topologically
 quadrilateral or hexahedral regions. The three primitives mirror Gmsh:
 
 ```python
-g.mesh.set_transfinite_curve(tag, n_nodes, *, mesh_type="Progression", coef=1.0)   # Mesh.py:457
-g.mesh.set_transfinite_surface(tag, *, arrangement="Left", corners=None)           # Mesh.py:495
-g.mesh.set_transfinite_volume(tag, *, corners=None)                                # Mesh.py:531
+g.mesh.structured.set_transfinite_curve(tag, n_nodes, *, mesh_type="Progression", coef=1.0)   # Mesh.py:457
+g.mesh.structured.set_transfinite_surface(tag, *, arrangement="Left", corners=None)           # Mesh.py:495
+g.mesh.structured.set_transfinite_volume(tag, *, corners=None)                                # Mesh.py:531
 ```
 
 - On a curve, `n_nodes` counts endpoints. `mesh_type` is `"Progression"` for
@@ -393,7 +393,7 @@ For whole assemblies where you want Gmsh to *find* transfinite regions
 itself, use:
 
 ```python
-g.mesh.set_transfinite_automatic(dim_tags=None, *, corner_angle=2.35,
+g.mesh.structured.set_transfinite_automatic(dim_tags=None, *, corner_angle=2.35,
                                  recombine=True) -> Mesh     # Mesh.py:553
 ```
 
@@ -441,8 +441,8 @@ accepts a list of tags:
 ```python
 # Drive a per-surface algorithm from a PG
 for s in g.physical.entities("Concrete", dim=2):
-    g.mesh.set_algorithm(s, "frontal_delaunay_quads")
-    g.mesh.set_recombine(s)
+    g.mesh.generation.set_algorithm(s, "frontal_delaunay_quads")
+    g.mesh.structured.set_recombine(s)
 
 # Feed a distance field directly from a PG
 joint = g.physical.entities("BeamColumnJoint", dim=2)
@@ -453,7 +453,7 @@ g.mesh.field.set_background(t)
 
 # Embed rebar curves pulled from a PG into a concrete volume
 rebar_curves = g.physical.entities("Rebars", dim=1)
-g.mesh.embed(rebar_curves, in_tag=concrete_vol, dim=1, in_dim=3)
+g.mesh.editing.embed(rebar_curves, in_tag=concrete_vol, dim=1, in_dim=3)
 ```
 
 Because `g.parts.add_physical_groups()` (`_parts_registry.py:640`) already
@@ -474,11 +474,11 @@ dimension as a keyword, and they all return `self` so they chain:
 
 | Wrapper | Fans out to | Notes |
 |---|---|---|
-| `g.mesh.set_algorithm_by_physical(name, algorithm, *, dim=2)` | `set_algorithm` | `dim=2` is per-surface; `dim=3` still writes the global `Mesh.Algorithm3D` option, name is used only in the log |
-| `g.mesh.set_recombine_by_physical(name, *, dim=2, angle=45.0)` | `set_recombine` | Turn triangles into quads over every surface in the PG |
-| `g.mesh.set_smoothing_by_physical(name, val, *, dim=2)` | `set_smoothing` | Laplacian passes per surface |
-| `g.mesh.set_size_by_physical(name, size, *, dim=0)` | `set_size` | Only effective on points; use a field for surface/volume sizing |
-| `g.mesh.set_transfinite_by_physical(name, *, dim, **kwargs)` | `set_transfinite_curve / _surface / _volume` | Picks the right variant from `dim`; forwards `**kwargs` untouched |
+| `g.mesh.generation.set_algorithm_by_physical(name, algorithm, *, dim=2)` | `set_algorithm` | `dim=2` is per-surface; `dim=3` still writes the global `Mesh.Algorithm3D` option, name is used only in the log |
+| `g.mesh.structured.set_recombine_by_physical(name, *, dim=2, angle=45.0)` | `set_recombine` | Turn triangles into quads over every surface in the PG |
+| `g.mesh.structured.set_smoothing_by_physical(name, val, *, dim=2)` | `set_smoothing` | Laplacian passes per surface |
+| `g.mesh.sizing.set_size_by_physical(name, size, *, dim=0)` | `set_size` | Only effective on points; use a field for surface/volume sizing |
+| `g.mesh.structured.set_transfinite_by_physical(name, *, dim, **kwargs)` | `set_transfinite_curve / _surface / _volume` | Picks the right variant from `dim`; forwards `**kwargs` untouched |
 
 A compact recipe mixing several of them:
 
@@ -490,16 +490,16 @@ g.physical.add_curve  (edge_curves,  name="WebEdges")
 g.physical.add_surface(joint_surfs,  name="BeamColumnJoint")
 
 # Structured quad patches on the flanges
-g.mesh.set_algorithm_by_physical("Flanges", "frontal_delaunay_quads")
-g.mesh.set_recombine_by_physical("Flanges")
+g.mesh.generation.set_algorithm_by_physical("Flanges", "frontal_delaunay_quads")
+g.mesh.structured.set_recombine_by_physical("Flanges")
 
 # A transfinite web, 40 nodes along every edge, clustered 1:1.1
-g.mesh.set_transfinite_by_physical(
+g.mesh.structured.set_transfinite_by_physical(
     "WebEdges", dim=1, n_nodes=40, mesh_type="Progression", coef=1.1,
 )
 for s in g.physical.entities("Web", dim=2):
-    g.mesh.set_transfinite_surface(s)
-    g.mesh.set_recombine(s)
+    g.mesh.structured.set_transfinite_surface(s)
+    g.mesh.structured.set_recombine(s)
 
 # Refinement zone around the joint
 d = g.mesh.field.distance(
@@ -509,7 +509,7 @@ t = g.mesh.field.threshold(d, size_min=0.02, dist_min=0.05,
                               size_max=0.30, dist_max=1.0)
 g.mesh.field.set_background(t)
 
-g.mesh.generate(3)
+g.mesh.generation.generate(3)
 ```
 
 ### Two caveats
@@ -613,11 +613,11 @@ conformal, fragmented entities.
 
 ### Stage 2 — resolution, on the mesh
 
-After `g.mesh.generate()` you extract an FEM view of the mesh and feed it to
+After `g.mesh.generation.generate()` you extract an FEM view of the mesh and feed it to
 the resolver:
 
 ```python
-fem = g.mesh.get_fem_data(dim=3)
+fem = g.mesh.queries.get_fem_data(dim=3)
 node_map = g.parts.build_node_map(fem.node_ids, fem.node_coords)   # _parts_registry.py:598
 face_map = g.parts.build_face_map(node_map)                        # _parts_registry.py:614
 records  = g.constraints.resolve(
@@ -670,20 +670,20 @@ g.parts.fragment_all()
 g.parts.add_physical_groups()
 
 # 4. Size + algorithm + field control
-g.mesh.set_size_sources(from_points=False)
-g.mesh.set_global_size(0.15)
-g.mesh.set_algorithm(0, "hxt", dim=3)
+g.mesh.sizing.set_size_sources(from_points=False)
+g.mesh.sizing.set_global_size(0.15)
+g.mesh.generation.set_algorithm(0, "hxt", dim=3)
 
 # 5. Generate the mesh at the target dimension
-g.mesh.generate(dim=3)
-g.mesh.set_order(2)
-g.mesh.renumber_mesh(method="rcm", base=1)
+g.mesh.generation.generate(dim=3)
+g.mesh.generation.set_order(2)
+g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
 
 # 6. Declare constraints against part labels (pre-resolution)
 g.constraints.tie(master_label="col", slave_label="bm")
 
 # 7. Extract FEM data and resolve constraints against the real mesh
-fem   = g.mesh.get_fem_data(dim=3)
+fem   = g.mesh.queries.get_fem_data(dim=3)
 nm    = g.parts.build_node_map(fem.node_ids, fem.node_coords)
 fm    = g.parts.build_face_map(nm)
 recs  = g.constraints.resolve(fem.node_ids, fem.node_coords,

@@ -37,9 +37,9 @@ l4 = g.model.geometry.add_line(p4, p1)
 loop = g.model.geometry.add_curve_loop([l1, l2, l3, l4])
 surf = g.model.geometry.add_plane_surface(loop)
 
-g.mesh.generate(2)
-g.mesh.renumber_mesh(method="simple", base=1)
-fem = g.mesh.get_fem_data(dim=2)
+g.mesh.generation.generate(2)
+g.mesh.partitioning.renumber_mesh(method="simple", base=1)
+fem = g.mesh.queries.get_fem_data(dim=2)
 print(fem.summary())
 
 g.end()
@@ -71,9 +71,9 @@ asm.add_part(flange, translate=(0, 0, 200), label="top_flange")
 asm.add_part(flange, label="bot_flange")
 
 asm.fragment_all()
-asm.mesh.generate(dim=2)
-asm.mesh.renumber_mesh(method="rcm", base=1)
-fem = asm.mesh.get_fem_data(dim=2)
+asm.mesh.generation.generate(dim=2)
+asm.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+fem = asm.mesh.queries.get_fem_data(dim=2)
 
 # fem.node_ids, fem.node_coords, fem.connectivity → feed to any solver
 asm.end()
@@ -107,8 +107,8 @@ The STEP file is the only contract between Part and Assembly -- they are fully d
 `renumber_mesh()` remaps non-contiguous Gmsh tags to contiguous 1-based solver IDs directly in the Gmsh model. After renumbering, `get_fem_data()` returns a `FEMData` object with solver-ready IDs, coordinates, and connectivity. Supports simple sequential numbering and RCM bandwidth optimisation.
 
 ```python
-g.mesh.renumber_mesh(method="rcm", base=1)
-fem = g.mesh.get_fem_data(dim=2)
+g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+fem = g.mesh.queries.get_fem_data(dim=2)
 # fem.node_ids, fem.element_ids, fem.node_coords, fem.connectivity
 ```
 

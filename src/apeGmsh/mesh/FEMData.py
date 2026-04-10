@@ -22,8 +22,8 @@ Usage
 -----
 ::
 
-    g.mesh.renumber_mesh(method="rcm", base=1)
-    fem = g.mesh.get_fem_data(dim=2)
+    g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+    fem = g.mesh.queries.get_fem_data(dim=2)
 
     # Mesh statistics
     print(fem.info)
@@ -131,7 +131,7 @@ class PhysicalGroupSet:
     -------
     ::
 
-        fem = g.mesh.get_fem_data(dim=2)
+        fem = g.mesh.queries.get_fem_data(dim=2)
 
         # Inspect
         fem.physical.get_all()           # [(0, 1), (1, 2), (2, 3)]
@@ -355,7 +355,7 @@ class ConstraintSet:
 
         records = g.constraints.resolve(...)
         cs = ConstraintSet(records)
-        fem = g.mesh.get_fem_data(dim=3)
+        fem = g.mesh.queries.get_fem_data(dim=3)
         fem.constraints = cs           # or pass at construction
 
     Iteration
@@ -576,7 +576,7 @@ class LoadSet:
 
         records = g.loads.resolve(...)
         ls = LoadSet(records)
-        fem = g.mesh.get_fem_data(dim=3)
+        fem = g.mesh.queries.get_fem_data(dim=3)
         fem.loads = ls            # or pass at construction
     """
 
@@ -768,8 +768,8 @@ class FEMData:
     -------
     ::
 
-        g.mesh.renumber_mesh(method="rcm", base=1)
-        fem = g.mesh.get_fem_data(dim=2)
+        g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+        fem = g.mesh.queries.get_fem_data(dim=2)
 
         # Mesh stats
         print(fem.info)

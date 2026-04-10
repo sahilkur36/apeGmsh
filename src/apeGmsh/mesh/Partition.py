@@ -32,7 +32,7 @@ class Partition:
             # build and mesh
             g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
             g.model.sync()
-            g.mesh.generate(3)
+            g.mesh.generation.generate(3)
 
             # auto-partition into 4 parts
             g.partition.auto(4)
@@ -78,7 +78,7 @@ class Partition:
         Partition the current mesh into *n_parts* sub-domains using
         Gmsh's built-in partitioner (Metis when available).
 
-        Must be called after ``g.mesh.generate()``.
+        Must be called after ``g.mesh.generation.generate()``.
 
         Parameters
         ----------

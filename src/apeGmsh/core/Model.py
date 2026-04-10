@@ -173,8 +173,8 @@ class Model:
         -------
         ::
 
-            g.mesh.generate(3)
-            fem = g.mesh.get_fem_data(3)   # resolve loads + mass
+            g.mesh.generation.generate(3)
+            fem = g.mesh.queries.get_fem_data(3)   # resolve loads + mass
             g.model.viewer(fem=fem)         # overlays enabled
         """
         return self.selection.picker(**kwargs)

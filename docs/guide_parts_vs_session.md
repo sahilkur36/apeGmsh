@@ -33,7 +33,7 @@ g.begin()
 g.parts.add(col, label="col_1", translate=(0, 0, 0))
 g.parts.add(col, label="col_2", translate=(6, 0, 0))
 g.parts.fragment_all()
-g.mesh.generate(dim=3)
+g.mesh.generation.generate(dim=3)
 ```
 
 ### Approach B — Direct Session
@@ -55,7 +55,7 @@ with g.parts.part("col_2"):
     g.model.geometry.add_box(6, 0, 0,  0.5, 0.5, 3.0)
 
 g.parts.fragment_all()
-g.mesh.generate(dim=3)
+g.mesh.generation.generate(dim=3)
 ```
 
 Or, at its simplest, skip `g.parts` entirely:
@@ -64,7 +64,7 @@ Or, at its simplest, skip `g.parts` entirely:
 g = apeGmsh("plate")
 g.begin()
 g.model.geometry.add_rectangle(0, 0, 0,  10, 5)
-g.mesh.generate(dim=2)
+g.mesh.generation.generate(dim=2)
 ```
 
 
@@ -272,12 +272,12 @@ g.parts.add(solid_part, label="solid")
 g.parts.add(frame_part, label="frame")
 # No fragment_all() — meshes are independent
 
-g.mesh.generate(dim=3)
+g.mesh.generation.generate(dim=3)
 
 g.constraints.equal_dof("solid", "frame", dofs=[1, 2, 3], tolerance=1e-3)
 g.constraints.rigid_link("frame", "solid", link_type="beam")
 
-fem = g.mesh.get_fem_data(dim=3)
+fem = g.mesh.queries.get_fem_data(dim=3)
 node_map = g.parts.build_node_map(fem.node_ids, fem.node_coords)
 records = g.constraints.resolve(fem.node_ids, fem.node_coords, node_map=node_map)
 ```
@@ -294,7 +294,7 @@ g.begin()
 g.model.geometry.add_box(0, 0, 0,  1, 1, 1)
 g.model.geometry.add_box(1, 0, 0,  1, 1, 1)
 g.model.queries.make_conformal()    # fragments all entities at their intersections
-g.mesh.generate(dim=3)
+g.mesh.generation.generate(dim=3)
 ```
 
 `g.model.queries.make_conformal()` (aliased as `g.model.queries.fragment_all()`) performs the
@@ -403,7 +403,7 @@ g.parts.fuse_group(["col_core", "col_cover"], label="column")
 
 # Now fragment them for conformal meshing at the beam-column interface
 g.parts.fragment_all()
-g.mesh.generate(dim=3)
+g.mesh.generation.generate(dim=3)
 ```
 
 

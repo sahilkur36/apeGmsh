@@ -40,7 +40,7 @@ Typical usage
     g.parts.add(plate, translate=(0, 0, 0))
     g.parts.add(plate, translate=(5000, 0, 0), label="plate_2")
     g.parts.fragment_all()
-    g.mesh.generate(dim=2)
+    g.mesh.generation.generate(dim=2)
     g.end()
 
 Why STEP?

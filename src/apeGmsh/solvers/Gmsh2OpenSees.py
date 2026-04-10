@@ -8,7 +8,7 @@ a mesh into an active OpenSees model with a single call.
 Design philosophy
 -----------------
 * **Optional** — apeGmsh works perfectly fine without ``gmsh2opensees`` installed.
-  Users who prefer full control can keep using ``g.mesh.get_fem_data()`` and
+  Users who prefer full control can keep using ``g.mesh.queries.get_fem_data()`` and
   build their OpenSees model manually (the "manual path").
 * **Thin wrapper** — we add safety checks and convenience but delegate the
   real work to ``gmsh2opensees``.
@@ -49,7 +49,7 @@ def _import_g2o():
             "    git clone https://github.com/jaabell/gmsh2opensees.git\n"
             "    cd gmsh2opensees && pip install .\n\n"
             "Or continue using the manual path:\n"
-            "    fem = g.mesh.get_fem_data(dim=2)\n"
+            "    fem = g.mesh.queries.get_fem_data(dim=2)\n"
             "See the example notebooks for both approaches."
         ) from None
 
@@ -116,7 +116,7 @@ class Gmsh2OpenSees:
         Prerequisites
         -------------
         * Gmsh must be initialised (``g.__enter__()`` or context manager).
-        * ``g.mesh.generate(...)`` must have been called first.
+        * ``g.mesh.generation.generate(...)`` must have been called first.
         * An OpenSees model must already be active::
 
               import openseespy.opensees as ops

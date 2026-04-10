@@ -208,8 +208,8 @@ g.physical.add("load_surface", dim=2, tags=[...])
 ### Mesh generation
 
 ```python
-g.mesh.set_size_global(min_size=50, max_size=200)
-g.mesh.generate(dim=3)
+g.mesh.sizing.set_size_global(min_size=50, max_size=200)
+g.mesh.generation.generate(dim=3)
 ```
 
 At this point you can also apply transfinite meshing, recombine quads, set mesh
@@ -271,7 +271,7 @@ node-to-surface (tie, distributing_coupling, embedded), and surface-to-surface
 Resolution needs the mesh data and spatial maps:
 
 ```python
-fem = g.mesh.get_fem_data(dim=3)
+fem = g.mesh.queries.get_fem_data(dim=3)
 node_map = g.parts.build_node_map(fem.node_ids, fem.node_coords)
 face_map = g.parts.build_face_map(node_map)
 
@@ -300,7 +300,7 @@ g.opensees.export_tcl("frame_model.tcl")
 For custom solvers or post-processing:
 
 ```python
-fem = g.mesh.get_fem_data(dim=3)
+fem = g.mesh.queries.get_fem_data(dim=3)
 
 fem.node_ids          # 1-based contiguous IDs
 fem.node_coords       # (N, 3) array
@@ -348,15 +348,15 @@ g.parts.fragment_all()
 g.parts.add_physical_groups()
 
 # Mesh
-g.mesh.set_size_global(min_size=50, max_size=150)
-g.mesh.generate(dim=3)
+g.mesh.sizing.set_size_global(min_size=50, max_size=150)
+g.mesh.generation.generate(dim=3)
 
 # Constraints
 g.constraints.equal_dof("beam_top", "col_left",  tolerance=1e-3)
 g.constraints.equal_dof("beam_top", "col_right", tolerance=1e-3)
 
 # Resolve and export
-fem = g.mesh.get_fem_data(dim=3)
+fem = g.mesh.queries.get_fem_data(dim=3)
 node_map = g.parts.build_node_map(fem.node_ids, fem.node_coords)
 face_map = g.parts.build_face_map(node_map)
 g.constraints.resolve(fem.node_ids, fem.node_coords,

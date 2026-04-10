@@ -39,7 +39,7 @@ with apeGmsh(verbose=True) as g:
         print(f"  dim={dim}  tag={pg_tag}  name='{name}'  entities={list(ents)}")
 
     # Generate mesh to make sure geometry is valid
-    g.mesh.generate(1)
+    g.mesh.generation.generate(1)
     print("\n1D mesh generated successfully.")
 
     # Optional: open GUI to visually inspect

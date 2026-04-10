@@ -97,8 +97,8 @@ pg_plat = g.physical.add(2, [surf], name="Plate")     # domain
 ### 2.4 Mesh Generation
 
 ```python
-g.mesh.set_order(1)    # linear elements (3-node triangles)
-g.mesh.generate(2)     # mesh the 2D surfaces
+g.mesh.generation.set_order(1)    # linear elements (3-node triangles)
+g.mesh.generation.generate(2)     # mesh the 2D surfaces
 ```
 
 The mesh is stored inside Gmsh's internal state. We extract it in the next step.
@@ -112,7 +112,7 @@ pyGmsh offers two complementary ways to extract mesh data:
 ### 3.1 Raw FEM Data -- `get_fem_data()`
 
 ```python
-fem = g.mesh.get_fem_data(dim=2)
+fem = g.mesh.queries.get_fem_data(dim=2)
 ```
 
 Returns a dictionary with Gmsh's native (non-contiguous) tags:
@@ -165,10 +165,10 @@ These return **Gmsh tags**. To use them in the solver, translate via `mesh.gmsh_
 ### 3.4 Edge Elements for Pressure Loading
 
 ```python
-inner_elems = g.mesh.get_elements(dim=1, tag=l4)
+inner_elems = g.mesh.queries.get_elements(dim=1, tag=l4)
 inner_edges = []
 for etype, enodes in zip(inner_elems['types'], inner_elems['node_tags']):
-    props = g.mesh.get_element_properties(etype)
+    props = g.mesh.queries.get_element_properties(etype)
     inner_edges = enodes.reshape(-1, props['n_nodes']).astype(int)
 ```
 
@@ -425,7 +425,7 @@ Best for: understanding the flow, teaching.
 | Synchronize           | `gmsh.model.geo.synchronize()` (manual, easy to forget) | Handled internally                       |
 | Physical group        | `gmsh.model.addPhysicalGroup(dim, [tags])`        | `g.physical.add(dim, [tags], name=...)`        |
 | Get boundary nodes    | `gmsh.model.mesh.getNodesForPhysicalGroup(...)`   | `g.physical.get_nodes(dim, tag)`               |
-| Extract mesh          | Manual: `getNodes()` + `getElements()` + filter   | `g.mesh.get_fem_data()` (all-in-one dict)      |
+| Extract mesh          | Manual: `getNodes()` + `getElements()` + filter   | `g.mesh.queries.get_fem_data()` (all-in-one dict)      |
 | Renumber for solver   | Manual loop with `used_tags` check                | `g.mesh.get_numbered_mesh()` (automatic)       |
 | Orphan filtering      | Manual `set(connectivity.flatten())`              | Built into Numberer (`used_only=True`)         |
 | Post-processing views | `gmsh.view.add()` + `addModelData()` (verbose)   | `g.view.add_element_scalar(name, tags, data)`  |

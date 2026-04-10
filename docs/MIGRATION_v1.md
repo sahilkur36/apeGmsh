@@ -216,7 +216,7 @@ Every other composite is plural. The last outlier is fixed.
 The FEMData field is also renamed:
 
 ```diff
- fem = g.mesh.get_fem_data(dim=3)
+ fem = g.mesh.queries.get_fem_data(dim=3)
 -print(fem.mass.total_mass())
 +print(fem.masses.total_mass())
 ```
@@ -415,7 +415,7 @@ Save as `migrate_v1.py` and run: `python migrate_v1.py /path/to/your/project`
 - The OpenSees bridge's `consume_*_from_fem` / `build` / `export_tcl` /
   `export_py` pipeline
 - `Part` and `PartsRegistry` APIs (only docstring examples were swept)
-- `g.mesh.generate()`, `g.mesh.set_global_size()`, `g.mesh.field.*`, etc.
+- `g.mesh.generation.generate()`, `g.mesh.sizing.set_global_size()`, `g.mesh.field.*`, etc.
 
 ---
 
@@ -439,9 +439,9 @@ with g.loads.pattern("dead"):
     g.loads.gravity("concrete", g=(0, 0, -9.81), density=2400)
 g.mass.volume("concrete", density=2400)
 
-g.mesh.set_global_size(0.5)
-g.mesh.generate(3)
-fem = g.mesh.get_fem_data(3)
+g.mesh.sizing.set_global_size(0.5)
+g.mesh.generation.generate(3)
+fem = g.mesh.queries.get_fem_data(3)
 
 print(f"total mass: {fem.mass.total_mass():.0f} kg")
 g.finalize()
@@ -463,9 +463,9 @@ with apeGmsh(model_name="cantilever") as g:
         g.loads.gravity("concrete", g=(0, 0, -9.81), density=2400)
     g.masses.volume("concrete", density=2400)
 
-    g.mesh.set_global_size(0.5)
-    g.mesh.generate(3)
-    fem = g.mesh.get_fem_data(3)
+    g.mesh.sizing.set_global_size(0.5)
+    g.mesh.generation.generate(3)
+    fem = g.mesh.queries.get_fem_data(3)
 
     print(f"total mass: {fem.masses.total_mass():.0f} kg")
 ```

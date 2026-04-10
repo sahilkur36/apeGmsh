@@ -2,7 +2,7 @@
 
 ## Why the broker exists
 
-Gmsh is a wonderful mesher, but a live Gmsh session is a *stateful* thing: tags shift as you regenerate, physical groups live behind API calls, and every solver that wants to consume the mesh has to re-learn the same query dance. pyGmsh's FEM broker — the `FEMData` container returned by `g.mesh.get_fem_data(dim=...)` — breaks that coupling.
+Gmsh is a wonderful mesher, but a live Gmsh session is a *stateful* thing: tags shift as you regenerate, physical groups live behind API calls, and every solver that wants to consume the mesh has to re-learn the same query dance. pyGmsh's FEM broker — the `FEMData` container returned by `g.mesh.queries.get_fem_data(dim=...)` — breaks that coupling.
 
 The broker is a **frozen snapshot** of everything a solver needs to build a model:
 
@@ -20,7 +20,7 @@ Once you hold a `FEMData` object you can close Gmsh, pickle it, ship it to anoth
 The broker exposes nodes as two parallel arrays:
 
 ```python
-fem = g.mesh.get_fem_data(dim=3)
+fem = g.mesh.queries.get_fem_data(dim=3)
 
 fem.node_ids      # ndarray(N,)    dtype=object, Python ints
 fem.node_coords   # ndarray(N, 3)  dtype=float64, [x, y, z]

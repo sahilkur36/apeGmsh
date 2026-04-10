@@ -45,7 +45,7 @@ g.plot           # Matplotlib visualization (unchanged)
 g.loader         # .msh file loading (unchanged)
 
 # FEM Data Broker
-fem = g.mesh.get_fem_data(dim=2)
+fem = g.mesh.queries.get_fem_data(dim=2)
 fem.physical         # PhysicalGroupSet snapshot (unchanged)
 fem.mesh_selection   # MeshSelectionStore snapshot (NEW)
 fem.constraints      # ConstraintStore snapshot (NEW, Phase 4)
@@ -424,7 +424,7 @@ from .MeshSelectionSet import MeshSelectionSet, MeshSelectionStore
 - [ ] All existing tests pass (zero changes to existing code paths)
 - [ ] `g.mesh_selection.add_nodes()` returns same shape as `g.physical.get_nodes()`
 - [ ] `g.mesh_selection.add_elements()` returns same shape as `g.physical.get_elements()`
-- [ ] `fem.mesh_selection` populated after `g.mesh.get_fem_data()`
+- [ ] `fem.mesh_selection` populated after `g.mesh.queries.get_fem_data()`
 - [ ] Set algebra produces correct results
 - [ ] `from_physical()` bridge works
 

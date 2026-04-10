@@ -36,7 +36,7 @@ class OpenSees:
     to physical groups, declare boundary conditions.  Loads and mass are
     defined on the session via ``g.loads`` / ``g.masses`` and
     auto-resolved into ``fem.loads`` / ``fem.masses`` by
-    ``g.mesh.get_fem_data()``::
+    ``g.mesh.queries.get_fem_data()``::
 
         (g.opensees
            .set_model(ndm=3, ndf=3)
@@ -68,7 +68,7 @@ class OpenSees:
            .assign_element("Diagonals", "truss",
                            material="Steel", A=0.002))
 
-    **2 — Build**  (after ``g.mesh.generate()`` and all declarations)::
+    **2 — Build**  (after ``g.mesh.generation.generate()`` and all declarations)::
 
         g.opensees.build()
 
@@ -454,7 +454,7 @@ class OpenSees:
         Parameters
         ----------
         fem : FEMData
-            Snapshot from ``g.mesh.get_fem_data()``.
+            Snapshot from ``g.mesh.queries.get_fem_data()``.
 
         Returns
         -------
@@ -487,7 +487,7 @@ class OpenSees:
         Parameters
         ----------
         fem : FEMData
-            Snapshot from ``g.mesh.get_fem_data()``.
+            Snapshot from ``g.mesh.queries.get_fem_data()``.
 
         Returns
         -------
@@ -537,7 +537,7 @@ class OpenSees:
         * ``ndf``/``ndm`` are compatible with each element spec
         * warns when higher-order gmsh nodes are downgraded to first-order
 
-        Must be called after ``g.mesh.generate()`` and all declarations.
+        Must be called after ``g.mesh.generation.generate()`` and all declarations.
         """
         # ── 1. Global node numbering ─────────────────────────────────────
         # Use getNodes() with no args → returns the unique node cache.
@@ -548,7 +548,7 @@ class OpenSees:
         if len(raw_tags) == 0:
             raise RuntimeError(
                 "OpenSees.build(): no mesh nodes found — "
-                "call g.mesh.generate() first."
+                "call g.mesh.generation.generate() first."
             )
         coords_arr = np.array(coords_flat).reshape(-1, 3)
         self._node_map = {

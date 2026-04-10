@@ -161,11 +161,11 @@ g.physical.add(2, base_faces, name="Fixed_Support")
 g.physical.add(2, top_faces,  name="Top_Load")
 
 # 3. Size and mesh
-g.mesh.set_size_global(5.0)
-g.mesh.generate(dim=3)
+g.mesh.sizing.set_size_global(5.0)
+g.mesh.generation.generate(dim=3)
 
 # 4. Hand the snapshot to the solver
-fem = g.mesh.get_fem_data(dim=3)
+fem = g.mesh.queries.get_fem_data(dim=3)
 
 g.end()
 ```
@@ -239,7 +239,7 @@ g.model.io.load_msh("previous_run.msh")
 # Geometry + mesh + physical groups are now live in the session.
 # Everything the composites (g.physical, g.inspect, g.mesh) offer works.
 
-fem = g.mesh.get_fem_data(dim=3)
+fem = g.mesh.queries.get_fem_data(dim=3)
 g.end()
 ```
 
@@ -335,7 +335,7 @@ g.end()
 The difference from `Model.load_msh` is that `g.loader.from_msh` calls
 `build_fem_data` eagerly and returns the broker in the same call,
 whereas `Model.load_msh` just merges and leaves the broker extraction
-to a later `g.mesh.get_fem_data(dim=...)`. Functionally they are
+to a later `g.mesh.queries.get_fem_data(dim=...)`. Functionally they are
 equivalent; pick whichever reads better at the call site.
 
 ### 3.5 Verbose output — what the loader tells you

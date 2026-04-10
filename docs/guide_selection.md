@@ -4,8 +4,8 @@ pyGmsh has two complementary selection systems that sit on opposite sides of the
 
 | System | Lives on | Operates on | Created | Exposed on the broker |
 |---|---|---|---|---|
-| Geometric selection | `g.model.selection` | BRep / OCC entities — points, curves, surfaces, volumes | **Before** `g.mesh.generate()` | *indirectly*, via `fem.physical` or `fem.mesh_selection` |
-| Mesh selection | `g.mesh_selection` | Mesh nodes and elements | **After** `g.mesh.generate()` | *directly*, via `fem.mesh_selection` |
+| Geometric selection | `g.model.selection` | BRep / OCC entities — points, curves, surfaces, volumes | **Before** `g.mesh.generation.generate()` | *indirectly*, via `fem.physical` or `fem.mesh_selection` |
+| Mesh selection | `g.mesh_selection` | Mesh nodes and elements | **After** `g.mesh.generation.generate()` | *directly*, via `fem.mesh_selection` |
 
 The guiding idea: **OCC selection is geometry, mesh selection is topology**. One talks in terms of `(dim, tag)` BRep entries and is invariant to how you mesh. The other talks in terms of node IDs and element IDs and only becomes meaningful once a mesh exists.
 
@@ -132,12 +132,12 @@ beams.to_physical("beams", tag=101)
 base.to_physical("fixed_support")
 ```
 
-This calls `g.physical.add(dim, tags, name=...)` for you and returns the physical-group tag. Physical groups are the *only* mechanism that carries named entity groupings through the mesher and into the msh/vtu outputs, so any selection you want the solver to see should be promoted before `g.mesh.generate()`.
+This calls `g.physical.add(dim, tags, name=...)` for you and returns the physical-group tag. Physical groups are the *only* mechanism that carries named entity groupings through the mesher and into the msh/vtu outputs, so any selection you want the solver to see should be promoted before `g.mesh.generation.generate()`.
 
 
 ## 2. Mesh selection — the post-mesh side
 
-Once `g.mesh.generate(dim)` has run, the picture changes. The BRep entities are still there, but solvers need to talk about **node IDs and element IDs**. That is what `g.mesh_selection` is for.
+Once `g.mesh.generation.generate(dim)` has run, the picture changes. The BRep entities are still there, but solvers need to talk about **node IDs and element IDs**. That is what `g.mesh_selection` is for.
 
 `MeshSelectionSet` has the same identity contract as physical groups — a `(dim, tag)` key plus an optional `name` — but `dim` now means "dimensionality of the selected mesh entities":
 
@@ -151,7 +151,7 @@ Once `g.mesh.generate(dim)` has run, the picture changes. The BRep entities are 
 The two creation methods mirror the OCC side but work on mesh data:
 
 ```python
-g.mesh.generate(3)
+g.mesh.generation.generate(3)
 
 # Node sets — filters work on node coordinates
 base = g.mesh_selection.add_nodes(
@@ -248,7 +248,7 @@ The simplest bridge. It writes an OCC selection into Gmsh's physical-group table
 
 ```python
 g.model.selection.select_points(on_plane=("z", 0, 1e-3)).to_physical("base")
-g.mesh.generate(3)
+g.mesh.generation.generate(3)
 # Now fem.physical will contain 'base'
 ```
 
@@ -257,7 +257,7 @@ g.mesh.generate(3)
 The reverse direction — take an existing physical group and materialise it as a mesh selection of node IDs:
 
 ```python
-g.mesh.generate(3)
+g.mesh.generation.generate(3)
 g.mesh_selection.from_physical(dim=0, name_or_tag="base", ms_name="base_nodes")
 ```
 
@@ -272,7 +272,7 @@ This is the workhorse bridge. It takes a geometric `Selection` (pre-mesh) and bu
 top_faces = g.model.selection.select_surfaces(on_plane=("z", 10.0, 1e-3))
 
 # Mesh
-g.mesh.generate(3)
+g.mesh.generation.generate(3)
 
 # Post-mesh: extract the corresponding node set
 g.mesh_selection.from_geometric(
@@ -292,12 +292,12 @@ Two rules of thumb:
 
 ## 4. Selection on the FEM broker
 
-When you call `g.mesh.get_fem_data(dim=...)`, pyGmsh captures a frozen snapshot of the current state: nodes, elements, physical groups, mesh selections, constraints, loads, and masses. The broker then becomes the single object you hand to a solver adapter.
+When you call `g.mesh.queries.get_fem_data(dim=...)`, pyGmsh captures a frozen snapshot of the current state: nodes, elements, physical groups, mesh selections, constraints, loads, and masses. The broker then becomes the single object you hand to a solver adapter.
 
 Selections show up on the broker under two mirror accessors with the same API:
 
 ```python
-fem = g.mesh.get_fem_data(dim=3)
+fem = g.mesh.queries.get_fem_data(dim=3)
 
 fem.physical         # PhysicalGroupSet  — snapshot of Gmsh physical groups
 fem.mesh_selection   # MeshSelectionStore — snapshot of g.mesh_selection
@@ -340,7 +340,7 @@ monitor_curves = g.model.selection.select_curves(
 )
 
 # --- Meshing -------------------------------------------------------
-g.mesh.generate(3)
+g.mesh.generation.generate(3)
 
 # --- Mesh selection (post-mesh) ------------------------------------
 # Spatial query directly on mesh nodes
@@ -357,7 +357,7 @@ g.mesh_selection.from_geometric(monitor_curves, kind="nodes", name="monitor")
 g.mesh_selection.from_physical(dim=2, name_or_tag="top", ms_name="top_nodes")
 
 # --- FEM broker ----------------------------------------------------
-fem = g.mesh.get_fem_data(dim=3)
+fem = g.mesh.queries.get_fem_data(dim=3)
 
 # Physical groups from Gmsh
 fem.physical.summary()

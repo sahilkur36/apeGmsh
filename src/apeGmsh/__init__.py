@@ -32,8 +32,8 @@ Composition-based API with sub-composites for focused surfaces:
        with g.loads.pattern("dead"):
            g.loads.gravity("web", g=(0, 0, -9.81), density=7850)
        g.masses.volume("web", density=7850)
-       g.mesh.generate(dim=3)
-       fem = g.mesh.get_fem_data(dim=3)
+       g.mesh.generation.generate(dim=3)
+       fem = g.mesh.queries.get_fem_data(dim=3)
        g.end()
 """
 

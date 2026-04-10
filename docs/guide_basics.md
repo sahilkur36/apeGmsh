@@ -41,7 +41,7 @@ g = apeGmsh(model_name="cantilever", verbose=True)
 g.begin()   # gmsh.initialize() + gmsh.model.add("cantilever") + composite wiring
 
 g.model.geometry.add_box(0, 0, 0, 1, 1, 10, label="beam")
-g.mesh.generate(dim=3)
+g.mesh.generation.generate(dim=3)
 # ... you can keep using g across many cells / function calls ...
 
 g.end()     # gmsh.finalize()
@@ -59,7 +59,7 @@ g = apeGmsh(model_name="cantilever")
 g.begin()
 try:
     g.model.geometry.add_box(0, 0, 0, 1, 1, 10, label="beam")
-    g.mesh.generate(dim=3)
+    g.mesh.generation.generate(dim=3)
 finally:
     g.end()
 ```
@@ -74,7 +74,7 @@ from apeGmsh import apeGmsh
 
 with apeGmsh(model_name="cantilever", verbose=True) as g:
     g.model.geometry.add_box(0, 0, 0, 1, 1, 10, label="beam")
-    g.mesh.generate(dim=3)
+    g.mesh.generation.generate(dim=3)
 # gmsh.finalize() runs here, even if the block raised
 ```
 
@@ -336,8 +336,8 @@ with apeGmsh(model_name="ssi_demo", verbose=True) as g:
     g.physical.add_from_label("column",  name="Column",  dim=3)
 
     # --- Mesh ----------------------------------------------------------
-    g.mesh.set_size_global(0.5)
-    g.mesh.generate(dim=3)
+    g.mesh.sizing.set_size_global(0.5)
+    g.mesh.generation.generate(dim=3)
 
     # At this point the three volumes share nodes across their
     # fragment-generated interfaces; OpenSees will see a single
@@ -377,8 +377,8 @@ try:
     g.physical.add_from_label("footing", name="Footing", dim=3)
     g.physical.add_from_label("column",  name="Column",  dim=3)
 
-    g.mesh.set_size_global(0.5)
-    g.mesh.generate(dim=3)
+    g.mesh.sizing.set_size_global(0.5)
+    g.mesh.generation.generate(dim=3)
 
 finally:
     # --- Final cell: release the Gmsh state ------------------------------

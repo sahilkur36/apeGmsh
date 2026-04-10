@@ -299,7 +299,7 @@ class VTKExport:
     """
 
     def __init__(self, ctx: apeGmsh, dim: int = 2) -> None:
-        fem = ctx.mesh.get_fem_data(dim=dim)
+        fem = ctx.mesh.queries.get_fem_data(dim=dim)
         self._node_coords  = fem.node_coords
         self._connectivity = fem.connectivity
         self._elem_tags    = fem.element_ids

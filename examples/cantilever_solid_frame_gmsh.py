@@ -90,8 +90,8 @@ gmsh.model.mesh.setTransfiniteSurface(surf)
 gmsh.model.mesh.setRecombine(2, surf)  # quad mesh
 gmsh.model.mesh.setTransfiniteCurve(l_frame, 2)  # 2 nodes → 1 line element
 
-g.mesh.set_order(1)
-g.mesh.generate(2)
+g.mesh.generation.set_order(1)
+g.mesh.generation.generate(2)
 
 print(f"\nMesh generated: structured {nx_s}x{ny_s} quads + 1 frame line element")
 

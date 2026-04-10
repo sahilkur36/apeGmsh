@@ -15,7 +15,7 @@ Usage::
     g.constraints.equal_dof("beam", "slab", tolerance=1e-3)
     g.constraints.tie("beam", "slab", master_entities=[(2, 5)])
 
-    fem = g.mesh.get_fem_data(dim=2)
+    fem = g.mesh.queries.get_fem_data(dim=2)
     nm  = g.parts.build_node_map(fem.node_ids, fem.node_coords)
     fm  = g.parts.build_face_map(nm)
     recs = g.constraints.resolve(

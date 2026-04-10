@@ -21,7 +21,7 @@ Usage
 -----
 ::
 
-    fem  = g.mesh.get_fem_data(dim=2)
+    fem  = g.mesh.queries.get_fem_data(dim=2)
     numb = Numberer(fem)
 
     # Contiguous (default)

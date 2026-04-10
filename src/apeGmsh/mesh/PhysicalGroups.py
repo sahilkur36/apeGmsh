@@ -239,8 +239,8 @@ class PhysicalGroups:
 
             # Fan a per-surface algorithm out over every surface in a PG
             for s in g.physical.entities("Concrete", dim=2):
-                g.mesh.set_algorithm(s, "frontal_delaunay_quads")
-                g.mesh.set_recombine(s)
+                g.mesh.generation.set_algorithm(s, "frontal_delaunay_quads")
+                g.mesh.structured.set_recombine(s)
 
             # Feed a distance field directly from a PG
             joint = g.physical.entities("BeamColumnJoint", dim=2)
