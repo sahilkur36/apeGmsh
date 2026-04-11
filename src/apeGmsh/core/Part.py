@@ -90,6 +90,7 @@ from typing import Any, TYPE_CHECKING
 import gmsh
 
 from .._session import _SessionBase
+from ._part_anchors import collect_anchors, write_sidecar
 
 if TYPE_CHECKING:
     from .Model import Model
@@ -200,14 +201,44 @@ class Part(_SessionBase):
     def _auto_persist_to_temp(self) -> None:
         """Write the current geometry to an OS tempfile and record
         ownership so ``cleanup()`` can reclaim it later.
+
+        The sidecar (``{name}.step.apegmsh.json``) carrying the
+        label→COM anchor map is written as a follow-up step,
+        unconditionally — auto-persist always writes anchors when
+        available because the user has no other opportunity to do
+        so.
         """
         self._temp_dir = Path(
             tempfile.mkdtemp(prefix=f"apeGmsh_part_{self.name}_")
         )
         target = self._temp_dir / f"{self.name}.step"
-        self.save(target, _internal_autopersist=True)
+        self.save(target, _internal_autopersist=True, write_anchors=True)
         self._owns_file = True
         self._register_finalizer()
+
+    def _write_anchors(self, target: Path) -> None:
+        """Write the sidecar file for a CAD target if the Part has
+        any user-named entities.
+
+        Idempotent and crash-safe: failure to write the sidecar is
+        warned, not raised, because a broken sidecar must never
+        break the CAD export itself.
+        """
+        try:
+            registry = getattr(self.model, "_registry", None)
+            if not registry:
+                return
+            anchors = collect_anchors(registry, gmsh)
+            if not anchors:
+                return
+            write_sidecar(target, anchors, part_name=self.name)
+        except Exception as exc:
+            warnings.warn(
+                f"Part {self.name!r}: could not write anchor sidecar "
+                f"for {target} ({exc!r}). Label rebinding via "
+                f"inst.by_label() will not be available for this Part.",
+                stacklevel=2,
+            )
 
     def _register_finalizer(self) -> None:
         """Install a ``weakref.finalize`` that removes the temp dir
@@ -258,6 +289,7 @@ class Part(_SessionBase):
         file_path: str | Path | None = None,
         *,
         fmt: str | None = None,
+        write_anchors: bool = True,
         _internal_autopersist: bool = False,
     ) -> Path:
         """
@@ -277,6 +309,18 @@ class Part(_SessionBase):
             unless *fmt* overrides it.
         fmt : str, optional
             Force format: ``"step"`` or ``"iges"``.
+        write_anchors : bool, default True
+            Write a JSON sidecar (``{file_path}.apegmsh.json``)
+            carrying the label → center-of-mass map for every
+            user-named entity in the Part.  This is what lets
+            ``assembly.parts.add(part)`` expose the instance's
+            labels via ``inst.by_label('name')``.  The sidecar is
+            silently omitted when the Part has no user-named
+            entities, so there is no cost for small throwaway
+            Parts.  Pass ``write_anchors=False`` to suppress
+            unconditionally — useful when publishing a CAD file
+            to third-party tools that shouldn't see apeGmsh
+            metadata.
 
         Returns
         -------
@@ -320,6 +364,14 @@ class Part(_SessionBase):
         gmsh.model.occ.synchronize()
         gmsh.write(str(file_path))
         self.file_path = file_path.resolve()
+
+        # Write the label→COM sidecar so Assembly.parts.add(part)
+        # can expose this Part's user-named entities via
+        # ``inst.by_label(...)``.  Failures here are warned, not
+        # raised — the CAD write itself already succeeded.
+        if write_anchors:
+            self._write_anchors(self.file_path)
+
         return self.file_path
 
     # ------------------------------------------------------------------
