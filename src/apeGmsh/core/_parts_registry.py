@@ -283,9 +283,17 @@ class PartsRegistry:
         highest_dim_only : keep only highest-dim entities from the CAD.
         """
         if not part.has_file:
+            hint = (
+                "Call part.save('file.step') explicitly"
+                if not getattr(part, "_auto_persist", True)
+                else
+                "Exit the Part's `with` block (or call part.end()) "
+                "before calling parts.add(part) so auto-persist can "
+                "write the tempfile, OR call part.save('file.step') "
+                "explicitly"
+            )
             raise FileNotFoundError(
-                f"Part '{part.name}' has not been saved.  "
-                f"Call part.save('file.step') first."
+                f"Part '{part.name}' has no file to import.  {hint}."
             )
         if label is None:
             self._counter += 1
