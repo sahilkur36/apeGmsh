@@ -387,19 +387,20 @@ class _IO:
             elif etype in ('LWPOLYLINE', 'POLYLINE'):
                 pts: list[Tag] = []
                 if etype == 'LWPOLYLINE':
-                    vertices = list(entity.get_points(format='xyz'))
+                    # ezdxf stubs don't expose shape-specific methods on DXFGraphic
+                    vertices = list(entity.get_points(format='xyz'))  # type: ignore[attr-defined]
                 else:
                     vertices = [
                         (v.dxf.location.x, v.dxf.location.y,
                          v.dxf.location.z)
-                        for v in entity.vertices
+                        for v in entity.vertices  # type: ignore[attr-defined]
                     ]
                 for vx, vy, vz in vertices:
                     pts.append(_get_or_add_point(vx, vy, vz))
 
                 is_closed = (
                     getattr(entity.dxf, 'flags', 0) & 1
-                    if etype == 'POLYLINE' else entity.closed
+                    if etype == 'POLYLINE' else entity.closed  # type: ignore[attr-defined]
                 )
                 vert_pairs = list(zip(vertices, vertices[1:]))
                 if is_closed and len(vertices) > 2:
@@ -418,7 +419,7 @@ class _IO:
 
             elif etype == 'SPLINE':
                 ctrl_pts: list[Tag] = []
-                for cp in entity.control_points:
+                for cp in entity.control_points:  # type: ignore[attr-defined]
                     ctrl_pts.append(
                         _get_or_add_point(
                             cp[0], cp[1],
@@ -427,7 +428,7 @@ class _IO:
                     )
                 if len(ctrl_pts) >= 2:
                     gmsh.model.occ.addBSpline(ctrl_pts)
-                    cps = entity.control_points
+                    cps = entity.control_points  # type: ignore[attr-defined]
                     xs = [c[0] for c in cps]
                     ys = [c[1] for c in cps]
                     zs = [c[2] if len(c) > 2 else 0.0 for c in cps]
@@ -449,8 +450,8 @@ class _IO:
 
         for dim, tag in gmsh.model.getEntities(1):
             bb = gmsh.model.getBoundingBox(dim, tag)
-            key = _bbox_key(*bb)
-            layer_name = _geom_to_layer.get(key)
+            bbox_key = _bbox_key(*bb)
+            layer_name = _geom_to_layer.get(bbox_key)
             if layer_name:
                 self._model._register(dim, tag, None, 'dxf')
                 layers.setdefault(layer_name, {}).setdefault(1, []).append(tag)

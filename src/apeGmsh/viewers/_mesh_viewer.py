@@ -20,8 +20,10 @@ import numpy as np
 from .core.entity_registry import DimTag
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._core import apeGmsh as _SessionBase
     from apeGmsh.mesh.Mesh import Mesh
+    from .core.selection import SelectionState
+    from .scene.mesh_scene import MeshSceneData
 
 
 class MeshViewer:
@@ -64,8 +66,8 @@ class MeshViewer:
         self._show_surface_edges = show_surface_edges
 
         # Populated during show()
-        self._selection_state = None
-        self._scene_data = None
+        self._selection_state: "SelectionState | None" = None
+        self._scene_data: "MeshSceneData | None" = None
 
     def show(self, *, title: str | None = None, maximized: bool = True):
         """Open the viewer window, block until closed."""

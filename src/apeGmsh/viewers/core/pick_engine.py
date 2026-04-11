@@ -16,7 +16,7 @@ Usage::
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 import numpy as np
 
@@ -27,6 +27,30 @@ if TYPE_CHECKING:
 
 class PickEngine:
     """Pixel-precise picking via VTK cell pickers."""
+
+    # Type declarations for __slots__ (consumed by mypy / pyright).
+    # VTK pickers and the rubber-band actor/pts are lazy-created by
+    # :meth:`install` — they stay None until then.  Typed as ``Any``
+    # here so handlers (which only run after install) can call
+    # ``.Pick(...)``, ``.SetTolerance(...)`` etc. without assertions.
+    _plotter: Any
+    _registry: EntityRegistry
+    _pickable_dims: set[int]
+    _hidden_check: Callable[["DimTag"], bool]
+    _drag_threshold: int
+    on_pick: Callable[["DimTag", bool], None] | None
+    on_hover: Callable[["DimTag | None"], None] | None
+    on_box_select: Callable[[list["DimTag"], bool], None] | None
+    _click_picker: Any
+    _hover_picker: Any
+    _hover_id: "DimTag | None"
+    _hover_throttle: int
+    _press_pos: tuple[int, int] | None
+    _dragging: bool
+    _ctrl_held: bool
+    _rubberband_actor: Any
+    _rubberband_pts: Any
+    _tags: dict[str, int]
 
     __slots__ = (
         "_plotter",

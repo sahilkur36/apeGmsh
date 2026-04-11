@@ -20,8 +20,11 @@ import numpy as np
 from .core.entity_registry import DimTag
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._core import apeGmsh as _SessionBase
     from apeGmsh.core.Model import Model
+    from apeGmsh.mesh.FEMData import FEMData
+    from .core.entity_registry import EntityRegistry
+    from .core.selection import SelectionState
 
 
 class ModelViewer:
@@ -67,7 +70,7 @@ class ModelViewer:
         surface_opacity: float = 0.35,
         show_surface_edges: bool = False,
         fast: bool = True,
-        fem: object = None,
+        fem: "FEMData | None" = None,
         **kwargs: Any,
     ) -> None:
         self._parent = parent
@@ -82,11 +85,11 @@ class ModelViewer:
         self._show_surface_edges = show_surface_edges
 
         # Optional resolved FEM data for loads/mass overlays
-        self._fem = fem
+        self._fem: "FEMData | None" = fem
 
         # Populated during show()
-        self._selection_state = None
-        self._registry = None
+        self._selection_state: "SelectionState | None" = None
+        self._registry: "EntityRegistry | None" = None
 
     # ------------------------------------------------------------------
     # Show

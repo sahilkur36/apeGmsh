@@ -37,7 +37,7 @@ import numpy as np
 import pandas as pd
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._core import apeGmsh as _SessionBase
     from apeGmsh.core.Model import Model
 
 
@@ -769,8 +769,8 @@ def _apply_filters(
     # ---- physical-group membership -----------------------------------
     if physical is not None:
         pg_dimtags = _entities_of_physical(physical, dim)
-        keep = set(pg_dimtags)
-        out = [dt for dt in out if dt in keep]
+        keep_dt = set(pg_dimtags)
+        out = [dt for dt in out if dt in keep_dt]
 
     # ---- spatial: in_box ---------------------------------------------
     if in_box is not None:
