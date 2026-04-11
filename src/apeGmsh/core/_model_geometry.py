@@ -1,12 +1,26 @@
 from __future__ import annotations
 import math
+from typing import TYPE_CHECKING, Literal
+
 import gmsh
-from typing import TYPE_CHECKING
+import numpy as np
+from numpy import ndarray
 
 from ._helpers import Tag
 
 if TYPE_CHECKING:
     from .Model import Model
+
+
+# Unit vectors for the three coordinate axes — used by
+# :meth:`_Geometry.add_axis_cutting_plane`.  Module-level constants so
+# they are not rebuilt on every call.  Callers that rotate the
+# returned vector MUST ``.copy()`` first.
+_AXIS_UNIT_VEC: dict[str, ndarray] = {
+    'x': np.array([1.0, 0.0, 0.0]),
+    'y': np.array([0.0, 1.0, 0.0]),
+    'z': np.array([0.0, 0.0, 1.0]),
+}
 
 
 class _Geometry:
@@ -463,6 +477,563 @@ class _Geometry:
             f"{f', r={rounded_radius}' if rounded_radius else ''}) → tag {tag}"
         )
         return self._model._register(2, tag, label, 'rectangle')
+
+    def add_cutting_plane(
+        self,
+        point          : list[float] | ndarray,
+        normal_vector  : list[float] | ndarray,
+        *,
+        size           : float | None = None,
+        label          : str | None   = None,
+        sync           : bool         = True,
+    ) -> Tag:
+        """
+        Create a square planar surface through ``point`` with the given
+        normal, suitable for clipping / section / visualisation views.
+
+        The surface is a plain BRep face built from 4 points + 4 lines
+        + a curve loop + a plane surface, so it behaves exactly like
+        any other registered surface (it can be selected, meshed as a
+        discrete 2-D grid, exported to STEP, etc.).  It is *not* a
+        Gmsh clipping plane in the rendering sense — it is real
+        geometry.
+
+        Parameters
+        ----------
+        point : array-like of 3 floats
+            A point on the plane.  The square is centred here.
+        normal_vector : array-like of 3 floats
+            Plane normal.  Need not be unit-length — it is normalised
+            internally.
+        size : float, optional
+            Edge length of the square.  When ``None`` (default), size
+            is picked as ``2 × max(model_bbox_diagonal, 1.0)`` so the
+            square comfortably overhangs the current model.
+        label : str, optional
+            Human-readable label stored in the internal registry.
+        sync : bool, optional
+            Synchronise the OCC kernel after creation (default True).
+
+        Returns
+        -------
+        Tag
+            Surface tag of the new cutting plane.
+
+        Example
+        -------
+        ::
+
+            # A vertical plane through (0, 0, 0) with normal (1, 0, 0)
+            g.model.geometry.add_cutting_plane(
+                point=(0, 0, 0), normal_vector=(1, 0, 0),
+            )
+        """
+        p = np.asarray(point, dtype=float)
+        n = np.asarray(normal_vector, dtype=float)
+        n_norm = float(np.linalg.norm(n))
+        if n_norm == 0.0:
+            raise ValueError("normal_vector must be non-zero")
+        n = n / n_norm
+
+        # Pick size from the current model bounding box when not given.
+        # ``getBoundingBox`` requires a synchronised OCC state, so this
+        # is the only hard reason for a pre-sync.  When the caller
+        # supplies an explicit ``size``, we do not sync until the end.
+        if size is None:
+            gmsh.model.occ.synchronize()
+            xmin, ymin, zmin, xmax, ymax, zmax = gmsh.model.getBoundingBox(-1, -1)
+            diag = float(np.linalg.norm([xmax - xmin, ymax - ymin, zmax - zmin]))
+            size = 2.0 * max(diag, 1.0)
+
+        # Orthonormal basis (u, v) spanning the plane.  v does not need
+        # explicit normalisation: if ``n`` and ``u`` are unit and
+        # orthogonal, then ``cross(n, u)`` is also unit.
+        ref = (
+            np.array([1.0, 0.0, 0.0]) if abs(n[0]) < 0.9
+            else np.array([0.0, 1.0, 0.0])
+        )
+        u = np.cross(n, ref)
+        u /= np.linalg.norm(u)
+        v = np.cross(n, u)
+
+        half = size / 2.0
+        corner_coeffs = [(-half, -half), (half, -half), (half, half), (-half, half)]
+        corners = [p + a * u + b * v for a, b in corner_coeffs]
+
+        # Delegate to the existing BRep primitives so the new points,
+        # lines, loop, and surface all flow through ``_register`` /
+        # ``_log`` with the correct kinds.  Defer every sub-sync so we
+        # sync exactly once at the end (or zero times if sync=False).
+        pt_tags  = [
+            self.add_point(float(c[0]), float(c[1]), float(c[2]), sync=False)
+            for c in corners
+        ]
+        ln_tags  = [
+            self.add_line(pt_tags[i], pt_tags[(i + 1) % 4], sync=False)
+            for i in range(4)
+        ]
+        loop_tag = self.add_curve_loop(ln_tags, sync=False)
+        tag      = self.add_plane_surface(loop_tag, sync=False, label=label)
+
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        self._model._log(
+            f"add_cutting_plane(point={tuple(p)}, normal={tuple(n)}, "
+            f"size={size}) → tag {tag}"
+        )
+        # ``add_plane_surface`` already registered the tag as
+        # ``plane_surface``.  Re-label it as a cutting plane and stash
+        # the defining point + unit normal so downstream operations
+        # (``cut_by_plane``) can recover the orientation without
+        # re-querying Gmsh or re-parsing the geometry.
+        entry = self._model._registry.get((2, tag))
+        if entry is not None:
+            entry['kind']   = 'cutting_plane'
+            entry['point']  = tuple(float(x) for x in p)
+            entry['normal'] = tuple(float(x) for x in n)
+        return tag
+
+    def add_axis_cutting_plane(
+        self,
+        axis          : Literal['x', 'y', 'z'],
+        offset        : float = 0.0,
+        *,
+        origin        : list[float] | ndarray | None = None,
+        rotation      : float                        = 0.0,
+        rotation_about: Literal['x', 'y', 'z'] | None = None,
+        label         : str | None                   = None,
+        sync          : bool                         = True,
+    ) -> Tag:
+        """
+        Add an axis-aligned cutting plane, optionally tilted by a rotation.
+
+        Convenience wrapper around :meth:`add_cutting_plane`.  The plane is
+        initially defined as **normal to** ``axis`` (so ``axis='z'`` produces
+        a horizontal XY-plane).  It is then:
+
+        1. Offset along its base normal by ``offset``.
+        2. Rotated by ``rotation`` degrees about ``rotation_about``
+           (if both are given), producing a tilted plane through the same
+           anchor point.
+
+        Parameters
+        ----------
+        axis : {'x', 'y', 'z'}
+            Axis the plane is **normal to**.  ``'z'`` → XY plane, etc.
+        offset : float, optional
+            Signed distance along the base normal from ``origin``
+            (or from the global origin if ``origin`` is None).
+        origin : array-like of 3 floats, optional
+            Anchor point before the offset is applied.  Defaults to (0, 0, 0).
+        rotation : float, optional
+            Rotation angle in **degrees**.  Requires ``rotation_about``
+            to have any effect — passing ``rotation`` without
+            ``rotation_about`` raises ``ValueError`` so silent
+            no-ops do not sneak through.
+        rotation_about : {'x', 'y', 'z'}, optional
+            Axis about which the base normal is rotated.  Must differ
+            from ``axis`` for the rotation to have any effect.
+        label : str, optional
+            Human-readable label stored in the internal registry.
+        sync : bool, optional
+            Synchronise the OCC kernel after creation (default True).
+
+        Returns
+        -------
+        Tag
+            Surface tag of the new cutting plane.
+
+        Examples
+        --------
+        Horizontal plane at z = 3::
+
+            g.model.geometry.add_axis_cutting_plane('z', offset=3.0)
+
+        Vertical YZ-plane passing through x = 1.5::
+
+            g.model.geometry.add_axis_cutting_plane('x', offset=1.5)
+
+        Horizontal plane tilted 15° about the y-axis::
+
+            g.model.geometry.add_axis_cutting_plane(
+                'z', offset=0.0,
+                rotation=15.0, rotation_about='y',
+            )
+        """
+        if axis not in _AXIS_UNIT_VEC:
+            raise ValueError(
+                f"axis must be one of 'x', 'y', 'z'; got {axis!r}"
+            )
+        if rotation != 0.0 and rotation_about is None:
+            raise ValueError(
+                "rotation was provided without rotation_about — pass "
+                "rotation_about='x'|'y'|'z' to tilt the plane, or drop "
+                "the rotation argument to keep it axis-aligned."
+            )
+
+        base_normal = _AXIS_UNIT_VEC[axis].copy()
+
+        if rotation_about is not None and rotation != 0.0:
+            if rotation_about not in _AXIS_UNIT_VEC:
+                raise ValueError(
+                    f"rotation_about must be one of 'x', 'y', 'z'; "
+                    f"got {rotation_about!r}"
+                )
+            if rotation_about == axis:
+                self._model._log(
+                    f"add_axis_cutting_plane: rotation_about='{rotation_about}' "
+                    f"equals axis='{axis}'; rotation has no effect."
+                )
+            else:
+                theta = np.deg2rad(rotation)
+                k     = _AXIS_UNIT_VEC[rotation_about]
+                c, s  = np.cos(theta), np.sin(theta)
+                # Rodrigues' rotation formula — k is a unit vector.
+                base_normal = (
+                    base_normal * c
+                    + np.cross(k, base_normal) * s
+                    + k * np.dot(k, base_normal) * (1.0 - c)
+                )
+
+        if origin is None:
+            origin_arr = np.zeros(3)
+        else:
+            origin_arr = np.asarray(origin, dtype=float)
+        if origin_arr.shape != (3,):
+            raise ValueError(
+                f"origin must be a length-3 vector; got shape {origin_arr.shape}"
+            )
+
+        point = origin_arr + offset * base_normal
+
+        self._model._log(
+            f"add_axis_cutting_plane(axis={axis!r}, offset={offset}, "
+            f"origin={tuple(origin_arr)}, rotation={rotation}, "
+            f"rotation_about={rotation_about!r}) "
+            f"→ point={tuple(point)}, normal={tuple(base_normal)}"
+        )
+
+        return self.add_cutting_plane(
+            point=point,
+            normal_vector=base_normal,
+            label=label,
+            sync=sync,
+        )
+
+    # ------------------------------------------------------------------
+    # Cutting operations
+    # ------------------------------------------------------------------
+
+    def _collect_volume_tags(self) -> list[Tag]:
+        """Return every registered 3-D entity tag from the registry."""
+        return [
+            tag for (dim, tag) in self._model._registry.keys()
+            if dim == 3
+        ]
+
+    @staticmethod
+    def _normalize_solid_input(
+        solid: Tag | list[Tag] | None,
+        collector,
+    ) -> list[Tag]:
+        """Coerce the ``solid`` argument into a concrete list of tags.
+
+        ``None`` means "every registered volume" and delegates to
+        ``collector()``; a single int is wrapped into a one-element
+        list; a sequence is normalised to ``list[int]``.
+        """
+        if solid is None:
+            tags = collector()
+        elif isinstance(solid, int):
+            tags = [int(solid)]
+        else:
+            tags = [int(t) for t in solid]
+        if not tags:
+            raise ValueError(
+                "no solids to cut — pass an explicit tag list or "
+                "register at least one volume before calling the cut"
+            )
+        return tags
+
+    def cut_by_surface(
+        self,
+        solid          : Tag | list[Tag] | None,
+        surface        : Tag,
+        *,
+        keep_surface   : bool = True,
+        remove_original: bool = True,
+        label          : str | None = None,
+        sync           : bool = True,
+    ) -> list[Tag]:
+        """
+        Split one or more solids with an arbitrary cutting surface.
+
+        Uses OCC's ``fragment`` operation under the hood, which splits
+        every input shape at its intersections and keeps **all**
+        resulting sub-shapes.  Unlike :meth:`cut_by_plane`, this method
+        does not classify the output pieces — callers that need
+        "above/below" semantics should use :meth:`cut_by_plane` (which
+        delegates here and adds the classification step).
+
+        Parameters
+        ----------
+        solid : Tag, list[Tag], or None
+            Volume(s) to cut.  When ``None``, every registered volume
+            in the model is cut against the surface.
+        surface : Tag
+            The cutting surface.  Can be any registered 2-D entity —
+            a plane from :meth:`add_cutting_plane`, a STEP-imported
+            trimmed surface, a Coons patch, etc.
+        keep_surface : bool, default True
+            Leave the (now-trimmed) surface in the model after the
+            cut.  Useful when you want to mesh the cut interface as a
+            shared face for conformal ties.  Set to ``False`` to
+            delete it.
+        remove_original : bool, default True
+            Consume the original solid(s) so only the cut pieces
+            remain.  When ``False``, OCC keeps the originals alongside
+            the pieces, which usually produces overlapping geometry
+            and is rarely what you want.
+        label : str, optional
+            Label applied to every new volume fragment in the
+            registry.  Pass ``None`` to leave the fragments unlabelled.
+        sync : bool, default True
+            Synchronise the OCC kernel after the cut.
+
+        Returns
+        -------
+        list[Tag]
+            Solid tags of the fragments produced by the cut, in the
+            order OCC returns them.  An empty list means the cut
+            produced nothing new (shouldn't happen unless the surface
+            misses every input solid entirely).
+
+        Example
+        -------
+        ::
+
+            box   = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+            plane = g.model.geometry.add_axis_cutting_plane('z', offset=0.5)
+            pieces = g.model.geometry.cut_by_surface(box, plane)
+        """
+        solid_tags = self._normalize_solid_input(solid, self._collect_volume_tags)
+
+        out_dimtags, _ = gmsh.model.occ.fragment(
+            [(3, int(t)) for t in solid_tags],
+            [(2, int(surface))],
+            removeObject=remove_original,
+            removeTool=not keep_surface,
+        )
+
+        new_volume_tags: list[Tag] = [
+            int(t) for (d, t) in out_dimtags if d == 3
+        ]
+
+        # OCC's fragment renumbers entities.  Consumed inputs are no
+        # longer in the registry; re-register every surviving fragment
+        # under the given kind/label so later operations can find them.
+        if remove_original:
+            for t in solid_tags:
+                self._model._registry.pop((3, int(t)), None)
+
+        for t in new_volume_tags:
+            self._model._register(3, t, label, 'cut_fragment')
+
+        # The trimmed cutting surface may have been split into multiple
+        # faces; keep whichever 2-D entities came out so they stay
+        # addressable.
+        if keep_surface:
+            surviving_surfaces = [
+                int(t) for (d, t) in out_dimtags if d == 2
+            ]
+            for t in surviving_surfaces:
+                if (2, t) not in self._model._registry:
+                    self._model._register(2, t, None, 'cut_interface')
+
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        self._model._log(
+            f"cut_by_surface(solids={solid_tags}, surface={int(surface)}) "
+            f"→ {len(new_volume_tags)} volume fragment(s): {new_volume_tags}"
+        )
+        return new_volume_tags
+
+    def cut_by_plane(
+        self,
+        solid          : Tag | list[Tag] | None,
+        plane          : Tag,
+        *,
+        keep_plane     : bool = True,
+        remove_original: bool = True,
+        above_direction: list[float] | ndarray | None = None,
+        label_above    : str | None = None,
+        label_below    : str | None = None,
+        sync           : bool = True,
+    ) -> tuple[list[Tag], list[Tag]]:
+        """
+        Split one or more solids with a plane and classify the
+        resulting pieces by which side of the plane they sit on.
+
+        Thin wrapper around :meth:`cut_by_surface` that additionally
+        computes which fragments are "above" (same side as the plane
+        normal) vs "below" the plane.  The normal direction is
+        resolved from, in order of priority:
+
+        1. An explicit ``above_direction`` argument.
+        2. The ``normal`` and ``point`` stashed in the registry by
+           :meth:`add_cutting_plane` / :meth:`add_axis_cutting_plane`.
+        3. ``gmsh.model.getNormal`` sampled at the parametric centre
+           of the plane surface.
+
+        Parameters
+        ----------
+        solid : Tag, list[Tag], or None
+            Volume(s) to cut.  ``None`` = every registered volume.
+        plane : Tag
+            Planar surface to cut with.  Ideally built by
+            :meth:`add_cutting_plane` so its normal and point are in
+            the registry; other planar surfaces work too but require
+            an explicit ``above_direction`` or fall back to querying
+            Gmsh.
+        keep_plane : bool, default True
+            Leave the trimmed plane in the model as a registered
+            surface (useful for meshing the cut interface).
+        remove_original : bool, default True
+            Consume the original solid(s).
+        above_direction : array-like of 3 floats, optional
+            Override the plane's normal direction.  Pieces whose
+            centroid dotted with this vector (relative to the plane
+            point) is positive are classified as "above".
+        label_above, label_below : str, optional
+            Labels applied to the above / below fragment solids.
+        sync : bool, default True
+            Synchronise the OCC kernel after the cut.
+
+        Returns
+        -------
+        tuple[list[Tag], list[Tag]]
+            ``(above_tags, below_tags)`` — solid tags on each side of
+            the plane, classified by the sign of
+            ``(centroid - plane_point) · normal``.
+
+        Example
+        -------
+        ::
+
+            col = g.model.geometry.add_box(0, 0, 0, 1, 1, 3)
+            pl  = g.model.geometry.add_axis_cutting_plane('z', offset=1.5)
+
+            top, bot = g.model.geometry.cut_by_plane(
+                col, pl,
+                label_above="col_upper", label_below="col_lower",
+            )
+        """
+        plane_tag = int(plane)
+
+        # Resolve the plane's defining point and normal.
+        entry = self._model._registry.get((2, plane_tag))
+        stashed_normal = entry.get('normal') if entry else None
+        stashed_point  = entry.get('point')  if entry else None
+
+        if above_direction is not None:
+            normal = np.asarray(above_direction, dtype=float)
+            norm_len = float(np.linalg.norm(normal))
+            if norm_len == 0.0:
+                raise ValueError("above_direction must be non-zero")
+            normal = normal / norm_len
+            # Need a point on the plane for the dot-product
+            # classification.  Prefer the stashed one; otherwise ask
+            # Gmsh for a vertex of the plane.
+            if stashed_point is not None:
+                point = np.asarray(stashed_point, dtype=float)
+            else:
+                point = self._any_point_on_surface(plane_tag)
+        elif stashed_normal is not None and stashed_point is not None:
+            normal = np.asarray(stashed_normal, dtype=float)
+            point  = np.asarray(stashed_point,  dtype=float)
+        else:
+            # Fall back to gmsh.model.getNormal at the parametric
+            # midpoint.  Requires a synced model.
+            gmsh.model.occ.synchronize()
+            try:
+                nxyz = gmsh.model.getNormal(plane_tag, [0.5, 0.5])
+            except Exception as exc:
+                raise ValueError(
+                    f"cut_by_plane: plane tag {plane_tag} has no registry "
+                    f"normal and Gmsh could not compute one — pass "
+                    f"above_direction=... explicitly. ({exc})"
+                ) from exc
+            normal = np.asarray(nxyz, dtype=float)
+            norm_len = float(np.linalg.norm(normal))
+            if norm_len == 0.0:
+                raise ValueError(
+                    f"cut_by_plane: plane tag {plane_tag} returned a zero "
+                    f"normal from Gmsh; pass above_direction=..."
+                )
+            normal = normal / norm_len
+            point = self._any_point_on_surface(plane_tag)
+
+        # Perform the actual cut via the general surface method.
+        fragments = self.cut_by_surface(
+            solid,
+            plane_tag,
+            keep_surface=keep_plane,
+            remove_original=remove_original,
+            label=None,          # we re-label by side below
+            sync=False,          # single sync at the end of this method
+        )
+
+        # Classify each fragment by the sign of (centroid - p) . n.
+        above_tags: list[Tag] = []
+        below_tags: list[Tag] = []
+        for t in fragments:
+            com = np.asarray(
+                gmsh.model.occ.getCenterOfMass(3, int(t)),
+                dtype=float,
+            )
+            signed = float(np.dot(com - point, normal))
+            if signed >= 0.0:
+                above_tags.append(t)
+                if label_above is not None:
+                    entry = self._model._registry.get((3, t))
+                    if entry is not None:
+                        entry['label'] = label_above
+            else:
+                below_tags.append(t)
+                if label_below is not None:
+                    entry = self._model._registry.get((3, t))
+                    if entry is not None:
+                        entry['label'] = label_below
+
+        if not above_tags or not below_tags:
+            self._model._log(
+                f"cut_by_plane: WARNING plane {plane_tag} produced "
+                f"only one side ({len(above_tags)} above, "
+                f"{len(below_tags)} below) — the plane may not "
+                f"intersect the solid(s)"
+            )
+
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        self._model._log(
+            f"cut_by_plane(plane={plane_tag}) → "
+            f"above={above_tags}, below={below_tags}"
+        )
+        return above_tags, below_tags
+
+    def _any_point_on_surface(self, surface_tag: Tag) -> ndarray:
+        """Return a point in space known to lie on ``surface_tag``.
+
+        Used by :meth:`cut_by_plane` when the plane's defining point
+        is not in the registry — we ask OCC for the centre of mass
+        of the surface, which always lies on the surface for planar
+        faces (and is a reasonable proxy for curved ones).
+        """
+        com = gmsh.model.occ.getCenterOfMass(2, int(surface_tag))
+        return np.asarray(com, dtype=float)
 
     # ------------------------------------------------------------------
     # Primitives  (dim = 3 solids)
