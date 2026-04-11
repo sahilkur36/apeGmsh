@@ -149,7 +149,13 @@ def _collect_entity_cells(
         )
     except Exception:
         return None
-    if not elem_types:
+    # Gmsh returns ``elem_types`` as a numpy ndarray — plain Python
+    # truthiness (``if not elem_types``) raises ``ValueError`` on the
+    # empty case because numpy refuses to coerce an empty array to
+    # ``bool``.  Use ``len() == 0`` which works for both list and
+    # ndarray and short-circuits on unmeshed entities (e.g. a dim=3
+    # volume when the user only meshed up to dim=2).
+    if len(elem_types) == 0:
         return None
 
     all_cells: list[np.ndarray] = []

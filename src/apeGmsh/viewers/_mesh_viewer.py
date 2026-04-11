@@ -83,6 +83,40 @@ class MeshViewer:
 
         gmsh.model.occ.synchronize()
 
+        # ── Auto-filter requested dims to those with actual elements ──
+        # If the user meshed only dim=2 (e.g. shell model from a solid
+        # BRep) the default dims=[1, 2, 3] would still try to render
+        # dim=3, which is empty.  That path now returns cleanly thanks
+        # to the ndarray-bool fix in ``_collect_entity_cells``, but
+        # skipping the dimension outright is both faster and cleaner
+        # (no noise in the Filter tab, no expensive per-entity
+        # ``getElements`` calls on unmeshed volumes).
+        meshed_dims: set[int] = set()
+        try:
+            types_all, _, _ = gmsh.model.mesh.getElements(dim=-1, tag=-1)
+            for etype in types_all:
+                # ``getElementProperties`` returns
+                # (name, dim, order, n_nodes, ...).
+                try:
+                    _, edim, *_ = gmsh.model.mesh.getElementProperties(int(etype))
+                    meshed_dims.add(int(edim))
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        if meshed_dims:
+            filtered = [d for d in self._dims if d in meshed_dims]
+            if filtered != list(self._dims):
+                if getattr(self._parent, "_verbose", False):
+                    skipped = sorted(set(self._dims) - meshed_dims)
+                    print(
+                        f"[MeshViewer] auto-filter: requested dims={self._dims}, "
+                        f"meshed dims={sorted(meshed_dims)}, "
+                        f"skipping empty {skipped}"
+                    )
+                self._dims = filtered if filtered else list(self._dims)
+
         # ── Selection state ─────────────────────────────────────────
         sel = SelectionState()
         self._selection_state = sel
