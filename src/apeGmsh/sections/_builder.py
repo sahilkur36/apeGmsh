@@ -46,6 +46,7 @@ class SectionsBuilder:
         label: str,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rotate: tuple[float, ...] | None = None,
+        lc: float = 1e22,
     ) -> "Instance":
         """Shared helper: snapshot entities before/after the build
         function, register the delta as an Instance, apply transforms.
@@ -82,6 +83,17 @@ class SectionsBuilder:
             new_tags = sorted(after[d] - before[d])
             if new_tags:
                 entities[d] = new_tags
+
+        # OCC operations (add_rectangle, extrude, fragment, …) create
+        # BRep points with lc=0.  If MeshSizeFromPoints is on (default),
+        # those zeros override set_global_size and cause
+        # "Wrong mesh element size lc = 0" errors.
+        # When lc is the default 1e22, section points impose no size
+        # constraint — set_global_size governs.  When the user passes a
+        # specific value, that becomes the section's target element size.
+        new_pts = entities.get(0, [])
+        if new_pts:
+            gmsh.model.mesh.setSize([(0, t) for t in new_pts], lc)
 
         # Apply transforms to the new entities (top-dim only)
         if entities:
@@ -165,6 +177,7 @@ class SectionsBuilder:
         length: float,
         *,
         label: str = "W_solid",
+        lc: float = 1e22,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rotate: tuple[float, ...] | None = None,
     ) -> "Instance":
@@ -174,6 +187,13 @@ class SectionsBuilder:
         without a Part intermediary.  Returns an Instance with
         ``.labels`` accessor.
 
+        Parameters
+        ----------
+        lc : float
+            Target element size for this section's BRep points.
+            Default ``1e22`` imposes no constraint — element size
+            is governed by :meth:`set_global_size` alone.
+
         Example
         -------
         ::
@@ -181,10 +201,9 @@ class SectionsBuilder:
             with apeGmsh("frame") as g:
                 col = g.sections.W_solid(
                     bf=150, tf=20, h=300, tw=10, length=2000,
-                    label="col",
+                    label="col", lc=50,
                 )
-                g.mesh.structured.set_transfinite_automatic()
-                g.mesh.sizing.set_global_size(50)
+                g.mesh.sizing.set_global_size(100)
                 g.mesh.generation.generate(3)
         """
         def _build():
@@ -242,7 +261,7 @@ class SectionsBuilder:
             if end_tags:
                 labels.add(2, end_tags, name=f"{label}.end_face")
 
-        return self._build_section(_build, label, translate, rotate)
+        return self._build_section(_build, label, translate, rotate, lc=lc)
 
     # ------------------------------------------------------------------
     # Rectangular solid
@@ -255,16 +274,24 @@ class SectionsBuilder:
         length: float,
         *,
         label: str = "rect",
+        lc: float = 1e22,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rotate: tuple[float, ...] | None = None,
     ) -> "Instance":
-        """Build a solid rectangular bar directly in the session."""
+        """Build a solid rectangular bar directly in the session.
+
+        Parameters
+        ----------
+        lc : float
+            Target element size for this section's BRep points.
+            Default ``1e22`` imposes no constraint.
+        """
         def _build():
             tag = self._parent.model.geometry.add_box(
                 -b/2, -h/2, 0, b, h, length,
             )
             self._parent.labels.add(3, [tag], name=f"{label}.body")
-        return self._build_section(_build, label, translate, rotate)
+        return self._build_section(_build, label, translate, rotate, lc=lc)
 
     # ------------------------------------------------------------------
     # W-shape shell (mid-surfaces)
@@ -279,10 +306,18 @@ class SectionsBuilder:
         length: float,
         *,
         label: str = "W_shell",
+        lc: float = 1e22,
         translate: tuple[float, float, float] = (0.0, 0.0, 0.0),
         rotate: tuple[float, ...] | None = None,
     ) -> "Instance":
-        """Build a W-shape as 3 mid-surface shell rectangles."""
+        """Build a W-shape as 3 mid-surface shell rectangles.
+
+        Parameters
+        ----------
+        lc : float
+            Target element size for this section's BRep points.
+            Default ``1e22`` imposes no constraint.
+        """
         def _build():
             from apeGmsh.sections.shell import _build_rect_surface
             geo = self._parent.model.geometry
@@ -309,4 +344,4 @@ class SectionsBuilder:
             )
             self._parent.model.sync()
 
-        return self._build_section(_build, label, translate, rotate)
+        return self._build_section(_build, label, translate, rotate, lc=lc)

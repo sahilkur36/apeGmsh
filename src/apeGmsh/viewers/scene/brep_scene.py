@@ -103,28 +103,30 @@ def _surface_polydata_from_global_mesh(
 # ======================================================================
 
 def _generate_temp_mesh(diag: float) -> None:
-    """Generate a coarse 2D mesh with per-curve adaptive sizing."""
+    """Generate a throwaway coarse 2D mesh for viewer tessellation.
+
+    The model viewer needs triangulated surfaces to render in VTK.
+    Gmsh geometry is analytic BRep — no triangles.  The only way to
+    tessellate through the Gmsh API is to run the mesher.
+
+    This function generates a quick coarse mesh, then restores every
+    mesh option it touched so the user's subsequent meshing is not
+    affected.  In particular it disables MeshSizeFromPoints during
+    the temp mesh so it never needs to touch per-point lc values.
+    """
     _saved: dict[str, float] = {}
     for key in ("Mesh.MeshSizeMin", "Mesh.MeshSizeMax",
-                "Mesh.Algorithm", "Mesh.MeshSizeExtendFromBoundary"):
+                "Mesh.Algorithm", "Mesh.MeshSizeExtendFromBoundary",
+                "Mesh.MeshSizeFromPoints"):
         try:
             _saved[key] = gmsh.option.getNumber(key)
         except Exception:
             pass
     try:
         max_size = diag * 0.03
-        for _, ctag in gmsh.model.getEntities(dim=1):
-            try:
-                mass = gmsh.model.occ.getMass(1, ctag)
-                curve_size = min(max_size, mass / 3.0)
-                if curve_size > 0:
-                    bnd = gmsh.model.getBoundary([(1, ctag)], combined=False)
-                    pt_tags = [(d, abs(t)) for d, t in bnd if d == 0]
-                    if pt_tags:
-                        gmsh.model.mesh.setSize(pt_tags, curve_size)
-            except Exception:
-                pass
-
+        # Disable per-point sizes so we don't need to touch (or
+        # restore) any lc values the user or section builder set.
+        gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
         gmsh.option.setNumber("Mesh.MeshSizeMin", diag * 0.0005)
         gmsh.option.setNumber("Mesh.MeshSizeMax", max_size)
         gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 1)
@@ -133,12 +135,6 @@ def _generate_temp_mesh(diag: float) -> None:
     except Exception:
         pass
     finally:
-        try:
-            all_pts = gmsh.model.getEntities(dim=0)
-            if all_pts:
-                gmsh.model.mesh.setSize(all_pts, 0.0)
-        except Exception:
-            pass
         for key, val in _saved.items():
             try:
                 gmsh.option.setNumber(key, val)
