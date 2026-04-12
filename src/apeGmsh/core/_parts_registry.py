@@ -81,6 +81,34 @@ class Instance:
     bbox: tuple[float, float, float, float, float, float] | None = None
     label_names: list[str] = field(default_factory=list)
 
+    def __getattr__(self, name: str) -> str:
+        """Access a Part label as an attribute → the prefixed label
+        string ready to pass to any method.
+
+        ``inst.web`` is equivalent to ``f"{inst.label}.web"`` and
+        returns ``"col.web"`` when ``inst.label == "col"``.
+
+        This lets the user write::
+
+            g.mesh.structured.set_transfinite_volume(inst.web)
+            g.physical.add_volume(inst.top_flange, name="steel")
+            g.constraints.node_to_surface(ref_pt, inst.start_face)
+
+        instead of fumbling with raw label strings.
+
+        Raises ``AttributeError`` when the label doesn't exist so
+        IDE autocomplete and typo detection work.
+        """
+        # Build the candidate prefixed name
+        prefixed = f"{self.label}.{name}"
+        if prefixed in self.label_names:
+            return prefixed
+        available = [n.split('.', 1)[1] for n in self.label_names if '.' in n]
+        raise AttributeError(
+            f"Instance '{self.label}' has no label '{name}'. "
+            f"Available: {available}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # PartsRegistry composite
