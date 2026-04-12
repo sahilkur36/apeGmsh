@@ -1036,6 +1036,123 @@ class _Geometry:
         return np.asarray(com, dtype=float)
 
     # ------------------------------------------------------------------
+    # Slice (atomic cut + cleanup)
+    # ------------------------------------------------------------------
+
+    def slice(
+        self,
+        solid   : Tag | list[Tag] | None = None,
+        *,
+        axis    : Literal['x', 'y', 'z'],
+        offset  : float = 0.0,
+        classify: bool = False,
+        label   : str | None = None,
+        sync    : bool = True,
+    ) -> list[Tag] | tuple[list[Tag], list[Tag]]:
+        """
+        Slice solids at an axis-aligned plane in one atomic call.
+
+        Internally creates a temporary cutting plane, fragments the
+        solids, removes the cutting plane (and any trimmed surfaces
+        it left behind), and returns the volume fragments.  No
+        orphaned geometry is left in the model.
+
+        Parameters
+        ----------
+        solid : Tag, list[Tag], or None
+            Volume(s) to slice.  ``None`` slices every registered
+            volume in the model.
+        axis : {'x', 'y', 'z'}
+            Axis the plane is **normal to**.  ``'z'`` slices with
+            a horizontal XY-plane, etc.
+        offset : float, default 0.0
+            Signed distance along the axis from the origin.
+        classify : bool, default False
+            When True, returns ``(positive_side, negative_side)``
+            classified by the plane's normal direction (the positive
+            axis direction).  When False (default), returns all
+            fragments as a flat list.
+        label : str, optional
+            Label applied to every fragment in the registry.
+        sync : bool, default True
+            Synchronise the OCC kernel after the operation.
+
+        Returns
+        -------
+        list[Tag]
+            All volume fragments (when ``classify=False``).
+        tuple[list[Tag], list[Tag]]
+            ``(positive_side, negative_side)`` fragments classified
+            by which side of the plane each piece's centroid sits on
+            (when ``classify=True``).
+
+        Example
+        -------
+        ::
+
+            # Slice a box at y = 0.5
+            box = g.model.geometry.add_box(0, 0, 0, 1, 1, 1)
+            pieces = g.model.geometry.slice(box, axis='y', offset=0.5)
+
+            # Slice and classify
+            top, bot = g.model.geometry.slice(
+                box, axis='z', offset=0.5, classify=True,
+            )
+
+            # Slice all volumes at x = 0
+            g.model.geometry.slice(axis='x', offset=0.0)
+        """
+        # Build the cutting plane (deferred sync — we sync once at
+        # the end).
+        plane_tag = self.add_axis_cutting_plane(
+            axis, offset=offset, sync=False,
+        )
+
+        if classify:
+            above, below = self.cut_by_plane(
+                solid, plane_tag,
+                keep_plane=False,
+                label_above=label,
+                label_below=label,
+                sync=False,
+            )
+            result: list[Tag] | tuple[list[Tag], list[Tag]] = (above, below)
+        else:
+            fragments = self.cut_by_surface(
+                solid, plane_tag,
+                keep_surface=False,
+                label=label,
+                sync=False,
+            )
+            result = fragments
+
+        # Clean up any surviving cutting-plane surfaces and their
+        # sub-entities (edges, points) that OCC may have left behind
+        # after the fragment operation.  The plane tag itself was
+        # consumed by fragment (remove_tool=True via keep_surface=
+        # False), but fragment can produce trimmed remnants with
+        # fresh tags.  Walk the 2-D entities and remove any that
+        # were registered as 'cutting_plane' or 'cut_interface'.
+        for dt in list(self._model._registry.keys()):
+            if dt[0] != 2:
+                continue
+            entry = self._model._registry.get(dt)
+            if entry and entry.get('kind') in ('cutting_plane', 'cut_interface'):
+                try:
+                    gmsh.model.occ.remove([dt], recursive=True)
+                except Exception:
+                    pass
+                self._model._registry.pop(dt, None)
+
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        self._model._log(
+            f"slice(axis={axis!r}, offset={offset}, classify={classify})"
+        )
+        return result
+
+    # ------------------------------------------------------------------
     # Primitives  (dim = 3 solids)
     # ------------------------------------------------------------------
 
