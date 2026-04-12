@@ -173,6 +173,79 @@ def extract_physical_groups() -> dict[tuple[int, int], dict]:
 
 
 # =====================================================================
+# Label snapshot (Tier 1 — _label: prefixed PGs)
+# =====================================================================
+
+def extract_labels() -> dict[tuple[int, int], dict]:
+    """Snapshot every label (``_label:``-prefixed PG) in the session.
+
+    Same structure as :func:`extract_physical_groups` but captures
+    only label PGs and strips the ``_label:`` prefix from names.
+
+    Returns
+    -------
+    dict
+        ``{(dim, pg_tag): {'name', 'node_ids', 'node_coords',
+        'element_ids'?, 'connectivity'?}}``
+    """
+    from apeGmsh.core.Labels import LABEL_PREFIX, is_label_pg
+
+    lbl_data: dict[tuple[int, int], dict] = {}
+
+    for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
+        name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
+        if not is_label_pg(name):
+            continue
+
+        # Strip the _label: prefix for the public name
+        clean_name = name[len(LABEL_PREFIX):]
+
+        pg_node_tags, pg_coords = \
+            gmsh.model.mesh.getNodesForPhysicalGroup(pg_dim, pg_tag)
+
+        entry: dict = {
+            'name':        clean_name,
+            'node_ids':    np.array(pg_node_tags, dtype=np.int64),
+            'node_coords': np.array(pg_coords).reshape(-1, 3),
+        }
+
+        # Capture element data for dim >= 1
+        if pg_dim >= 1:
+            entity_tags = gmsh.model.getEntitiesForPhysicalGroup(
+                pg_dim, pg_tag
+            )
+            lbl_elem_tags:   list[int]     = []
+            lbl_conn_blocks: list[ndarray] = []
+
+            for ent_tag in entity_tags:
+                etypes, etags_list, enodes_list = \
+                    gmsh.model.mesh.getElements(
+                        dim=pg_dim, tag=int(ent_tag)
+                    )
+                for etype, etags_arr, enodes in zip(
+                    etypes, etags_list, enodes_list
+                ):
+                    props = gmsh.model.mesh.getElementProperties(
+                        int(etype)
+                    )
+                    npe = props[3]
+                    lbl_elem_tags.extend(int(t) for t in etags_arr)
+                    lbl_conn_blocks.append(
+                        np.array(enodes, dtype=np.int64).reshape(-1, npe)
+                    )
+
+            if lbl_conn_blocks:
+                entry['element_ids']  = np.array(
+                    lbl_elem_tags, dtype=np.int64
+                )
+                entry['connectivity'] = np.vstack(lbl_conn_blocks)
+
+        lbl_data[(pg_dim, pg_tag)] = entry
+
+    return lbl_data
+
+
+# =====================================================================
 # Full FEMData assembly
 # =====================================================================
 
@@ -213,7 +286,8 @@ def build_fem_data(
     FEMData
     """
     from .FEMData import (
-        FEMData, MeshInfo, PhysicalGroupSet, _compute_bandwidth,
+        FEMData, MeshInfo, PhysicalGroupSet, LabelSet,
+        _compute_bandwidth,
     )
 
     raw = extract_raw(dim=dim)
@@ -239,13 +313,26 @@ def build_fem_data(
             + (f" ... (+{n_orphans - 20} more)" if n_orphans > 20 else "")
         )
 
+    # Element type info from extraction
+    type_info = raw.get('elem_type_info', {})
+    if type_info:
+        first_type = next(iter(type_info.values()))
+        elem_type_name = first_type[0]   # e.g. "Tetrahedron 4"
+        nodes_per_elem = first_type[2]   # e.g. 4
+    else:
+        elem_type_name = ""
+        nodes_per_elem = connectivity.shape[1] if connectivity.size else 0
+
     info = MeshInfo(
         n_nodes=len(node_ids),
         n_elems=len(elem_tags),
         bandwidth=_compute_bandwidth(connectivity),
+        nodes_per_elem=nodes_per_elem,
+        elem_type_name=elem_type_name,
     )
 
     physical = PhysicalGroupSet(extract_physical_groups())
+    labels = LabelSet(extract_labels())
 
     # Snapshot mesh selections if available
     ms_store = None
@@ -259,6 +346,7 @@ def build_fem_data(
         connectivity=connectivity,
         info=info,
         physical=physical,
+        labels=labels,
         mesh_selection=ms_store,
     )
 

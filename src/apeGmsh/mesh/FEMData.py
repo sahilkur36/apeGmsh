@@ -90,91 +90,204 @@ class MeshInfo:
     n_nodes : int
     n_elems : int
     bandwidth : int
+    nodes_per_elem : int
+        Number of nodes per element (e.g. 4 for tet4, 3 for tri3).
+    elem_type_name : str
+        Gmsh element type name (e.g. ``"Tetrahedron 4"``).
     """
 
     # Type declarations for __slots__ (consumed by mypy / pyright)
     n_nodes: int
     n_elems: int
     bandwidth: int
+    nodes_per_elem: int
+    elem_type_name: str
 
-    __slots__ = ('n_nodes', 'n_elems', 'bandwidth')
+    __slots__ = ('n_nodes', 'n_elems', 'bandwidth',
+                 'nodes_per_elem', 'elem_type_name')
 
-    def __init__(self, n_nodes: int, n_elems: int, bandwidth: int) -> None:
+    def __init__(
+        self,
+        n_nodes: int,
+        n_elems: int,
+        bandwidth: int,
+        nodes_per_elem: int = 0,
+        elem_type_name: str = "",
+    ) -> None:
         object.__setattr__(self, 'n_nodes', n_nodes)
         object.__setattr__(self, 'n_elems', n_elems)
         object.__setattr__(self, 'bandwidth', bandwidth)
+        object.__setattr__(self, 'nodes_per_elem', nodes_per_elem)
+        object.__setattr__(self, 'elem_type_name', elem_type_name)
 
     def __repr__(self) -> str:
-        return (
+        parts = (
             f"MeshInfo(n_nodes={self.n_nodes}, n_elems={self.n_elems}, "
-            f"bandwidth={self.bandwidth})"
+            f"bandwidth={self.bandwidth}"
         )
+        if self.elem_type_name:
+            parts += f", type={self.elem_type_name!r}"
+        return parts + ")"
 
     def summary(self) -> str:
         """One-line summary string."""
-        return (
-            f"{self.n_nodes} nodes, {self.n_elems} elements, "
-            f"bandwidth={self.bandwidth}"
-        )
+        s = f"{self.n_nodes} nodes, {self.n_elems} elements"
+        if self.elem_type_name:
+            s += f" ({self.elem_type_name})"
+        s += f", bandwidth={self.bandwidth}"
+        return s
 
 
 # =====================================================================
 # Physical group snapshot
 # =====================================================================
 
-class PhysicalGroupSet:
-    """
-    Snapshot of physical groups captured at ``get_fem_data()`` time.
+class _GroupSetBase:
+    """Shared logic for PhysicalGroupSet and LabelSet.
 
-    Accessed via ``fem.physical``.  Mirrors the query API of
-    :class:`PhysicalGroups` (``g.physical``) but is fully
-    self-contained — no live Gmsh session required after construction.
-
-    Provides:
-
-    * **Queries** — ``get_all``, ``get_name``, ``get_tag``, ``summary``
-    * **Mesh nodes** — ``get_nodes``
-    * **Mesh elements** — ``get_elements``
-
-    Example
-    -------
-    ::
-
-        fem = g.mesh.queries.get_fem_data(dim=2)
-
-        # Inspect
-        fem.physical.get_all()           # [(0, 1), (1, 2), (2, 3)]
-        fem.physical.get_name(0, 1)      # "base_supports"
-        fem.physical.get_tag(0, "base_supports")  # 1
-        fem.physical.summary()           # DataFrame
-
-        # Retrieve nodes
-        nodes = fem.physical.get_nodes(0, 1)
-        nodes['tags']    # ndarray of node IDs
-        nodes['coords']  # ndarray(N, 3)
-
-        # Retrieve elements
-        elems = fem.physical.get_elements(2, 3)
-        elems['element_ids']    # ndarray(E,)
-        elems['connectivity']   # ndarray(E, npe)
+    Both store a ``{(dim, tag): info_dict}`` structure and expose
+    name-first direct-array access.
     """
 
-    def __init__(
-        self,
-        groups: dict[tuple[int, int], dict],
-    ) -> None:
-        # groups: {(dim, pg_tag): {'name': str,
-        #                          'node_ids': ndarray,
-        #                          'node_coords': ndarray,
-        #                          'element_ids': ndarray (optional),
-        #                          'connectivity': ndarray (optional)}}
+    def __init__(self, groups: dict[tuple[int, int], dict]) -> None:
         self._groups = groups
+        self._name_index: dict[str, tuple[int, int]] | None = None
 
-    # ── Queries ───────────────────────────────────────────────
+    # ── Internal resolution ──────────────────────────────────
+
+    def _build_name_index(self) -> dict[str, tuple[int, int]]:
+        if self._name_index is None:
+            idx: dict[str, tuple[int, int]] = {}
+            # Lowest dim first so dim=0 wins over dim=2 for same name
+            for (d, t) in sorted(self._groups.keys()):
+                name = self._groups[(d, t)].get('name', '')
+                if name and name not in idx:
+                    idx[name] = (d, t)
+            self._name_index = idx
+        return self._name_index
+
+    def _resolve(self, target) -> dict:
+        """Resolve *target* (str name, int tag, or (dim, tag) tuple)
+        to the internal info dict.  Raises KeyError on miss."""
+        if isinstance(target, str):
+            idx = self._build_name_index()
+            key = idx.get(target)
+            if key is None:
+                raise KeyError(
+                    f"No group named {target!r}. "
+                    f"Available: {self.names()}"
+                )
+            return self._groups[key]
+        if isinstance(target, tuple):
+            info = self._groups.get(target)
+            if info is None:
+                raise KeyError(
+                    f"No group {target}. Available: {self.get_all()}"
+                )
+            return info
+        # int tag — search across dims (lowest first)
+        for (d, t) in sorted(self._groups.keys()):
+            if t == int(target):
+                return self._groups[(d, t)]
+        raise KeyError(
+            f"No group with tag {target}. Available: {self.get_all()}"
+        )
+
+    # ── Name-first, direct-array access ──────────────────────
+
+    def node_ids(self, target) -> ndarray:
+        """Node IDs for a group.
+
+        Parameters
+        ----------
+        target : str, int, or (dim, tag)
+            PG name, tag, or ``(dim, tag)`` tuple.
+
+        Returns
+        -------
+        ndarray(N,) — object dtype (yields Python ``int``).
+
+        Example
+        -------
+        ::
+
+            base = fem.physical.node_ids("base_supports")
+            for nid in base:
+                ops.fix(nid, 1, 1, 1)
+        """
+        info = self._resolve(target)
+        return np.asarray(info['node_ids']).astype(object)
+
+    def node_coords(self, target) -> ndarray:
+        """Node coordinates for a group.
+
+        Returns
+        -------
+        ndarray(N, 3) — float64.
+        """
+        info = self._resolve(target)
+        return np.asarray(info['node_coords'], dtype=np.float64)
+
+    def element_ids(self, target) -> ndarray:
+        """Element IDs for a group (dim >= 1 only).
+
+        Returns
+        -------
+        ndarray(E,) — object dtype.
+
+        Raises
+        ------
+        ValueError
+            If the group has no element data (dim=0 groups).
+        """
+        info = self._resolve(target)
+        eids = info.get('element_ids')
+        if eids is None:
+            name = info.get('name', str(target))
+            raise ValueError(
+                f"Group '{name}' has no element data "
+                f"(element data is only available for dim >= 1)."
+            )
+        return np.asarray(eids).astype(object)
+
+    def connectivity(self, target) -> ndarray:
+        """Element connectivity for a group (dim >= 1 only).
+
+        Returns
+        -------
+        ndarray(E, npe) — object dtype.
+        """
+        info = self._resolve(target)
+        conn = info.get('connectivity')
+        if conn is None:
+            name = info.get('name', str(target))
+            raise ValueError(
+                f"Group '{name}' has no element data "
+                f"(element data is only available for dim >= 1)."
+            )
+        return np.asarray(conn).astype(object)
+
+    # ── Queries ──────────────────────────────────────────────
+
+    def names(self, dim: int = -1) -> list[str]:
+        """Return all group names, optionally filtered by dimension.
+
+        Example
+        -------
+        ::
+
+            fem.physical.names()       # all
+            fem.physical.names(dim=0)  # point groups only
+        """
+        result = []
+        for (d, _), info in sorted(self._groups.items()):
+            name = info.get('name', '')
+            if name and (dim == -1 or d == dim):
+                result.append(name)
+        return result
 
     def get_all(self, dim: int = -1) -> list[tuple[int, int]]:
-        """
-        Return all physical groups as ``(dim, tag)`` pairs.
+        """Return all groups as ``(dim, tag)`` pairs.
 
         Parameters
         ----------
@@ -185,64 +298,33 @@ class PhysicalGroupSet:
         return sorted(k for k in self._groups if k[0] == dim)
 
     def get_name(self, dim: int, tag: int) -> str:
-        """
-        Return the name of a physical group, or ``""`` if unnamed.
-
-        Parameters
-        ----------
-        dim : dimension of the physical group
-        tag : physical-group tag
-        """
+        """Return the name of a group, or ``""`` if unnamed."""
         info = self._groups.get((dim, tag))
         if info is None:
             raise KeyError(
-                f"No physical group (dim={dim}, tag={tag}). "
+                f"No group (dim={dim}, tag={tag}). "
                 f"Available: {self.get_all()}"
             )
         return info.get('name', '')
 
     def get_tag(self, dim: int, name: str) -> int | None:
-        """
-        Look up the tag of a named physical group.
-
-        Returns ``None`` if no group with that name and dimension exists.
-
-        Parameters
-        ----------
-        dim  : dimension to search
-        name : human-readable label
-        """
+        """Look up the tag of a named group.  Returns None if not found."""
         for (d, pg_tag), info in self._groups.items():
             if d == dim and info.get('name', '') == name:
                 return pg_tag
         return None
 
-    # ── Mesh nodes ────────────────────────────────────────────
+    # ── Legacy dict-return methods (backward compat) ─────────
 
     def get_nodes(self, dim: int, tag: int) -> dict:
-        """
-        Return the mesh nodes belonging to a physical group.
+        """Return ``{'tags': ndarray, 'coords': ndarray}`` for a group.
 
-        Parameters
-        ----------
-        dim : dimension of the physical group
-        tag : physical-group tag
-
-        Returns
-        -------
-        dict
-            ``'tags'``   : ndarray(N,)   — node IDs (Python ``int``)
-            ``'coords'`` : ndarray(N, 3) — XYZ coordinates (``float``)
-
-        Note
-        ----
-        Tags are returned as ``object`` dtype so iteration yields
-        Python ``int``, not ``numpy.int64`` — safe for OpenSees.
+        Prefer :meth:`node_ids` and :meth:`node_coords` for direct access.
         """
         info = self._groups.get((dim, tag))
         if info is None:
             raise KeyError(
-                f"No physical group (dim={dim}, tag={tag}). "
+                f"No group (dim={dim}, tag={tag}). "
                 f"Available: {self.get_all()}"
             )
         return {
@@ -250,38 +332,15 @@ class PhysicalGroupSet:
             'coords': np.asarray(info['node_coords'], dtype=np.float64),
         }
 
-    # ── Mesh elements ────────────────────────────────────────
-
     def get_elements(self, dim: int, tag: int) -> dict:
-        """
-        Return element IDs and connectivity for a physical group.
+        """Return ``{'element_ids': ndarray, 'connectivity': ndarray}``.
 
-        Only available for physical groups with ``dim >= 1`` (curves,
-        surfaces, volumes).  Point groups (``dim=0``) have no elements.
-
-        Parameters
-        ----------
-        dim : dimension of the physical group
-        tag : physical-group tag
-
-        Returns
-        -------
-        dict
-            ``'element_ids'``    : ndarray(E,)      — element IDs
-            ``'connectivity'``   : ndarray(E, npe)   — node IDs per element
-
-        Raises
-        ------
-        KeyError
-            If the physical group does not exist.
-        ValueError
-            If the physical group has no element data (dim=0 groups,
-            or data was not captured at extraction time).
+        Prefer :meth:`element_ids` and :meth:`connectivity` for direct access.
         """
         info = self._groups.get((dim, tag))
         if info is None:
             raise KeyError(
-                f"No physical group (dim={dim}, tag={tag}). "
+                f"No group (dim={dim}, tag={tag}). "
                 f"Available: {self.get_all()}"
             )
         elem_ids = info.get('element_ids')
@@ -289,7 +348,7 @@ class PhysicalGroupSet:
         if elem_ids is None or conn is None:
             name = info.get('name', f'(dim={dim}, tag={tag})')
             raise ValueError(
-                f"Physical group '{name}' has no element data. "
+                f"Group '{name}' has no element data. "
                 f"Element data is only available for dim >= 1 groups."
             )
         return {
@@ -297,19 +356,15 @@ class PhysicalGroupSet:
             'connectivity': np.asarray(conn).astype(object),
         }
 
-    # ── Display ───────────────────────────────────────────────
+    # ── Display ──────────────────────────────────────────────
 
     def summary(self):
-        """
-        Build a DataFrame describing every physical group.
+        """DataFrame describing every group.
 
         Returns
         -------
-        pd.DataFrame  indexed by ``(dim, pg_tag)`` with columns:
-
-        ``name``       label (empty string if unnamed)
-        ``n_nodes``    number of mesh nodes in the group
-        ``n_elems``    number of elements in the group (0 for dim=0)
+        pd.DataFrame indexed by ``(dim, pg_tag)`` with columns:
+        ``name``, ``n_nodes``, ``n_elems``.
         """
         import pandas as pd
 
@@ -335,11 +390,62 @@ class PhysicalGroupSet:
             .sort_index()
         )
 
+    # ── Dunder ───────────────────────────────────────────────
+
     def __len__(self) -> int:
         return len(self._groups)
 
+    def __bool__(self) -> bool:
+        return bool(self._groups)
+
+    def __iter__(self):
+        return iter(sorted(self._groups.keys()))
+
+
+class PhysicalGroupSet(_GroupSetBase):
+    """Snapshot of physical groups captured at ``get_fem_data()`` time.
+
+    Accessed via ``fem.physical``.  Fully self-contained — no live
+    Gmsh session required after construction.
+
+    Name-first access
+    -----------------
+    ::
+
+        fem.physical.node_ids("base")       # ndarray(N,)
+        fem.physical.node_coords("base")    # ndarray(N, 3)
+        fem.physical.element_ids("slab")    # ndarray(E,)
+        fem.physical.connectivity("slab")   # ndarray(E, npe)
+        fem.physical.names()                # ['base', 'slab', ...]
+
+    Accepts str name, int tag, or ``(dim, tag)`` tuple — consistent
+    with the rest of the library.
+    """
+
     def __repr__(self) -> str:
         return f"PhysicalGroupSet({len(self._groups)} groups)"
+
+
+class LabelSet(_GroupSetBase):
+    """Snapshot of labels (Tier 1) captured at ``get_fem_data()`` time.
+
+    Accessed via ``fem.labels``.  Contains the ``_label:``-prefixed
+    physical groups with the prefix stripped.  Same API as
+    :class:`PhysicalGroupSet`.
+
+    Example
+    -------
+    ::
+
+        fem.labels.names()                   # ['col.web', 'col.top_flange', ...]
+        web_ids = fem.labels.node_ids("col.web")
+        web_xyz = fem.labels.node_coords("col.web")
+    """
+
+    def __repr__(self) -> str:
+        if not self._groups:
+            return "LabelSet(empty)"
+        return f"LabelSet({len(self._groups)} labels)"
 
 
 # =====================================================================
@@ -812,6 +918,7 @@ class FEMData:
     connectivity:  ndarray
     info:          MeshInfo          = field(repr=False)
     physical:      PhysicalGroupSet  = field(repr=False)
+    labels:        LabelSet          = field(repr=False, default=None)
     mesh_selection: "MeshSelectionStore" = field(repr=False, default=None)
     constraints: ConstraintSet = field(repr=False, default=None)
     loads: LoadSet = field(repr=False, default=None)
@@ -840,6 +947,9 @@ class FEMData:
         object.__setattr__(
             self, 'node_coords',
             np.asarray(self.node_coords, dtype=np.float64))
+        # Default labels to empty LabelSet if not provided
+        if self.labels is None:
+            object.__setattr__(self, 'labels', LabelSet({}))
         # Default mesh_selection to empty store if not provided
         if self.mesh_selection is None:
             from .MeshSelectionSet import MeshSelectionStore
@@ -1025,3 +1135,48 @@ class FEMData:
             n1, n2, n3 = fem.get_elem_connectivity(10)
         """
         return self.connectivity[self.elem_index(eid)]
+
+    # -- Display --
+
+    def __repr__(self) -> str:
+        lines = [self.info.summary()]
+
+        # Physical groups
+        if self.physical:
+            pg_names = self.physical.names()
+            lines.append(f"  Physical groups ({len(self.physical)}):")
+            for (d, t), info in sorted(self.physical._groups.items()):
+                name = info.get('name', '')
+                n_n = len(info['node_ids'])
+                eids = info.get('element_ids')
+                n_e = len(eids) if eids is not None else 0
+                label = f'"{name}"' if name else f"tag={t}"
+                parts = f"{n_n} nodes"
+                if n_e:
+                    parts += f", {n_e} elems"
+                lines.append(f"    ({d}) {label:24s} {parts}")
+
+        # Labels
+        if self.labels:
+            lines.append(f"  Labels ({len(self.labels)}):")
+            for (d, t), info in sorted(self.labels._groups.items()):
+                name = info.get('name', '')
+                n_n = len(info['node_ids'])
+                eids = info.get('element_ids')
+                n_e = len(eids) if eids is not None else 0
+                parts = f"{n_n} nodes"
+                if n_e:
+                    parts += f", {n_e} elems"
+                lines.append(f"    ({d}) {name!r:24s} {parts}")
+
+        # Constraints
+        if self.constraints:
+            lines.append(f"  {self.constraints!r}")
+        # Loads
+        if self.loads:
+            lines.append(f"  {self.loads!r}")
+        # Masses
+        if self.masses:
+            lines.append(f"  {self.masses!r}")
+
+        return "\n".join(lines)
