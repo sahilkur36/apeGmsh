@@ -110,6 +110,10 @@ class ModelViewer:
         )
         from .ui.loads_tab import LoadsTabPanel, pattern_color
         from .ui.mass_tab import MassTabPanel
+        from .ui.constraints_tab import (
+            ConstraintsTabPanel, constraint_color,
+            NODE_PAIR_KINDS, SURFACE_KINDS,
+        )
         import pyvista as pv
 
         # Ensure geometry is synced
@@ -724,6 +728,198 @@ class ModelViewer:
             insert_pos = 3 if (parts_reg is not None and loads_tab is not None) \
                 else (2 if loads_tab is not None or parts_reg is not None else 1)
             win._tab_widget.insertTab(insert_pos, mass_tab.widget, "Mass")
+
+        # ── Constraints tab (read-only overlays) ───────────────────
+        constraints_comp = getattr(self._parent, 'constraints', None)
+        constraints_tab = None
+        _constraint_actors: list = []
+
+        def _on_constraint_kinds_changed(active_kinds: set[str]):
+            # 1. Clear old actors
+            for a in _constraint_actors:
+                try:
+                    plotter.remove_actor(a)
+                except Exception:
+                    pass
+            _constraint_actors.clear()
+
+            fem = self._fem
+            if not active_kinds or fem is None:
+                plotter.render()
+                return
+
+            diag = _scene_diagonal()
+            origin = registry.origin_shift
+            marker_r = diag * 0.003
+
+            def _node_xyz(nid: int):
+                try:
+                    return fem.nodes.coords[fem.nodes.index(int(nid))] - origin
+                except (KeyError, IndexError):
+                    return None
+
+            # ── Node-pair kinds ────────────────────────────────
+            node_pair_kinds = active_kinds & NODE_PAIR_KINDS
+            if node_pair_kinds:
+                for kind in node_pair_kinds:
+                    line_pts: list = []
+                    line_cells: list = []
+                    master_positions: dict[int, np.ndarray] = {}
+                    idx = 0
+
+                    for rec in fem.nodes.constraints.node_pairs():
+                        if rec.kind != kind:
+                            continue
+                        p1 = _node_xyz(rec.master_node)
+                        p2 = _node_xyz(rec.slave_node)
+                        if p1 is None or p2 is None:
+                            continue
+                        line_pts.extend([p1, p2])
+                        line_cells.extend([2, idx, idx + 1])
+                        idx += 2
+                        if rec.master_node not in master_positions:
+                            master_positions[rec.master_node] = p1
+
+                    color = constraint_color(kind)
+
+                    # Line segments (batched)
+                    if line_pts:
+                        pts_arr = np.array(line_pts, dtype=float)
+                        cells_arr = np.array(line_cells, dtype=np.int64)
+                        poly = pv.PolyData(pts_arr, lines=cells_arr)
+                        actor = plotter.add_mesh(
+                            poly, color=color, line_width=3,
+                            render_lines_as_tubes=True,
+                            name=f"_cst_lines_{kind}",
+                            reset_camera=False, pickable=False,
+                        )
+                        _constraint_actors.append(actor)
+
+                    # Master node spheres
+                    if master_positions:
+                        cloud = pv.PolyData(
+                            np.array(list(master_positions.values()),
+                                     dtype=float))
+                        sphere = pv.Sphere(
+                            radius=marker_r,
+                            theta_resolution=8, phi_resolution=8)
+                        glyphs = cloud.glyph(
+                            geom=sphere, orient=False, scale=False)
+                        actor = plotter.add_mesh(
+                            glyphs, color=color, smooth_shading=True,
+                            name=f"_cst_masters_{kind}",
+                            reset_camera=False, pickable=False,
+                        )
+                        _constraint_actors.append(actor)
+
+                    # Phantom nodes for node_to_surface
+                    if kind == "node_to_surface":
+                        phantom_pts = []
+                        for nid, xyz in fem.nodes.constraints.extra_nodes():
+                            shifted = np.array(xyz, dtype=float) - origin
+                            phantom_pts.append(shifted)
+                        if phantom_pts:
+                            cloud = pv.PolyData(
+                                np.array(phantom_pts, dtype=float))
+                            diamond = pv.Octahedron(radius=marker_r * 0.7)
+                            glyphs = cloud.glyph(
+                                geom=diamond, orient=False, scale=False)
+                            actor = plotter.add_mesh(
+                                glyphs, color=color, smooth_shading=True,
+                                name=f"_cst_phantoms_{kind}",
+                                reset_camera=False, pickable=False,
+                            )
+                            _constraint_actors.append(actor)
+
+            # ── Surface kinds ──────────────────────────────────
+            surface_kinds = active_kinds & SURFACE_KINDS
+            if surface_kinds:
+                for kind in surface_kinds:
+                    interp_pts: list = []
+                    interp_cells: list = []
+                    idx = 0
+
+                    for rec in fem.elements.constraints.interpolations():
+                        if rec.kind != kind:
+                            continue
+                        slave_pt = _node_xyz(rec.slave_node)
+                        if slave_pt is None:
+                            continue
+                        master_pts = []
+                        for mnid in rec.master_nodes:
+                            mp = _node_xyz(mnid)
+                            if mp is not None:
+                                master_pts.append(mp)
+                        if not master_pts:
+                            continue
+                        weights = rec.weights
+                        if (weights is not None
+                                and len(weights) == len(master_pts)):
+                            centroid = np.average(
+                                master_pts, axis=0, weights=weights)
+                        else:
+                            centroid = np.mean(master_pts, axis=0)
+                        interp_pts.extend([slave_pt, centroid])
+                        interp_cells.extend([2, idx, idx + 1])
+                        idx += 2
+
+                    color = constraint_color(kind)
+
+                    # Interpolation lines
+                    if interp_pts:
+                        pts_arr = np.array(interp_pts, dtype=float)
+                        cells_arr = np.array(interp_cells, dtype=np.int64)
+                        poly = pv.PolyData(pts_arr, lines=cells_arr)
+                        actor = plotter.add_mesh(
+                            poly, color=color, line_width=2,
+                            render_lines_as_tubes=True, opacity=0.7,
+                            name=f"_cst_interp_{kind}",
+                            reset_camera=False, pickable=False,
+                        )
+                        _constraint_actors.append(actor)
+
+                    # Surface coupling highlights
+                    for coup in fem.elements.constraints.couplings():
+                        if coup.kind != kind:
+                            continue
+                        for node_set, suffix, opac in [
+                            (coup.master_nodes, "master", 0.25),
+                            (coup.slave_nodes, "slave", 0.25),
+                        ]:
+                            face_pts = []
+                            for nid in node_set:
+                                pt = _node_xyz(nid)
+                                if pt is not None:
+                                    face_pts.append(pt)
+                            if len(face_pts) >= 3:
+                                cloud = pv.PolyData(
+                                    np.array(face_pts, dtype=float))
+                                try:
+                                    surf = cloud.delaunay_2d()
+                                    actor = plotter.add_mesh(
+                                        surf, color=color, opacity=opac,
+                                        name=(f"_cst_surf_{kind}_{suffix}"
+                                              f"_{id(coup)}"),
+                                        reset_camera=False, pickable=False,
+                                    )
+                                    _constraint_actors.append(actor)
+                                except Exception:
+                                    pass
+
+            plotter.render()
+
+        if constraints_comp is not None:
+            constraints_tab = ConstraintsTabPanel(
+                constraints_comp, fem=self._fem,
+                on_kinds_changed=_on_constraint_kinds_changed,
+            )
+            n_cond = sum([
+                parts_reg is not None,
+                loads_tab is not None,
+                mass_tab is not None,
+            ])
+            win._tab_widget.insertTab(
+                1 + n_cond, constraints_tab.widget, "Constraints")
 
         # ── Wire callbacks ──────────────────────────────────────────
 
