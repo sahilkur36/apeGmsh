@@ -183,17 +183,22 @@ class BrowserTab:
                 )
 
     def _collect_groups(self) -> list[tuple[str, int, int, list[tuple]]]:
-        """Return groups as ``[(name, dim, pg_tag, members), ...]`` sorted by tag."""
+        """Return user-facing groups (skip internal labels).
+
+        Returns ``[(name, dim, pg_tag, members), ...]`` sorted by tag.
+        """
+        from apeGmsh.core.Labels import is_label_pg
         raw = []
         for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
             try:
                 name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
             except Exception:
                 name = f"Group_{pg_dim}_{pg_tag}"
+            if is_label_pg(name):
+                continue
             ents = gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
             members = [(pg_dim, int(t)) for t in ents]
             raw.append((name, pg_dim, pg_tag, members))
-        # Sort by physical group tag
         raw.sort(key=lambda x: x[2])
         return raw
 

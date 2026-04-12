@@ -125,11 +125,12 @@ class ModelViewer:
         sel = SelectionState()
         self._selection_state = sel
 
-        # Seed group order with pre-existing Gmsh groups (by tag)
+        # Seed group order with pre-existing user-facing PGs (skip labels)
+        from apeGmsh.core.Labels import is_label_pg
         for pg_dim, pg_tag in sorted(gmsh.model.getPhysicalGroups(), key=lambda x: x[1]):
             try:
                 pg_name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
-                if pg_name and pg_name not in sel._group_order:
+                if pg_name and not is_label_pg(pg_name) and pg_name not in sel._group_order:
                     sel._group_order.append(pg_name)
             except Exception:
                 pass
