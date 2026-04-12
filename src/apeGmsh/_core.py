@@ -36,6 +36,7 @@ class apeGmsh(_SessionBase):
     _COMPOSITES = (
         ("inspect",         ".viz.Inspect",                "Inspect",               False),
         ("model",           ".core.Model",                 "Model",                 False),
+        ("labels",          ".core.Labels",                "Labels",                False),
         ("parts",           ".core._parts_registry",       "PartsRegistry",         False),
         ("constraints",     ".core.ConstraintsComposite",  "ConstraintsComposite",  False),
         ("loads",           ".core.LoadsComposite",        "LoadsComposite",        False),
@@ -75,3 +76,6 @@ class apeGmsh(_SessionBase):
         verbose: bool = False,
     ) -> None:
         super().__init__(name=model_name, verbose=verbose)
+        # Labels (Tier 1 naming) are auto-created from label= kwargs
+        # on geometry methods in both Part and Assembly sessions.
+        self._auto_pg_from_label = True

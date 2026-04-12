@@ -1,22 +1,17 @@
 """
-Regression tests — Part physical-group anchors.
+Regression tests — Part two-tier naming: labels + physical groups.
 
-These tests exercise the full PG anchor round-trip against a live
-Gmsh kernel:
+Tests the full pipeline:
 
-1. Part with ``label=`` on geometry → auto-creates physical groups.
-2. Sidecar JSON is written next to the auto-persisted STEP.
-3. Sidecar only captures user-named PGs (unlabeled entities are
-   skipped).
-4. ``parts.add(part, label="col_A")`` re-creates PGs in the
-   Assembly with instance-prefixed names (``col_A.shaft``).
-5. PGs are accessible via ``g.physical.entities("col_A.shaft")``.
-6. Transform cases: no transform, translate, rotate,
-   translate + rotate.
-7. Multiple instances of the same Part each get their own
-   prefixed PGs.
-8. ``save(..., write_anchors=False)`` suppresses the sidecar.
-9. Missing sidecar falls back cleanly (no PGs, no crash).
+1. ``label=`` on geometry methods auto-creates a label PG (Tier 1,
+   prefixed with ``_label:``) — NOT a user-facing PG.
+2. Labels travel through STEP round-trip via sidecar + COM matching.
+3. ``g.labels.entities("col_A.shaft")`` resolves to entity tags.
+4. ``g.physical.get_all()`` does NOT include labels.
+5. ``g.labels.promote_to_physical("name")`` creates a real PG.
+6. Transform cases: no transform, translate, rotate, both.
+7. Multiple instances get independent label names.
+8. Sidecar suppression and missing-sidecar fallback.
 """
 from __future__ import annotations
 
@@ -61,13 +56,11 @@ class TestSidecar:
         finally:
             col.cleanup()
 
-    def test_sidecar_captures_only_named_pgs(self):
+    def test_sidecar_captures_only_labeled_entities(self):
         col = _make_labeled_column()
         try:
             payload = read_sidecar(col.file_path)
             names = {a["pg_name"] for a in payload["anchors"]}
-            # User-named: "shaft" and "top_region".
-            # The unlabeled point should NOT appear.
             assert "shaft" in names
             assert "top_region" in names
             assert len(names) == 2
@@ -92,8 +85,6 @@ class TestSidecar:
             col.cleanup()
 
     def test_missing_sidecar_is_graceful(self):
-        """A Part saved without anchors (or with the sidecar deleted)
-        still imports fine — the Instance just gets no pg_names."""
         import tempfile
         from pathlib import Path
 
@@ -107,25 +98,25 @@ class TestSidecar:
         try:
             with apeGmsh(model_name="asm") as g:
                 inst = g.parts.add(col)
-                assert inst.pg_names == []
+                assert inst.label_names == []
         finally:
             col.cleanup()
 
 
 # =====================================================================
-# Physical group rebinding tests
+# Label rebinding via sidecar
 # =====================================================================
 
-class TestPGRebinding:
+class TestLabelRebinding:
 
     def test_no_transform(self):
         col = _make_labeled_column()
         try:
             with apeGmsh(model_name="asm") as g:
                 inst = g.parts.add(col, label="col_A")
-                assert "col_A.shaft" in inst.pg_names
-                assert "col_A.top_region" in inst.pg_names
-                tags = g.physical.entities("col_A.shaft")
+                assert "col_A.shaft" in inst.label_names
+                assert "col_A.top_region" in inst.label_names
+                tags = g.labels.entities("col_A.shaft")
                 assert len(tags) >= 1
         finally:
             col.cleanup()
@@ -135,8 +126,8 @@ class TestPGRebinding:
         try:
             with apeGmsh(model_name="asm") as g:
                 inst = g.parts.add(col, translate=(100, 0, 0), label="col_A")
-                assert "col_A.shaft" in inst.pg_names
-                tags = g.physical.entities("col_A.shaft")
+                assert "col_A.shaft" in inst.label_names
+                tags = g.labels.entities("col_A.shaft")
                 assert len(tags) >= 1
         finally:
             col.cleanup()
@@ -150,7 +141,7 @@ class TestPGRebinding:
                     rotate=(math.pi / 2, 0, 0, 1),
                     label="col_A",
                 )
-                assert "col_A.shaft" in inst.pg_names
+                assert "col_A.shaft" in inst.label_names
         finally:
             col.cleanup()
 
@@ -164,8 +155,8 @@ class TestPGRebinding:
                     rotate=(math.pi / 4, 0, 0, 1),
                     label="col_A",
                 )
-                assert "col_A.shaft" in inst.pg_names
-                assert "col_A.top_region" in inst.pg_names
+                assert "col_A.shaft" in inst.label_names
+                assert "col_A.top_region" in inst.label_names
         finally:
             col.cleanup()
 
@@ -176,66 +167,71 @@ class TestPGRebinding:
 
 class TestMultipleInstances:
 
-    def test_two_instances_get_independent_pg_names(self):
+    def test_two_instances_get_independent_label_names(self):
         col = _make_labeled_column()
         try:
             with apeGmsh(model_name="asm") as g:
                 a = g.parts.add(col, translate=(0, 0, 0), label="col_A")
                 b = g.parts.add(col, translate=(6, 0, 0), label="col_B")
 
-                assert "col_A.shaft" in a.pg_names
-                assert "col_B.shaft" in b.pg_names
+                assert "col_A.shaft" in a.label_names
+                assert "col_B.shaft" in b.label_names
 
-                # PGs are distinct in the assembly
-                tags_a = g.physical.entities("col_A.shaft")
-                tags_b = g.physical.entities("col_B.shaft")
+                tags_a = g.labels.entities("col_A.shaft")
+                tags_b = g.labels.entities("col_B.shaft")
                 assert set(tags_a) != set(tags_b)
         finally:
             col.cleanup()
 
 
 # =====================================================================
-# Auto-PG creation from label= on geometry methods
+# Two-tier separation
 # =====================================================================
 
-class TestAutoPGFromLabel:
+class TestTwoTierSeparation:
 
-    def test_label_creates_pg_in_part_session(self):
-        """When label= is passed inside a Part session, a physical
-        group is created automatically."""
+    def test_labels_invisible_to_physical(self):
+        """Labels (Tier 1) must not appear in g.physical.get_all()."""
+        with apeGmsh(model_name="asm") as g:
+            g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
+            user_pgs = g.physical.get_all()
+            assert len(user_pgs) == 0
+
+    def test_promote_creates_user_pg(self):
+        """promote_to_physical copies label entities to a real PG."""
+        with apeGmsh(model_name="asm") as g:
+            g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
+            assert len(g.physical.get_all()) == 0
+
+            g.labels.promote_to_physical("cube", pg_name="my_cube")
+            user_pgs = g.physical.get_all()
+            assert len(user_pgs) == 1
+
+    def test_label_created_in_part_session(self):
+        """label= inside a Part creates a label PG visible via
+        g.labels but NOT via g.physical."""
         import gmsh
 
         col = Part("pg_test")
         with col:
             col.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
-            # PG should exist in the Part's live gmsh session
-            pgs = gmsh.model.getPhysicalGroups()
-            names = [
-                gmsh.model.getPhysicalName(d, t) for d, t in pgs
-            ]
-            assert "cube" in names, f"expected 'cube' in PG names, got {names}"
+            # Label PG should exist
+            assert col.labels.has("cube")
+            # But user PGs should be empty
+            user_pgs = col.physical.get_all()
+            assert len(user_pgs) == 0
         col.cleanup()
 
-    def test_no_label_no_pg_in_part_session(self):
-        """When label= is not passed, no physical group is created."""
+    def test_no_label_no_pg(self):
+        """Unlabeled geometry does not create any PGs at all."""
         import gmsh
 
-        col = Part("no_pg")
+        col = Part("no_label")
         with col:
             col.model.geometry.add_box(0, 0, 0, 1, 1, 1)
             pgs = gmsh.model.getPhysicalGroups()
             assert len(pgs) == 0
         col.cleanup()
-
-    def test_label_does_not_create_pg_in_assembly_session(self):
-        """In the main apeGmsh session, label= only sets the
-        registry label — it does NOT auto-create a physical group."""
-        with apeGmsh(model_name="asm") as g:
-            g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
-            import gmsh
-            pgs = gmsh.model.getPhysicalGroups()
-            # No PGs should have been created
-            assert len(pgs) == 0
 
 
 if __name__ == "__main__":

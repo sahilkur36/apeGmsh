@@ -61,13 +61,15 @@ class Instance:
     rotate      : applied rotation (angle_rad, ax, ay, az[, cx, cy, cz])
     properties  : arbitrary user metadata
     bbox        : axis-aligned bounding box (xmin, ymin, zmin, xmax, ymax, zmax)
-    pg_names    : physical group names created for this instance
-                  (e.g. ``["col_A.shaft", "col_A.top"]``).  Populated
-                  by ``_import_cad`` when the Part's CAD file has a
-                  ``.apegmsh.json`` sidecar carrying PG definitions.
-                  Empty when the Part had no labeled entities or the
-                  sidecar was absent.  Use ``g.physical.entities(name)``
-                  to resolve tags.
+    label_names : label names created for this instance (Tier 1
+                  naming, e.g. ``["col_A.shaft", "col_A.top"]``).
+                  Populated by ``_import_cad`` when the Part's CAD
+                  file has a ``.apegmsh.json`` sidecar carrying
+                  label definitions.  These are NOT solver-facing
+                  physical groups — use ``g.labels.entities(name)``
+                  to resolve entity tags, and
+                  ``g.labels.promote_to_physical(name)`` to create
+                  a solver PG when ready.
     """
     label: str
     part_name: str
@@ -77,7 +79,7 @@ class Instance:
     rotate: tuple[float, ...] | None = None
     properties: dict[str, Any] = field(default_factory=dict)
     bbox: tuple[float, float, float, float, float, float] | None = None
-    pg_names: list[str] = field(default_factory=list)
+    label_names: list[str] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -747,11 +749,12 @@ class PartsRegistry:
         self._apply_transforms(transform_dimtags, translate, rotate)
         dx, dy, dz = translate
 
-        # Rebind physical groups from the sidecar (if present).
-        # For each PG defined in the Part, re-create it in the
-        # Assembly's physical composite with an instance-scoped
-        # name: "{instance_label}.{pg_name}".
-        pg_names: list[str] = []
+        # Rebind labels from the sidecar (if present).
+        # For each label defined in the Part, re-create it as a
+        # label PG (Tier 1) in the Assembly with an instance-scoped
+        # name: "{instance_label}.{pg_name}".  These are NOT user-
+        # facing physical groups — the user promotes them when ready.
+        label_names: list[str] = []
         if isinstance(file_path, Path):
             from ._part_anchors import read_sidecar, rebind_physical_groups
             payload = read_sidecar(file_path)
@@ -764,19 +767,17 @@ class PartsRegistry:
                     rotate=rotate,
                     gmsh_module=gmsh,
                 )
-                physical = getattr(self._parent, 'physical', None)
-                if physical is not None and pg_matches:
+                labels_comp = getattr(self._parent, 'labels', None)
+                if labels_comp is not None and pg_matches:
                     for pg_name, dimtags in pg_matches.items():
                         prefixed = f"{label}.{pg_name}"
-                        # Group by dim since physical.add requires
-                        # a single dim per call.
                         by_dim: dict[int, list[int]] = {}
                         for d, t in dimtags:
                             by_dim.setdefault(d, []).append(t)
                         for d, tags in by_dim.items():
                             try:
-                                physical.add(d, tags, name=prefixed)
-                                pg_names.append(prefixed)
+                                labels_comp.add(d, tags, name=prefixed)
+                                label_names.append(prefixed)
                             except Exception:
                                 pass
 
@@ -789,7 +790,7 @@ class PartsRegistry:
             rotate=rotate,
             properties=properties or {},
             bbox=self._compute_bbox(dimtags_all),
-            pg_names=pg_names,
+            label_names=label_names,
         )
         self._instances[label] = inst
         return inst

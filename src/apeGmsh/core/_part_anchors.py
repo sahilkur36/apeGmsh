@@ -79,13 +79,14 @@ def sidecar_path(cad_path: Path | str) -> Path:
 # =====================================================================
 
 def collect_anchors(gmsh_module: "_gmsh_t") -> list[dict]:
-    """Walk the Gmsh physical groups and return serialisable anchor
-    records — one per named PG entity.
+    """Walk the Gmsh label PGs (``_label:*``) and return serialisable
+    anchor records — one per entity in a named label.
 
-    Physical groups are the canonical naming system.  Each entity
-    inside a named PG gets its own anchor record because different
-    entities in the same PG may have different centers of mass
-    (e.g. a PG containing multiple surface tags).
+    Only **label** PGs (Tier 1) are captured, not user-facing PGs
+    (Tier 2).  The sidecar carries labels because they are the
+    geometry-time naming system; solver-facing PGs are created
+    explicitly by the user in the Assembly and don't need to
+    travel through files.
 
     Parameters
     ----------
@@ -96,15 +97,18 @@ def collect_anchors(gmsh_module: "_gmsh_t") -> list[dict]:
     Returns
     -------
     list[dict]
-        One record per entity in a named PG.  Each record has
-        ``pg_name``, ``dim``, and ``com`` (the entity's center
-        of mass in Part-local coordinates).
+        One record per entity in a named label PG.  Each record
+        has ``pg_name`` (the label name WITHOUT the ``_label:``
+        prefix), ``dim``, and ``com``.
     """
+    from .Labels import is_label_pg, strip_prefix
+
     records: list[dict] = []
     for dim, pg_tag in gmsh_module.model.getPhysicalGroups():
-        name = gmsh_module.model.getPhysicalName(dim, pg_tag)
-        if not name:
+        raw_name = gmsh_module.model.getPhysicalName(dim, pg_tag)
+        if not raw_name or not is_label_pg(raw_name):
             continue
+        label_name = strip_prefix(raw_name)
         ent_tags = gmsh_module.model.getEntitiesForPhysicalGroup(dim, pg_tag)
         for tag in ent_tags:
             try:
@@ -112,7 +116,7 @@ def collect_anchors(gmsh_module: "_gmsh_t") -> list[dict]:
             except Exception:
                 continue
             records.append({
-                'pg_name': str(name),
+                'pg_name': str(label_name),
                 'dim':     int(dim),
                 'com':     [float(com[0]), float(com[1]), float(com[2])],
             })

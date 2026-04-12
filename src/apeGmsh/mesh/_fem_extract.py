@@ -119,8 +119,14 @@ def extract_physical_groups() -> dict[tuple[int, int], dict]:
     """
     pg_data: dict[tuple[int, int], dict] = {}
 
+    from apeGmsh.core.Labels import is_label_pg
+
     for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
         name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
+        # Skip internal label PGs (Tier 1 naming) — they are
+        # geometry bookkeeping and should not appear in fem.physical.
+        if is_label_pg(name):
+            continue
         pg_node_tags, pg_coords = \
             gmsh.model.mesh.getNodesForPhysicalGroup(pg_dim, pg_tag)
 

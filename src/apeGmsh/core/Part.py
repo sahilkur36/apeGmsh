@@ -93,6 +93,7 @@ from .._session import _SessionBase
 from ._part_anchors import collect_anchors, write_sidecar
 
 if TYPE_CHECKING:
+    from .Labels import Labels
     from .Model import Model
     from ..mesh.PhysicalGroups import PhysicalGroups
     from ..viz.Inspect import Inspect
@@ -127,6 +128,7 @@ class Part(_SessionBase):
     # than being rooted at ``apeGmsh.core``.
     _COMPOSITES = (
         ("model",    ".core.Model",          "Model",          False),
+        ("labels",   ".core.Labels",         "Labels",         False),
         ("physical", ".mesh.PhysicalGroups", "PhysicalGroups", False),
         ("inspect",  ".viz.Inspect",         "Inspect",        False),
         ("plot",     ".viz.Plot",            "Plot",            True),
@@ -134,6 +136,7 @@ class Part(_SessionBase):
 
     # -- Static type declarations for composites --
     model: Model
+    labels: "Labels"
     physical: "PhysicalGroups"
     inspect: Inspect
     plot: Plot

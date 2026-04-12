@@ -115,15 +115,20 @@ class Model:
             'kind':  kind,
         }
         # When the owning session has ``_auto_pg_from_label`` set
-        # (currently only ``Part``), automatically create a physical
-        # group so the user-supplied label travels through the STEP
-        # sidecar into the Assembly.  Failures are silenced — PG
-        # creation must never break geometry creation.
+        # (both Part and apeGmsh sessions), automatically create a
+        # **label PG** (Tier 1 — geometry bookkeeping, prefixed with
+        # ``_label:``) so the user-supplied label can be resolved by
+        # ``g.labels.entities("name")`` and travels through the STEP
+        # sidecar into the Assembly.  This does NOT create a solver-
+        # facing physical group — the user promotes labels to PGs
+        # explicitly via ``g.labels.promote_to_physical("name")``.
+        # Failures are silenced — label creation must never break
+        # geometry creation.
         if label and getattr(self._parent, '_auto_pg_from_label', False):
-            physical = getattr(self._parent, 'physical', None)
-            if physical is not None:
+            labels_comp = getattr(self._parent, 'labels', None)
+            if labels_comp is not None:
                 try:
-                    physical.add(dim, [tag], name=label)
+                    labels_comp.add(dim, [tag], name=label)
                 except Exception:
                     pass
         return tag

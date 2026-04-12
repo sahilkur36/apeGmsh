@@ -5,6 +5,8 @@ from typing import TYPE_CHECKING
 import gmsh
 import pandas as pd
 
+from apeGmsh.core.Labels import is_label_pg
+
 if TYPE_CHECKING:
     from apeGmsh._session import _SessionBase
 
@@ -179,13 +181,19 @@ class PhysicalGroups:
 
     def get_all(self, dim: int = -1) -> list[DimTag]:
         """
-        Return all physical groups as ``(dim, tag)`` pairs.
+        Return all **user-facing** physical groups as ``(dim, tag)``
+        pairs.  Internal label PGs (Tier 1 naming, prefixed with
+        ``_label:``) are filtered out — use ``g.labels.get_all()``
+        to see those.
 
         Parameters
         ----------
         dim : filter to a single dimension (``-1`` = all)
         """
-        return list(gmsh.model.getPhysicalGroups(dim=dim))
+        return [
+            (d, t) for d, t in gmsh.model.getPhysicalGroups(dim=dim)
+            if not is_label_pg(gmsh.model.getPhysicalName(d, t))
+        ]
 
     def get_entities(self, dim: int, tag: Tag) -> list[Tag]:
         """
@@ -303,13 +311,17 @@ class PhysicalGroups:
         name : human-readable label
         """
         for _, pg_tag in gmsh.model.getPhysicalGroups(dim=dim):
-            if gmsh.model.getPhysicalName(dim, pg_tag) == name:
+            pg_name = gmsh.model.getPhysicalName(dim, pg_tag)
+            if is_label_pg(pg_name):
+                continue
+            if pg_name == name:
                 return pg_tag
         return None
 
     def summary(self) -> pd.DataFrame:
         """
-        Build a DataFrame describing every physical group in the model.
+        Build a DataFrame describing every **user-facing** physical
+        group in the model.  Internal label PGs are excluded.
 
         Returns
         -------
@@ -323,8 +335,10 @@ class PhysicalGroups:
         """
         rows: list[dict] = []
         for dim, pg_tag in gmsh.model.getPhysicalGroups():
+            name = gmsh.model.getPhysicalName(dim, pg_tag)
+            if is_label_pg(name):
+                continue
             entities = gmsh.model.getEntitiesForPhysicalGroup(dim, pg_tag)
-            name     = gmsh.model.getPhysicalName(dim, pg_tag)
             rows.append({
                 'dim'        : dim,
                 'pg_tag'     : pg_tag,
