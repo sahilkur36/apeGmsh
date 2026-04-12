@@ -26,7 +26,7 @@ import numpy as np
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _ApeGmshSession
 
-from apeGmsh.mesh.FEMData import LoadSet
+from apeGmsh.mesh._record_set import NodalLoadSet as LoadSet
 from apeGmsh.solvers.Loads import (
     LoadDef,
     LoadRecord,

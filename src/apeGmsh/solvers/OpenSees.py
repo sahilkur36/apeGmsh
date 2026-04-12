@@ -107,10 +107,13 @@ class OpenSees(_HasLogging):
         self._load_patterns: dict[str, list[dict]] = {}
         self._mass_records : list[dict]            = []
 
-        # Constraint records ingested from fem.constraints (Phase 11a).
-        # Populated by ``ingest.constraints(fem)``, consumed by
+        # Constraint records ingested from fem (Phase 11a).
+        # Populated by ``ingest.constraints(fem)``.
+        # Element-side (SurfaceConstraintSet) consumed by
         # ``emit_tie_elements()`` at the end of ``build()``.
-        self._constraint_records: Any = None   # ConstraintSet | None
+        self._constraint_records: Any = None   # SurfaceConstraintSet | None
+        # Node-side (NodeConstraintSet) for future node-pair emission.
+        self._node_constraint_records: Any = None  # NodeConstraintSet | None
         self._tie_penalty: float | None = None
         # Populated by ``emit_tie_elements`` during build.  Each entry:
         #   {"ele_tag": int, "cNode": int, "rNodes": list[int],

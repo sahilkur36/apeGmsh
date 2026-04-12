@@ -140,15 +140,10 @@ class _Queries:
             g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
             fem = g.mesh.queries.get_fem_data(dim=2)
         """
-        from ._fem_extract import build_fem_data
+        from .FEMData import FEMData
 
         parent = self._mesh._parent
-        ms_composite = getattr(parent, 'mesh_selection', None)
-        result = build_fem_data(
-            dim=dim,
-            mesh_selection_composite=ms_composite,
-            parent=parent,
-        )
+        result = FEMData.from_gmsh(dim=dim, session=parent)
 
         self._mesh._log(
             f"get_fem_data(dim={dim}) -> "

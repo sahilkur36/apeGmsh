@@ -135,8 +135,8 @@ class MassTabPanel:
 
         self._tree.resizeColumnToContents(0)
 
-        # Stats from fem.masses (if resolved)
-        if self._fem is not None and self._fem.masses:
+        # Stats from fem.nodes.masses (if resolved)
+        if self._fem is not None and self._fem.nodes.masses:
             self._update_stats()
         else:
             self._lbl_total.setText("—")
@@ -160,7 +160,7 @@ class MassTabPanel:
         return "(unknown)"
 
     def _update_stats(self) -> None:
-        ms = self._fem.masses
+        ms = self._fem.nodes.masses
         records = list(ms)
         if not records:
             return

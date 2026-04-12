@@ -110,7 +110,7 @@ def _build_vtk_cells_from_fem(
     """Build mixed-type VTK cell arrays from FEMData.
 
     Collects:
-    1. Primary-dim elements from ``fem.connectivity``
+    1. Primary-dim elements from ``fem.elements.connectivity``
     2. Elements from physical groups of *other* dimensions
 
     Parameters
@@ -133,36 +133,34 @@ def _build_vtk_cells_from_fem(
     """
     # Node ID -> 0-based index mapping
     tag_to_idx: dict[int, int] = {
-        int(t): i for i, t in enumerate(fem.node_ids)
+        int(t): i for i, t in enumerate(fem.nodes.ids)
     }
 
-    primary_elem_ids: set[int] = set(int(e) for e in fem.element_ids)
+    primary_elem_ids: set[int] = set(int(e) for e in fem.elements.ids)
     cell_blocks: list[tuple[ndarray, int]] = []   # (conn_0based, vtk_type)
 
     # ── 1.  Primary connectivity ─────────────────────────────────
-    if fem.connectivity.size > 0:
-        npe = fem.connectivity.shape[1]
+    if fem.elements.connectivity.size > 0:
+        npe = fem.elements.connectivity.shape[1]
         vtk_type = _DIM_NPE_TO_VTK.get(
             (primary_dim, npe),
             _NPE_TO_VTK.get(npe, VTK_TRIANGLE),
         )
-        conn_0 = _remap_connectivity(fem.connectivity, tag_to_idx)
+        conn_0 = _remap_connectivity(fem.elements.connectivity, tag_to_idx)
         cell_blocks.append((conn_0, vtk_type))
 
-    n_primary = len(fem.element_ids)
+    n_primary = len(fem.elements.ids)
 
     # ── 2.  Extra elements from physical groups of other dims ────
-    if fem.physical is not None:
-        for pg_dim, pg_tag in fem.physical.get_all():
+    if fem.nodes.physical is not None:
+        for pg_dim, pg_tag in fem.nodes.physical.get_all():
             if pg_dim < 1 or pg_dim == primary_dim:
                 continue
             try:
-                pg_elems = fem.physical.get_elements(pg_dim, pg_tag)
+                pg_elem_ids = fem.nodes.physical.element_ids((pg_dim, pg_tag))
+                pg_conn = fem.nodes.physical.connectivity((pg_dim, pg_tag))
             except (ValueError, KeyError):
                 continue
-
-            pg_elem_ids = pg_elems['element_ids']
-            pg_conn = pg_elems['connectivity']
 
             # Filter out elements already counted in primary or earlier
             mask = np.array(
@@ -260,12 +258,12 @@ def _fem_to_vtk_cells(
     :func:`_build_vtk_cells_from_fem` which handles mixed types and
     proper index remapping.
     """
-    npe = fem.connectivity.shape[1]
-    n_elems = len(fem.element_ids)
+    npe = fem.elements.connectivity.shape[1]
+    n_elems = len(fem.elements.ids)
     vtk_type = _NPE_TO_VTK.get(npe, 5)
 
     prefix = np.full((n_elems, 1), npe, dtype=np.int64)
-    cells = np.hstack([prefix, fem.connectivity.astype(np.int64)])
+    cells = np.hstack([prefix, fem.elements.connectivity.astype(np.int64)])
     cell_types = np.full(n_elems, vtk_type, dtype=np.uint8)
     return cells, cell_types
 
@@ -410,12 +408,12 @@ class Results:
         padded_cell_data = _pad_cell_data(cell_data, n_primary, n_total)
 
         return cls(
-            node_coords=fem.node_coords,
+            node_coords=fem.nodes.coords,
             cells=cells_flat,
             cell_types=cell_types,
             point_fields=point_data,
             cell_fields=padded_cell_data if padded_cell_data else None,
-            physical_groups=fem.physical,
+            physical_groups=fem.nodes.physical,
             name=name,
             n_primary_cells=n_primary,
         )
@@ -474,13 +472,13 @@ class Results:
                 )
 
         return cls(
-            node_coords=fem.node_coords,
+            node_coords=fem.nodes.coords,
             cells=cells,
             cell_types=cell_types,
             time_steps=time_values,
             step_point_fields=step_pf if step_pf else None,
             step_cell_fields=step_cf if step_cf else None,
-            physical_groups=fem.physical,
+            physical_groups=fem.nodes.physical,
             name=name,
             n_primary_cells=n_primary,
         )
@@ -943,17 +941,17 @@ def _guess_primary_dim(fem: "FEMData") -> int:
     Uses nodes-per-element to infer whether the primary elements
     are 1-D (lines), 2-D (tris/quads), or 3-D (tets/hexes).
     """
-    if fem.connectivity.size == 0:
+    if fem.elements.connectivity.size == 0:
         return 2  # safe default
-    npe = fem.connectivity.shape[1]
+    npe = fem.elements.connectivity.shape[1]
     if npe == 2:
         return 1
     if npe in (3, 4):
         # Could be 2-D tri/quad or 3-D tet — use physical groups
         # to disambiguate.  If any physical group has dim=3 with
         # matching npe, treat as 3-D.
-        if fem.physical is not None:
-            for pg_dim, _ in fem.physical.get_all():
+        if fem.nodes.physical is not None:
+            for pg_dim, _ in fem.nodes.physical.get_all():
                 if pg_dim == 3:
                     return 3
         return 2

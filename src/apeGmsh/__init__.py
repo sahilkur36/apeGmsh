@@ -42,7 +42,8 @@ from apeGmsh._core import apeGmsh
 from apeGmsh.core.Part import Part
 from apeGmsh.core._parts_registry import PartsRegistry, Instance
 from apeGmsh.core.ConstraintsComposite import ConstraintsComposite
-from apeGmsh.mesh.FEMData import FEMData, MeshInfo, PhysicalGroupSet
+from apeGmsh.mesh.FEMData import FEMData, MeshInfo
+from apeGmsh.mesh._group_set import PhysicalGroupSet, LabelSet
 from apeGmsh.mesh.Mesh import (
     Algorithm2D,
     Algorithm3D,

@@ -8,7 +8,7 @@ snapshot" pipeline:
 
 1. ``g.loads`` / ``g.masses`` accumulate *definitions*
 2. ``g.mesh.queries.get_fem_data()`` resolves them into
-   ``fem.loads`` / ``fem.masses``
+   ``fem.nodes.loads`` / ``fem.elements.loads`` / ``fem.nodes.masses``
 3. ``g.opensees.ingest.loads(fem)`` / ``g.opensees.ingest.masses(fem)``
    translates those records into the internal dicts consumed by
    :meth:`OpenSees.build`.
@@ -30,9 +30,10 @@ class _Ingest:
     def loads(self, fem) -> "_Ingest":
         """Ingest resolved load records from a :class:`FEMData` snapshot.
 
-        Translates ``fem.loads`` (populated by the ``g.loads``
-        auto-resolve inside ``get_fem_data``) into the internal
-        load-pattern dict consumed by :meth:`OpenSees.build`.
+        Translates ``fem.nodes.loads`` and ``fem.elements.loads``
+        (populated by the ``g.loads`` auto-resolve inside
+        ``get_fem_data``) into the internal load-pattern dict consumed
+        by :meth:`OpenSees.build`.
 
         After calling this, :meth:`OpenSees.build` will emit the loads
         as ``pattern Plain`` blocks.
@@ -42,39 +43,58 @@ class _Ingest:
         fem : FEMData
             Snapshot from ``g.mesh.queries.get_fem_data()``.
         """
-        loads = getattr(fem, "loads", None)
-        if not loads:
+        nodal_loads = getattr(getattr(fem, "nodes", None), "loads", None)
+        elem_loads = getattr(getattr(fem, "elements", None), "loads", None)
+        if not nodal_loads and not elem_loads:
             return self
-        from apeGmsh.solvers.Loads import NodalLoadRecord, ElementLoadRecord
 
         ops = self._opensees
-        for rec in loads:
-            pat = rec.pattern
-            if pat not in ops._load_patterns:
-                ops._load_patterns[pat] = []
-            if isinstance(rec, NodalLoadRecord):
+        total = 0
+
+        if nodal_loads:
+            for rec in nodal_loads:
+                pat = rec.pattern
+                if pat not in ops._load_patterns:
+                    ops._load_patterns[pat] = []
                 ops._load_patterns[pat].append({
                     "type":    "nodal_direct",
                     "node_id": int(rec.node_id),
                     "forces":  list(rec.forces),
                 })
-            elif isinstance(rec, ElementLoadRecord):
+            total += len(nodal_loads)
+
+        if elem_loads:
+            for rec in elem_loads:
+                pat = rec.pattern
+                if pat not in ops._load_patterns:
+                    ops._load_patterns[pat] = []
                 ops._load_patterns[pat].append({
                     "type":       "element_direct",
                     "element_id": int(rec.element_id),
                     "load_type":  rec.load_type,
                     "params":     dict(rec.params),
                 })
+            total += len(elem_loads)
+
+        # Collect unique patterns from both sets
+        all_patterns: list[str] = []
+        if nodal_loads:
+            all_patterns.extend(nodal_loads.patterns())
+        if elem_loads:
+            for p in elem_loads.patterns():
+                if p not in all_patterns:
+                    all_patterns.append(p)
+
         ops._log(
-            f"ingest.loads(): {len(loads)} load record(s) "
-            f"across {len(loads.patterns())} pattern(s)"
+            f"ingest.loads(): {total} load record(s) "
+            f"across {len(all_patterns)} pattern(s)"
         )
         return self
 
     def masses(self, fem) -> "_Ingest":
         """Ingest resolved nodal mass records from a :class:`FEMData` snapshot.
 
-        Translates ``fem.masses`` (populated by the ``g.masses``
+        Translates ``fem.nodes.masses`` (populated by the ``g.masses``
         auto-resolve) into the internal mass dict consumed by
         :meth:`OpenSees.build`.  Each record becomes one
         ``ops.mass(node, mx, my, mz, ...)`` command.
@@ -84,7 +104,7 @@ class _Ingest:
         fem : FEMData
             Snapshot from ``g.mesh.queries.get_fem_data()``.
         """
-        masses = getattr(fem, "masses", None)
+        masses = getattr(getattr(fem, "nodes", None), "masses", None)
         if not masses:
             return self
         ops = self._opensees
@@ -104,13 +124,14 @@ class _Ingest:
     ) -> "_Ingest":
         """Ingest resolved constraint records from a :class:`FEMData` snapshot.
 
-        Stores ``fem.constraints`` on the broker for emission during
-        :meth:`OpenSees.build`.  Currently the emitter only handles
-        **tie** interpolation records (``kind == "tie"``) — they become
-        ``element ASDEmbeddedNodeElement`` commands in the exported
-        script.  Node-pair records (``equal_dof`` / ``rigid_beam`` /
-        ``rigid_rod``), rigid diaphragms, and embedded rebars are
-        ingested but emission is deferred to later phases.
+        Stores ``fem.nodes.constraints`` and ``fem.elements.constraints``
+        on the broker for emission during :meth:`OpenSees.build`.
+        Currently the emitter only handles **tie** interpolation
+        records (``kind == "tie"``) from the element-side set — they
+        become ``element ASDEmbeddedNodeElement`` commands in the
+        exported script.  Node-pair records (``equal_dof`` /
+        ``rigid_beam`` / ``rigid_rod``), rigid diaphragms, and embedded
+        rebars are ingested but emission is deferred to later phases.
 
         Parameters
         ----------
@@ -136,18 +157,30 @@ class _Ingest:
                 .constraints(fem, tie_penalty=1e12))
             g.opensees.build()
         """
-        cs = getattr(fem, "constraints", None)
-        if cs is None or not cs:
+        node_cs = getattr(getattr(fem, "nodes", None), "constraints", None)
+        elem_cs = getattr(getattr(fem, "elements", None), "constraints", None)
+        if (node_cs is None or not node_cs) and (elem_cs is None or not elem_cs):
             return self
         ops = self._opensees
-        ops._constraint_records = cs
+        # Element-side constraints (SurfaceConstraintSet) are consumed by
+        # emit_tie_elements via ops._constraint_records.interpolations().
+        ops._constraint_records = elem_cs
+        # Node-side constraints (NodeConstraintSet) are stored separately
+        # for future node-pair / extra-node emission.
+        ops._node_constraint_records = node_cs
         ops._tie_penalty = tie_penalty
-        try:
-            kinds = cs.summary().index.tolist()
-        except Exception:
-            kinds = []
+
+        total = 0
+        kinds: list[str] = []
+        for cs in (node_cs, elem_cs):
+            if cs is not None and cs:
+                total += len(cs)
+                try:
+                    kinds.extend(cs.summary().index.tolist())
+                except Exception:
+                    pass
         ops._log(
-            f"ingest.constraints(): {len(cs)} record(s) "
+            f"ingest.constraints(): {total} record(s) "
             f"(kinds={kinds}, tie_penalty={tie_penalty})"
         )
         return self

@@ -300,13 +300,13 @@ class VTKExport:
 
     def __init__(self, ctx: apeGmsh, dim: int = 2) -> None:
         fem = ctx.mesh.queries.get_fem_data(dim=dim)
-        self._node_coords  = fem.node_coords
-        self._connectivity = fem.connectivity
-        self._elem_tags    = fem.element_ids
-        self._node_ids     = fem.node_ids
+        self._node_coords  = fem.nodes.coords
+        self._connectivity = fem.elements.connectivity
+        self._elem_tags    = fem.elements.ids
+        self._node_ids     = fem.nodes.ids
 
         # Build node-ID -> 0-based array index mapping
-        tag_to_idx = {int(t): i for i, t in enumerate(fem.node_ids)}
+        tag_to_idx = {int(t): i for i, t in enumerate(fem.nodes.ids)}
 
         # Build 0-based connectivity (row indices into node_coords)
         self._conn_idx = np.array(

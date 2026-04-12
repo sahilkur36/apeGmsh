@@ -12,7 +12,13 @@ from .Partition import Partition
 from .PhysicalGroups import PhysicalGroups
 from .MeshSelectionSet import MeshSelectionSet, MeshSelectionStore
 from .View import View
-from .FEMData import FEMData, MeshInfo, PhysicalGroupSet, ConstraintSet
+from .FEMData import FEMData, MeshInfo, NodeResult, ElementResult
+from ._group_set import NamedGroupSet, PhysicalGroupSet, LabelSet
+from ._record_set import (
+    ConstraintKind, LoadKind,
+    NodeConstraintSet, SurfaceConstraintSet,
+    NodalLoadSet, ElementLoadSet, MassSet,
+)
 
 __all__ = [
     "Mesh",
@@ -23,5 +29,9 @@ __all__ = [
     "Partition", "PhysicalGroups",
     "MeshSelectionSet", "MeshSelectionStore",
     "View",
-    "FEMData", "MeshInfo", "PhysicalGroupSet", "ConstraintSet",
+    "FEMData", "MeshInfo", "NodeResult", "ElementResult",
+    "NamedGroupSet", "PhysicalGroupSet", "LabelSet",
+    "ConstraintKind", "LoadKind",
+    "NodeConstraintSet", "SurfaceConstraintSet",
+    "NodalLoadSet", "ElementLoadSet", "MassSet",
 ]

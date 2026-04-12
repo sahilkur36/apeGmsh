@@ -599,7 +599,7 @@ class ModelViewer:
             _load_actors.clear()
 
             fem = self._fem
-            if not active_patterns or fem is None or not fem.loads:
+            if not active_patterns or fem is None or not fem.nodes.loads:
                 plotter.render()
                 return
 
@@ -610,11 +610,11 @@ class ModelViewer:
             for pat in active_patterns:
                 positions = []
                 directions = []
-                for r in fem.loads.nodal():
+                for r in fem.nodes.loads:
                     if r.pattern != pat:
                         continue
                     try:
-                        xyz = fem.get_node_coords(int(r.node_id)) - origin
+                        xyz = fem.nodes.coords[fem.nodes.index(int(r.node_id))] - origin
                     except Exception:
                         continue
                     fxyz = np.array(r.forces[:3], dtype=float)
@@ -672,16 +672,16 @@ class ModelViewer:
                 pass
 
             fem = self._fem
-            if not show or fem is None or not fem.masses:
+            if not show or fem is None or not fem.nodes.masses:
                 plotter.render()
                 return
 
             positions = []
             masses = []
             origin = registry.origin_shift
-            for r in fem.masses:
+            for r in fem.nodes.masses:
                 try:
-                    xyz = fem.get_node_coords(int(r.node_id)) - origin
+                    xyz = fem.nodes.coords[fem.nodes.index(int(r.node_id))] - origin
                 except Exception:
                     continue
                 m = float(r.mass[0])

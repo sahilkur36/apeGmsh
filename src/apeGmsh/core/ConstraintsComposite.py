@@ -16,10 +16,10 @@ Usage::
     g.constraints.tie("beam", "slab", master_entities=[(2, 5)])
 
     fem = g.mesh.queries.get_fem_data(dim=2)
-    nm  = g.parts.build_node_map(fem.node_ids, fem.node_coords)
+    nm  = g.parts.build_node_map(fem.nodes.ids, fem.nodes.coords)
     fm  = g.parts.build_face_map(nm)
     recs = g.constraints.resolve(
-        fem.node_ids, fem.node_coords, node_map=nm, face_map=fm,
+        fem.nodes.ids, fem.nodes.coords, node_map=nm, face_map=fm,
     )
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ import numpy as np
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _ApeGmshSession
 
-from apeGmsh.mesh.FEMData import ConstraintSet
+from apeGmsh.mesh._record_set import NodeConstraintSet as ConstraintSet
 from apeGmsh.solvers.Constraints import (
     ConstraintDef,
     ConstraintRecord,

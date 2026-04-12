@@ -77,12 +77,13 @@ class MshLoader(_HasLogging):
             f"{fem.info.n_elems} elements, "
             f"bw={fem.info.bandwidth}"
         )
-        pg_list = fem.physical.get_all()
+        pg = fem.nodes.physical
+        pg_list = pg.get_all()
         if pg_list:
             print(
                 f"[MshLoader] physical groups ({len(pg_list)}): "
                 + ", ".join(
-                    f"({d},{t}) {fem.physical.get_name(d, t)!r}"
+                    f"({d},{t}) {pg.get_name(d, t)!r}"
                     for d, t in pg_list
                 )
             )
@@ -138,17 +139,10 @@ class MshLoader(_HasLogging):
             numb = Numberer(fem)
             data = numb.renumber(method="rcm")
         """
-        from ._fem_extract import build_fem_data
+        from .FEMData import FEMData
 
         p = cls._validate_path(path)
-
-        gmsh.initialize()
-        try:
-            gmsh.model.add(p.stem)
-            gmsh.merge(str(p))
-            fem = build_fem_data(dim=dim)
-        finally:
-            gmsh.finalize()
+        fem = FEMData.from_msh(str(p), dim=dim)
 
         cls._log_fem(fem, f"load({p.name!r})", verbose)
         return fem
@@ -201,7 +195,7 @@ class MshLoader(_HasLogging):
 
             g.end()
         """
-        from ._fem_extract import build_fem_data
+        from .FEMData import FEMData
 
         p = self._validate_path(path)
 
@@ -214,7 +208,7 @@ class MshLoader(_HasLogging):
         self._log(f"merging {p.name} ...")
         gmsh.merge(str(p))
 
-        fem = build_fem_data(dim=dim)
+        fem = FEMData.from_gmsh(dim=dim)
 
         verbose = self._parent._verbose if self._parent else False
         self._log_fem(fem, f"from_msh({p.name!r})", verbose)

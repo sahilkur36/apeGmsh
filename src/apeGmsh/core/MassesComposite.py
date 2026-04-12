@@ -27,7 +27,7 @@ import numpy as np
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _ApeGmshSession
 
-from apeGmsh.mesh.FEMData import MassSet
+from apeGmsh.mesh._record_set import MassSet
 from apeGmsh.solvers.Masses import (
     MassDef,
     MassRecord,
