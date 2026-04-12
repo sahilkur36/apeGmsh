@@ -1149,8 +1149,16 @@ class _Geometry:
             # Slice all volumes at x = 0
             g.model.geometry.slice(axis='x', offset=0.0)
         """
-        # Build the cutting plane (deferred sync — we sync once at
-        # the end).
+        # Snapshot ALL entities before creating the cutting plane.
+        # After the slice, anything that was created during the
+        # operation but isn't a surviving volume fragment gets
+        # removed.  This catches the cutting-plane corner points,
+        # edges, curve loops, and trimmed surfaces that the old
+        # registry-based cleanup missed.
+        pre_entities: dict[int, set[int]] = {}
+        for d in range(4):
+            pre_entities[d] = {t for _, t in gmsh.model.getEntities(d)}
+
         plane_tag = self.add_axis_cutting_plane(
             axis, offset=offset, sync=False,
         )
@@ -1173,23 +1181,49 @@ class _Geometry:
             )
             result = fragments
 
-        # Clean up any surviving cutting-plane surfaces and their
-        # sub-entities (edges, points) that OCC may have left behind
-        # after the fragment operation.  The plane tag itself was
-        # consumed by fragment (remove_tool=True via keep_surface=
-        # False), but fragment can produce trimmed remnants with
-        # fresh tags.  Walk the 2-D entities and remove any that
-        # were registered as 'cutting_plane' or 'cut_interface'.
-        for dt in list(self._model._registry.keys()):
-            if dt[0] != 2:
-                continue
-            entry = self._model._registry.get(dt)
-            if entry and entry.get('kind') in ('cutting_plane', 'cut_interface'):
+        # Determine which volume tags are the real output.
+        if classify:
+            keep_vol_tags = set(above) | set(below)
+        else:
+            keep_vol_tags = set(fragments)
+
+        # Sync so we can query the post-fragment entity state.
+        gmsh.model.occ.synchronize()
+
+        # Find the boundary (surfaces, edges, points) of the
+        # surviving volumes — those must be kept.
+        keep_dimtags: set[tuple[int, int]] = set()
+        for t in keep_vol_tags:
+            keep_dimtags.add((3, t))
+        # Walk down the boundary hierarchy: vol -> surfs -> edges -> pts
+        for vol_tag in keep_vol_tags:
+            try:
+                bdry_2 = gmsh.model.getBoundary(
+                    [(3, vol_tag)], oriented=False, recursive=False,
+                )
+                for dt in bdry_2:
+                    keep_dimtags.add((abs(dt[0]), abs(dt[1])))
+                bdry_1 = gmsh.model.getBoundary(
+                    [(3, vol_tag)], oriented=False, recursive=True,
+                )
+                for dt in bdry_1:
+                    keep_dimtags.add((abs(dt[0]), abs(dt[1])))
+            except Exception:
+                pass
+
+        # Remove everything created during the slice that isn't
+        # part of the surviving volumes or their boundaries.
+        for d in [2, 1, 0]:   # remove top-down to avoid dangling refs
+            for _, t in gmsh.model.getEntities(d):
+                if t in pre_entities.get(d, set()):
+                    continue   # existed before the slice
+                if (d, t) in keep_dimtags:
+                    continue   # part of a surviving volume
                 try:
-                    gmsh.model.occ.remove([dt], recursive=True)
+                    gmsh.model.occ.remove([(d, t)], recursive=False)
                 except Exception:
                     pass
-                self._model._registry.pop(dt, None)
+                self._model._registry.pop((d, t), None)
 
         if sync:
             gmsh.model.occ.synchronize()
