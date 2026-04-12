@@ -430,10 +430,18 @@ class Selection:
         Return a DataFrame with columns
         ``dim, tag, kind, label, x, y, z, mass``.
 
-        ``kind`` / ``label`` are read from ``Model._registry`` when
-        available; otherwise they are ``None`` / ``""``.
+        ``kind`` is read from ``Model._metadata`` (entity metadata).
+        ``label`` is read from ``g.labels`` (the single source of truth).
         """
-        reg = self._parent.model._registry
+        reg = self._parent.model._metadata
+        # Build label reverse map from g.labels
+        labels_comp = getattr(self._parent, 'labels', None)
+        label_map: dict[tuple[int, int], str] = {}
+        if labels_comp is not None:
+            try:
+                label_map = labels_comp.reverse_map()
+            except Exception:
+                pass
         centers = self.centers() if self._dimtags else np.empty((0, 3))
         masses  = self.masses()  if self._dimtags else np.empty((0,))
         rows = []
@@ -443,7 +451,7 @@ class Selection:
                 'dim'   : d,
                 'tag'   : t,
                 'kind'  : info.get('kind'),
-                'label' : info.get('label', ''),
+                'label' : label_map.get((d, t), ''),
                 'x'     : centers[i, 0],
                 'y'     : centers[i, 1],
                 'z'     : centers[i, 2],
@@ -747,22 +755,25 @@ def _apply_filters(
         drop = set(int(t) for t in exclude_tags)
         out = [dt for dt in out if dt[1] not in drop]
 
-    # ---- labels (glob over Model._registry labels) -------------------
+    # ---- labels (glob over g.labels — the single source of truth) -----
     if labels is not None:
         patterns = [labels] if isinstance(labels, str) else list(labels)
-        reg = parent.model._registry
+        labels_comp = getattr(parent, 'labels', None)
+        label_map: dict[DimTag, str] = {}
+        if labels_comp is not None:
+            try:
+                label_map = labels_comp.reverse_map()
+            except Exception:
+                pass
         def _match_label(dt: DimTag) -> bool:
-            info = reg.get(dt)
-            if not info:
-                return False
-            lbl = info.get('label', '')
+            lbl = label_map.get(dt, '')
             return any(fnmatch.fnmatch(lbl, p) for p in patterns)
         out = [dt for dt in out if _match_label(dt)]
 
     # ---- kinds -------------------------------------------------------
     if kinds is not None:
         wanted = {kinds} if isinstance(kinds, str) else set(kinds)
-        reg = parent.model._registry
+        reg = parent.model._metadata
         out = [dt for dt in out
                if reg.get(dt, {}).get('kind') in wanted]
 

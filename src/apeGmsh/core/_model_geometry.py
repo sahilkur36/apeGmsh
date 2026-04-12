@@ -7,6 +7,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._helpers import Tag
+from .Labels import snapshot_physical_groups, remap_physical_groups, cleanup_label_pgs
 
 if TYPE_CHECKING:
     from .Model import Model
@@ -587,7 +588,7 @@ class _Geometry:
         # the defining point + unit normal so downstream operations
         # (``cut_by_plane``) can recover the orientation without
         # re-querying Gmsh or re-parsing the geometry.
-        entry = self._model._registry.get((2, tag))
+        entry = self._model._metadata.get((2, tag))
         if entry is not None:
             entry['kind']   = 'cutting_plane'
             entry['point']  = tuple(float(x) for x in p)
@@ -726,24 +727,25 @@ class _Geometry:
     # ------------------------------------------------------------------
 
     def _collect_volume_tags(self) -> list[Tag]:
-        """Return every registered 3-D entity tag from the registry."""
-        return [
-            tag for (dim, tag) in self._model._registry.keys()
-            if dim == 3
-        ]
+        """Return every 3-D entity tag in the model."""
+        return [int(t) for _, t in gmsh.model.getEntities(3)]
 
     def _resolve_label_to_tags(self, label: str) -> list[Tag]:
-        """Find every dim=3 entity in the registry whose ``label``
-        field matches *label*.
+        """Resolve a label string to dim=3 entity tags.
+
+        Delegates to the labels composite (Tier 1, backed by Gmsh
+        PGs) — the single source of truth for label→tag resolution.
 
         Returns an empty list when no match is found — the caller
         decides whether to raise.
         """
-        return [
-            tag
-            for (dim, tag), entry in self._model._registry.items()
-            if dim == 3 and entry.get('label') == label
-        ]
+        labels_comp = getattr(self._model._parent, 'labels', None)
+        if labels_comp is not None:
+            try:
+                return labels_comp.entities(label, dim=3)
+            except KeyError:
+                pass
+        return []
 
     def _normalize_solid_input(
         self,
@@ -850,9 +852,14 @@ class _Geometry:
         """
         solid_tags = self._normalize_solid_input(solid, self._collect_volume_tags)
 
-        out_dimtags, _ = gmsh.model.occ.fragment(
-            [(3, int(t)) for t in solid_tags],
-            [(2, int(surface))],
+        obj_dt = [(3, int(t)) for t in solid_tags]
+        tool_dt = [(2, int(surface))]
+        input_dimtags = obj_dt + tool_dt
+
+        pg_snap = snapshot_physical_groups()
+        out_dimtags, result_map = gmsh.model.occ.fragment(
+            obj_dt,
+            tool_dt,
             removeObject=remove_original,
             removeTool=not keep_surface,
         )
@@ -862,27 +869,27 @@ class _Geometry:
         ]
 
         # Collect the original labels from consumed solids BEFORE
-        # removing them from the registry.  Fragments inherit the
-        # original label so that label-based lookups (e.g.
-        # ``slice("shaft", axis='z', ...)`` after a previous slice)
-        # still resolve to the surviving pieces.
+        # the boolean.  Fragments inherit the original label so that
+        # label-based lookups (e.g. ``slice("shaft", axis='z', ...)``
+        # after a previous slice) still resolve to the surviving pieces.
+        # Labels are read from g.labels (the single source of truth).
         inherited_label = label
         if inherited_label is None and remove_original:
-            original_labels = {
-                entry.get('label')
-                for t in solid_tags
-                for entry in [self._model._registry.get((3, int(t)), {})]
-                if entry.get('label')
-                and entry.get('label') != f"{entry.get('kind', '')}_{t}"
-            }
-            # If all consumed solids share the same user-supplied label,
-            # propagate it.  Mixed labels -> don't guess, leave unlabeled.
-            if len(original_labels) == 1:
-                inherited_label = original_labels.pop()
+            labels_comp = getattr(self._model._parent, 'labels', None)
+            if labels_comp is not None:
+                original_labels: set[str] = set()
+                for t in solid_tags:
+                    original_labels.update(
+                        labels_comp.labels_for_entity(3, int(t))
+                    )
+                # If all consumed solids share one label, propagate it.
+                # Mixed labels -> don't guess, leave unlabeled.
+                if len(original_labels) == 1:
+                    inherited_label = original_labels.pop()
 
         if remove_original:
             for t in solid_tags:
-                self._model._registry.pop((3, int(t)), None)
+                self._model._metadata.pop((3, int(t)), None)
 
         for t in new_volume_tags:
             self._model._register(3, t, inherited_label, 'cut_fragment')
@@ -895,11 +902,12 @@ class _Geometry:
                 int(t) for (d, t) in out_dimtags if d == 2
             ]
             for t in surviving_surfaces:
-                if (2, t) not in self._model._registry:
+                if (2, t) not in self._model._metadata:
                     self._model._register(2, t, None, 'cut_interface')
 
         if sync:
             gmsh.model.occ.synchronize()
+        remap_physical_groups(pg_snap, input_dimtags, result_map)
 
         self._model._log(
             f"cut_by_surface(solids={solid_tags}, surface={int(surface)}) "
@@ -980,7 +988,7 @@ class _Geometry:
         plane_tag = int(plane)
 
         # Resolve the plane's defining point and normal.
-        entry = self._model._registry.get((2, plane_tag))
+        entry = self._model._metadata.get((2, plane_tag))
         stashed_normal = entry.get('normal') if entry else None
         stashed_point  = entry.get('point')  if entry else None
 
@@ -1035,6 +1043,7 @@ class _Geometry:
         # Classify each fragment by the sign of (centroid - p) . n.
         above_tags: list[Tag] = []
         below_tags: list[Tag] = []
+        labels_comp = getattr(self._model._parent, 'labels', None)
         for t in fragments:
             com = np.asarray(
                 gmsh.model.occ.getCenterOfMass(3, int(t)),
@@ -1043,16 +1052,28 @@ class _Geometry:
             signed = float(np.dot(com - point, normal))
             if signed >= 0.0:
                 above_tags.append(t)
-                if label_above is not None:
-                    entry = self._model._registry.get((3, t))
-                    if entry is not None:
-                        entry['label'] = label_above
+                if label_above is not None and labels_comp is not None:
+                    try:
+                        labels_comp.add(3, [t], name=label_above)
+                    except Exception as exc:
+                        import warnings
+                        warnings.warn(
+                            f"Label {label_above!r} for fragment {t} "
+                            f"could not be created: {exc}",
+                            stacklevel=2,
+                        )
             else:
                 below_tags.append(t)
-                if label_below is not None:
-                    entry = self._model._registry.get((3, t))
-                    if entry is not None:
-                        entry['label'] = label_below
+                if label_below is not None and labels_comp is not None:
+                    try:
+                        labels_comp.add(3, [t], name=label_below)
+                    except Exception as exc:
+                        import warnings
+                        warnings.warn(
+                            f"Label {label_below!r} for fragment {t} "
+                            f"could not be created: {exc}",
+                            stacklevel=2,
+                        )
 
         if not above_tags or not below_tags:
             self._model._log(
@@ -1213,6 +1234,7 @@ class _Geometry:
 
         # Remove everything created during the slice that isn't
         # part of the surviving volumes or their boundaries.
+        removed_dts: list[tuple[int, int]] = []
         for d in [2, 1, 0]:   # remove top-down to avoid dangling refs
             for _, t in gmsh.model.getEntities(d):
                 if t in pre_entities.get(d, set()):
@@ -1223,10 +1245,13 @@ class _Geometry:
                     gmsh.model.occ.remove([(d, t)], recursive=False)
                 except Exception:
                     pass
-                self._model._registry.pop((d, t), None)
+                self._model._metadata.pop((d, t), None)
+                removed_dts.append((d, t))
 
         if sync:
             gmsh.model.occ.synchronize()
+        if removed_dts:
+            cleanup_label_pgs(removed_dts)
 
         self._model._log(
             f"slice(axis={axis!r}, offset={offset}, classify={classify})"

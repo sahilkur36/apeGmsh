@@ -36,6 +36,8 @@ from typing import TYPE_CHECKING, Any
 import gmsh
 import numpy as np
 
+from .Labels import snapshot_physical_groups, remap_physical_groups
+
 if TYPE_CHECKING:
     from apeGmsh._session import _SessionBase
     from apeGmsh.core.Part import Part
@@ -465,10 +467,12 @@ class PartsRegistry:
         tool = list(all_ents[1:])
         input_ents = obj + tool
 
+        pg_snap = snapshot_physical_groups()
         result, result_map = gmsh.model.occ.fragment(
             obj, tool, removeObject=True, removeTool=True,
         )
         gmsh.model.occ.synchronize()
+        remap_physical_groups(pg_snap, input_ents, result_map)
 
         # old-tag -> new-tags mapping
         old_to_new: dict[int, list[int]] = {}
@@ -516,11 +520,14 @@ class PartsRegistry:
 
         obj = [(dim, t) for t in inst_a.entities.get(dim, [])]
         tool = [(dim, t) for t in inst_b.entities.get(dim, [])]
+        input_ents = obj + tool
 
-        result, _ = gmsh.model.occ.fragment(
+        pg_snap = snapshot_physical_groups()
+        result, result_map = gmsh.model.occ.fragment(
             obj, tool, removeObject=True, removeTool=True,
         )
         gmsh.model.occ.synchronize()
+        remap_physical_groups(pg_snap, input_ents, result_map)
         return [t for _, t in result]
 
     # ------------------------------------------------------------------
@@ -632,10 +639,16 @@ class PartsRegistry:
             )
 
         # ── OCC fuse ────────────────────────────────────────────────
-        result, _ = gmsh.model.occ.fuse(
+        input_ents = obj + tool
+        pg_snap = snapshot_physical_groups()
+        result, result_map = gmsh.model.occ.fuse(
             obj, tool, removeObject=True, removeTool=True,
         )
         gmsh.model.occ.synchronize()
+        remap_physical_groups(
+            pg_snap, input_ents, result_map,
+            absorbed_into_result=True,
+        )
 
         # ── Drop old instances from registry ────────────────────────
         for lbl in labels:
@@ -842,8 +855,13 @@ class PartsRegistry:
                             try:
                                 labels_comp.add(d, tags, name=prefixed)
                                 label_names.append(prefixed)
-                            except Exception:
-                                pass
+                            except Exception as exc:
+                                import warnings
+                                warnings.warn(
+                                    f"Label rebinding failed for "
+                                    f"{prefixed!r} (dim={d}): {exc}",
+                                    stacklevel=2,
+                                )
 
         inst = Instance(
             label=label,
@@ -914,6 +932,8 @@ class PartsRegistry:
                 ymax = max(ymax, bb[4])
                 zmax = max(zmax, bb[5])
             except Exception:
+                # Entity may lack a valid bbox (e.g. degenerate edge).
+                # Skipping is safe — if ALL fail, the method returns None.
                 pass
         if xmin == float("inf"):
             return None
@@ -954,8 +974,13 @@ class PartsRegistry:
                     returnParametricCoord=False,
                 )
                 tags.update(int(t) for t in nt)
-            except Exception:
-                pass
+            except Exception as exc:
+                import warnings
+                warnings.warn(
+                    f"Could not extract nodes for entity "
+                    f"({dim}, {tag}): {exc}",
+                    stacklevel=2,
+                )
         return tags
 
     def _collect_surface_faces(

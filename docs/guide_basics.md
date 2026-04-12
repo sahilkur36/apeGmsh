@@ -85,9 +85,9 @@ three things in order:
 2. Instantiates every composite listed in `apeGmsh._COMPOSITES` — `model`,
    `mesh`, `physical`, `mesh_selection`, `constraints`, `loads`,
    `opensees`, and so on — and attaches them as attributes on `g`.
-   Those composites share a single `_registry` (the book-keeping dict
-   that tracks every entity created through apeGmsh) so nothing in the
-   pipeline needs to read raw Gmsh tags.
+   Those composites share a single `_metadata` dict (entity metadata
+   like `kind`, cutting-plane normals, etc.) and `g.labels` (the
+   label system backed by Gmsh physical groups).
 3. Marks the session as active. Any composite method that touches gmsh
    asserts `g._active` first; this is what prevents the "I forgot
    `begin()`" footgun.
@@ -104,7 +104,7 @@ A session always uses the **OpenCASCADE kernel** (`gmsh.model.occ`). The
 built-in kernel (`gmsh.model.geo`) is intentionally not wrapped: the
 meshing, constraints, and FEM layers assume OCC semantics (persistent
 entity identity across boolean operations, accurate bounding boxes,
-STEP/IGES I/O). Mixing kernels would break the `_registry`.
+STEP/IGES I/O). Mixing kernels would break the metadata and label tracking.
 
 
 ## 2. Creating geometry
@@ -114,8 +114,8 @@ behind a thin, self-documenting wrapper. Every `add_*` method:
 
 - calls the underlying `gmsh.model.occ.add*` function,
 - calls `gmsh.model.occ.synchronize()` unless `sync=False`,
-- registers the new entity in `g.model._registry` with a `label`,
-  `kind`, and its `DimTag`, and
+- records entity metadata (`kind`) in `g.model._metadata`, and if
+  `label=` was provided, creates a label PG via `g.labels`, and
 - returns the **integer tag** of the new entity.
 
 You therefore rarely touch `gmsh.model.occ` directly.
@@ -145,11 +145,11 @@ with apeGmsh(model_name="demo") as g:
 Two things are worth noting:
 
 1. **Labels are the primary addressing mechanism in apeGmsh.** The raw
-   integer tags are unstable across boolean operations (fragment can
-   split one box into several new tags), but labels can be re-resolved
-   against the registry at any time. Always label anything you plan to
-   reference later — a physical group, a boundary condition surface, a
-   constraint partner.
+   integer tags are unstable — boolean operations (fragment, fuse, cut)
+   can split one entity into several new tags. Labels survive all of
+   this automatically. Always label anything you plan to reference
+   later: a boundary condition surface, a constraint partner, a
+   material region. See the **Labels** subsection below.
 
 2. **`sync=True` is the default.** Each call synchronises OCC before
    returning, which is slow for large models. When you are building a
@@ -179,6 +179,81 @@ Extrusion, revolution, and transforms are exposed via
 `g.model.transforms.extrude(...)`, `g.model.transforms.translate(...)`, `g.model.transforms.rotate(...)`,
 and friends on `_model_transforms.py`. They follow the same
 label + registry conventions as the primitives.
+
+
+### Labels — naming geometry for the rest of the pipeline
+
+Every `add_*` call accepts an optional `label=` parameter. This single
+string is the thread that connects geometry creation to meshing,
+physical groups, constraints, loads, and solver export. Understanding
+how it works is essential.
+
+**What happens when you write `label="shaft"`:**
+
+1. A **Gmsh physical group** is created behind the scenes with the
+   name `_label:shaft`. This is invisible to the solver and to
+   `g.physical` — it is purely geometry-time bookkeeping.
+2. That physical group is the **single source of truth** for label
+   resolution.  `g.labels.entities("shaft")` queries it and returns
+   the current entity tags, even if tags were renumbered by a boolean
+   operation.
+
+**Labels survive boolean operations.** Every `fragment`, `fuse`,
+`cut`, and `intersect` call snapshots all physical groups before the
+operation and remaps their entity membership through the OCC result
+map afterward. You never need to re-resolve labels manually.
+
+```python
+box = g.model.geometry.add_box(0, 0, 0, 1, 1, 3, label="shaft")
+# box == 1 (an integer tag)
+
+plane = g.model.geometry.add_axis_cutting_plane('z', offset=1.5)
+top, bot = g.model.geometry.cut_by_plane(box, plane)
+# box tag 1 is gone — replaced by top=[2] and bot=[3]
+
+# But the label still works:
+g.labels.entities("shaft")  # -> [2, 3] — both fragments
+```
+
+**Labels vs physical groups (two tiers):**
+
+| | Labels (`g.labels`) | Physical groups (`g.physical`) |
+|---|---|---|
+| **Purpose** | Geometry bookkeeping | Solver-facing naming |
+| **Created by** | `label=` on `add_*` methods | Explicit user call |
+| **Gmsh name** | `_label:name` (hidden prefix) | `name` (no prefix) |
+| **Visible to solver** | No | Yes |
+| **Survives booleans** | Yes | Yes |
+
+Labels are the working names you use during model construction.
+Physical groups are the names the solver sees. Promote a label to
+a physical group when you are ready:
+
+```python
+# After geometry + booleans are done:
+g.labels.promote_to_physical("shaft", pg_name="ColumnShaft")
+# or create a PG directly:
+g.physical.add_volume([tag1, tag2], name="ColumnShaft")
+```
+
+**In multi-part assemblies**, labels are prefixed with the instance
+name. If a Part has a label `"bottom"` and you create two instances:
+
+```python
+inst_A = g.parts.add(column, label="col_A")
+inst_B = g.parts.add(column, label="col_B")
+
+inst_A.labels.bottom   # -> "col_A.bottom"
+inst_B.labels.bottom   # -> "col_B.bottom"
+
+g.labels.entities(inst_A.labels.bottom)  # -> tags for A's bottom surface
+g.labels.entities(inst_B.labels.bottom)  # -> tags for B's bottom surface
+```
+
+Labels travel through STEP round-trips via a JSON sidecar file
+(`*.step.apegmsh.json`) that stores center-of-mass anchors for each
+labeled entity. On reimport, entities are matched by geometric
+proximity rather than tag numbers (which STEP does not preserve).
 
 
 ## 3. OCC operations: fragment, fuse, cut, intersect
@@ -255,11 +330,13 @@ footing  = g.model.geometry.add_box(-1, -1, -1, 2, 2, 1, label="footing")
 pieces = g.model.boolean.fragment(soil, footing)
 ```
 
-Because fragmenting can multiply entities, the registry is updated
-**in place**: consumed inputs are popped, new pieces are re-registered
-with a derived label. After a `fragment` you should re-resolve labels
-through `g.model._registry` (or through `g.parts` if you are working
-with parts) rather than relying on the tags you had before the call.
+Because fragmenting can multiply entities, raw integer tags become
+unreliable after the call. **Labels survive automatically**: every
+boolean operation (`fragment`, `fuse`, `cut`, `intersect`) preserves
+label and physical-group membership by remapping entity tags through
+the result map. After a fragment you can keep using
+`g.labels.entities("soil")` and it will return the correct (possibly
+expanded) set of tags.
 
 `fragment` also does a small post-processing step. If the operation
 leaves free-floating surface fragments — for example a cutting plane
@@ -348,7 +425,7 @@ with apeGmsh(model_name="ssi_demo", verbose=True) as g:
 
 The same model, written so the session stays open across what would
 typically be several notebook cells. This is the pattern to use when
-you want to inspect `g.model._registry` between steps, call
+you want to inspect `g.model.queries.registry()` between steps, call
 `g.plot.show()` mid-build, or re-run just the meshing cell without
 rebuilding the geometry.
 

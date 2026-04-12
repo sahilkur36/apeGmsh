@@ -6,6 +6,12 @@ import gmsh
 import pandas as pd
 
 from ._helpers import Tag, DimTag, TagsLike
+from .Labels import (
+    snapshot_physical_groups,
+    remap_physical_groups,
+    cleanup_label_pgs,
+    reconcile_label_pgs,
+)
 
 if TYPE_CHECKING:
     from .Model import Model
@@ -43,7 +49,8 @@ class _Queries:
         if sync:
             gmsh.model.occ.synchronize()
         for dt in dim_tags:
-            self._model._registry.pop(dt, None)
+            self._model._metadata.pop(dt, None)
+        cleanup_label_pgs(dim_tags)
         self._model._log(f"removed {dim_tags} (recursive={recursive})")
 
     def remove_duplicates(
@@ -111,16 +118,20 @@ class _Queries:
         if sync:
             gmsh.model.occ.synchronize()
 
-        # Reconcile registry — drop any (dim, tag) pairs that no longer
+        # Reconcile metadata — drop any (dim, tag) pairs that no longer
         # exist in the gmsh model after the merge.
         surviving: set[tuple[int, int]] = {
             (dim, tag)
             for dim in range(4)
             for _, tag in gmsh.model.getEntities(dim)
         }
-        stale_dts = [dt for dt in self._model._registry if dt not in surviving]
+        stale_dts = [dt for dt in self._model._metadata if dt not in surviving]
         for dt in stale_dts:
-            del self._model._registry[dt]
+            del self._model._metadata[dt]
+
+        # Reconcile label PGs — removeAllDuplicates doesn't provide a
+        # result_map, so we walk all label PGs and drop dead entity tags.
+        reconcile_label_pgs()
 
         after = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
         removed = {d: before[d] - after[d] for d in range(4) if before[d] != after[d]}
@@ -206,25 +217,53 @@ class _Queries:
                 _saved[key] = gmsh.option.getNumber(key)
                 gmsh.option.setNumber(key, tolerance)
 
+        pg_snap = snapshot_physical_groups()
         try:
-            gmsh.model.occ.fragment(all_dimtags, [], removeObject=True, removeTool=True)
+            _, result_map = gmsh.model.occ.fragment(
+                all_dimtags, [], removeObject=True, removeTool=True,
+            )
         finally:
             for key, val in _saved.items():
                 gmsh.option.setNumber(key, val)
 
         if sync:
             gmsh.model.occ.synchronize()
+        remap_physical_groups(pg_snap, all_dimtags, result_map)
 
-        # Rebuild registry from scratch — fragment renumbers entities
-        old_registry = dict(self._model._registry)
-        self._model._registry.clear()
+        # Rebuild metadata from scratch — fragment renumbers entities.
+        # Only kind/normal/point metadata is preserved; labels live
+        # in g.labels (Gmsh PGs) and are remapped by remap_physical_groups.
+        old_metadata = dict(self._model._metadata)
+        self._model._metadata.clear()
         for d in range(4):
             for _, tag in gmsh.model.getEntities(d):
-                old_entry = old_registry.get((d, tag))
+                old_entry = old_metadata.get((d, tag))
                 if old_entry:
-                    self._model._registry[(d, tag)] = old_entry
+                    self._model._metadata[(d, tag)] = old_entry
                 else:
-                    self._model._registry[(d, tag)] = {'label': f'entity_{tag}', 'kind': 'fragment'}
+                    self._model._metadata[(d, tag)] = {'kind': 'fragment'}
+
+        # Remap Instance.entities if the session has a parts registry.
+        # Without this, instances track stale tags after make_conformal.
+        parts = getattr(self._model._parent, 'parts', None)
+        if parts is not None:
+            # Build (dim, old_tag) → [new_tags at same dim]
+            dt_remap: dict[tuple[int, int], list[int]] = {}
+            for old_dt, new_dts in zip(all_dimtags, result_map):
+                od, ot = int(old_dt[0]), int(old_dt[1])
+                dt_remap[(od, ot)] = [int(t) for d, t in new_dts if int(d) == od]
+
+            for inst in parts._instances.values():
+                for d in list(inst.entities.keys()):
+                    old_tags = inst.entities.get(d, [])
+                    new_tags: list[int] = []
+                    for ot in old_tags:
+                        mapped = dt_remap.get((d, ot))
+                        if mapped is not None:
+                            new_tags.extend(mapped)
+                        else:
+                            new_tags.append(ot)
+                    inst.entities[d] = new_tags
 
         after = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
         delta = {d: after[d] - before[d] for d in range(4) if before[d] != after[d]}
@@ -408,13 +447,27 @@ class _Queries:
         tags are only unique within a dimension.
 
         Columns: ``kind``, ``label``
+
+        The ``label`` column is populated from ``g.labels`` (the single
+        source of truth), not from the metadata dict.
         """
-        if not self._model._registry:
+        if not self._model._metadata:
             return pd.DataFrame(columns=['dim', 'tag', 'kind', 'label'])
-        rows = [
-            {'dim': dim, 'tag': tag, **info}
-            for (dim, tag), info in self._model._registry.items()
-        ]
+
+        # Build label reverse map from g.labels
+        labels_comp = getattr(self._model._parent, 'labels', None)
+        label_map: dict[tuple[int, int], str] = {}
+        if labels_comp is not None:
+            try:
+                label_map = labels_comp.reverse_map()
+            except Exception:
+                pass
+
+        rows = []
+        for (dim, tag), info in self._model._metadata.items():
+            row = {'dim': dim, 'tag': tag, **info}
+            row['label'] = label_map.get((dim, tag), '')
+            rows.append(row)
         return (
             pd.DataFrame(rows)
             .set_index(['dim', 'tag'])

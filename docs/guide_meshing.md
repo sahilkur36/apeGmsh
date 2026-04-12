@@ -47,9 +47,8 @@ apeGmsh separates two different uses of a Gmsh "session":
    *assembly-level* Gmsh session — the one the mesher will actually run on. It
    wraps the same `gmsh.model.occ` API through `g.model`, and it keeps its own
    book-keeping in two places:
-   - `g.model._registry: dict[DimTag, dict]` — every entity created through
-     `g.model` is registered with `{'label': str, 'kind': str}`. This is the
-     single source of truth for "what entities exist and what are they".
+   - `g.model._metadata: dict[DimTag, dict]` — entity metadata (`kind`,
+     cutting-plane normals, etc.). Labels live in `g.labels` (Gmsh PGs).
    - `g.parts.instances: dict[str, Instance]` — every imported or inlined
      *part instance* is registered here, with its entities grouped by dimension
      (`Instance.entities: dict[int, list[Tag]]`), translation/rotation, and
@@ -90,7 +89,7 @@ g.model.boolean.fragment (objects, tools, *, dim=3, remove_object=True, remove_t
 
 `objects` and `tools` accept a flexible `TagsLike = Tag | list[Tag] | DimTag |
 list[DimTag]`. The internal `_bool_op()` helper normalises them, calls the OCC
-operation, then updates `Model._registry` — consumed entities are unregistered
+operation, then updates `Model._metadata` — consumed entities are unregistered
 and surviving ones are re-registered with `kind` equal to the operation name.
 
 Semantically:
@@ -195,6 +194,83 @@ depending on recombination). Order changes must be applied *after*
 `g.mesh.generation.refine()` performs one round of uniform subdivision.
 It is cheap for diagnostics but rarely what you want for production meshes —
 prefer size fields (Section 5) for targeted refinement.
+
+### What `generate()` inherits from Gmsh (the default contract)
+
+`g.mesh.generation.generate(dim)` is intentionally a thin wrapper over
+`gmsh.model.mesh.generate(dim)`. apeGmsh does **not** touch any `Mesh.*`
+option behind your back on session startup — `g.begin()` only calls
+`gmsh.initialize()` and `gmsh.model.add(name)`. That means: unless *you*
+(or a previous call on this session) have set an option, `generate()` runs
+with Gmsh's factory defaults.
+
+This is a deliberate contract: every knob you care about is either left at
+Gmsh's default *or* has a visible apeGmsh setter. Nothing in between.
+
+The table below lists the options that actually shape the mesh, the Gmsh
+default in effect when you call `generate()` on a fresh session, and the
+apeGmsh setter (if any) that changes it. When there is no apeGmsh setter,
+you can always fall through to `gmsh.option.setNumber(key, value)` yourself.
+
+| Gmsh option | Default | Effect | apeGmsh setter |
+|---|---|---|---|
+| `Mesh.Algorithm`   | `6` (Frontal-Delaunay) | 2D algorithm, global | `g.mesh.generation.set_algorithm(tag, alg, dim=2)` (per-surface) |
+| `Mesh.Algorithm3D` | `1` (Delaunay)         | 3D algorithm, global. Note: `"auto"` / `"default"` in the apeGmsh string table maps to `HXT` (10), not the raw Gmsh default | `g.mesh.generation.set_algorithm(0, alg, dim=3)` |
+| `Mesh.ElementOrder`                | `1` (linear)     | Element order              | `g.mesh.generation.set_order(order)` (applied *after* `generate()`) |
+| `Mesh.HighOrderOptimize`           | `0` (off)        | Curve high-order elements  | — (raw `gmsh.option`) |
+| `Mesh.MeshSizeMin`                 | `0.0`            | Global floor on element size | `g.mesh.sizing.set_global_size(max, min)` / `set_size_global(min_size=...)` |
+| `Mesh.MeshSizeMax`                 | `1e22`           | Global ceiling on element size | `g.mesh.sizing.set_global_size(max, min)` / `set_size_global(max_size=...)` |
+| `Mesh.MeshSizeFactor`              | `1.0`            | Global multiplier applied to all characteristic lengths | — |
+| `Mesh.MeshSizeFromPoints`          | `1` (on)         | Honour per-point `lc` values from STEP/IGES and `set_size` | `g.mesh.sizing.set_size_sources(from_points=...)` |
+| `Mesh.MeshSizeFromCurvature`       | `0` (off)        | Refine with surface curvature | `g.mesh.sizing.set_size_sources(from_curvature=...)` |
+| `Mesh.MeshSizeExtendFromBoundary`  | `1` (on)         | Propagate boundary sizes inward | `g.mesh.sizing.set_size_sources(extend_from_boundary=...)` |
+| `Mesh.RecombineAll`                | `0` (off)        | Try to recombine triangles into quads globally | `g.mesh.structured.recombine()` |
+| `Mesh.RecombinationAlgorithm`      | `1` (Blossom)    | Blossom-based full-quad merging | — |
+| `Mesh.Recombine3DAll`              | `0` (off)        | Recombine tets into hexes globally | — |
+| `Mesh.Smoothing`                   | `1`              | Number of Laplacian smoothing passes | `g.mesh.structured.set_smoothing(tag, n)` (per-surface) |
+| `Mesh.Optimize`                    | `1` (on)         | Run the built-in tet optimiser after 3D meshing | `g.mesh.generation.optimize(...)` (explicit pass) |
+| `Mesh.OptimizeNetgen`              | `0` (off)        | Netgen optimiser pass | `g.mesh.generation.optimize("Netgen", ...)` |
+| `Mesh.OptimizeThreshold`           | `0.3`            | Quality threshold below which elements are optimised | — |
+| `General.NumThreads`               | `1`              | Threads used by parallel mesh kernels (HXT uses this) | — |
+| `Mesh.Binary`                      | `0` (ASCII)      | Output format when saving `.msh` | — |
+| `Mesh.MshFileVersion`              | `4.1`            | `.msh` file format version | — |
+
+Things worth remembering:
+
+1. **2D vs 3D algorithm defaults differ.** Gmsh's raw default for
+   `Mesh.Algorithm3D` is `1` (plain Delaunay), but apeGmsh's `"auto"` /
+   `"default"` alias points at `HXT` (`10`) because HXT is the modern
+   recommendation. If you never call `set_algorithm(..., dim=3)`, you get
+   **Delaunay**, not HXT. Pass `set_algorithm(0, "hxt", dim=3)` explicitly
+   if you want HXT.
+2. **`Mesh.Optimize=1` is on by default.** A 3D `generate()` already runs
+   one tet-optimiser pass without you asking. Calling
+   `g.mesh.generation.optimize(...)` adds *another* pass on top of that.
+3. **Size from points is on by default.** If you import STEP/IGES and your
+   `set_global_size` appears to be ignored, the file is pushing per-point
+   characteristic lengths through `Mesh.MeshSizeFromPoints`. Disable it
+   with `g.mesh.sizing.set_size_sources(from_points=False)`.
+4. **`MeshSizeMax = 1e22` is effectively "no ceiling".** If you forget to
+   set a global size *and* there are no size fields *and* `from_points` is
+   off, Gmsh will happily produce a one-element mesh of your whole domain.
+5. **Order is set after generate().** `set_order(2)` elevates elements
+   in-place; it is not an option that `generate()` reads. Calling it
+   before `generate()` has no effect.
+6. **apeGmsh never clears options between generations.** If you change
+   `set_algorithm`, `set_global_size`, or call `set_size_sources`, those
+   values stick on the Gmsh session for every subsequent `generate()`
+   until you overwrite them or call `g.end()`.
+
+If you need an option that is not in the table, reach straight through:
+
+```python
+import gmsh
+gmsh.option.setNumber("Mesh.CharacteristicLengthFactor", 0.5)
+g.mesh.generation.generate(3)
+```
+
+This is always allowed — apeGmsh never hides Gmsh from you; it only
+promotes the knobs that matter often enough to deserve a first-class name.
 
 
 ## 4. Mesh algorithms

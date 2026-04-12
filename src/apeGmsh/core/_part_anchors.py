@@ -99,7 +99,7 @@ def collect_anchors(gmsh_module: "_gmsh_t") -> list[dict]:
     list[dict]
         One record per entity in a named label PG.  Each record
         has ``pg_name`` (the label name WITHOUT the ``_label:``
-        prefix), ``dim``, and ``com``.
+        prefix), ``dim``, ``com``, and ``bbox``.
     """
     from .Labels import is_label_pg, strip_prefix
 
@@ -115,11 +115,17 @@ def collect_anchors(gmsh_module: "_gmsh_t") -> list[dict]:
                 com = gmsh_module.model.occ.getCenterOfMass(int(dim), int(tag))
             except Exception:
                 continue
-            records.append({
+            rec: dict = {
                 'pg_name': str(label_name),
                 'dim':     int(dim),
                 'com':     [float(com[0]), float(com[1]), float(com[2])],
-            })
+            }
+            try:
+                bb = gmsh_module.model.getBoundingBox(int(dim), int(tag))
+                rec['bbox'] = [float(v) for v in bb]
+            except Exception:
+                pass
+            records.append(rec)
     return records
 
 
@@ -234,6 +240,13 @@ def apply_transform_to_com(
 # Label rebinding (the big one)
 # =====================================================================
 
+def _bbox_distance(bbox_a: list[float], bbox_b: list[float]) -> float:
+    """L2 distance between two bounding boxes (6-element vectors)."""
+    a = np.asarray(bbox_a, dtype=float)
+    b = np.asarray(bbox_b, dtype=float)
+    return float(np.linalg.norm(a - b))
+
+
 def rebind_physical_groups(
     anchors: list[dict],
     imported_entities: dict[int, list[int]],
@@ -246,11 +259,18 @@ def rebind_physical_groups(
 ) -> dict[str, list[tuple[int, int]]]:
     """Match stored PG anchors against imported entities by COM.
 
+    Uses **exclusive matching**: once an imported entity is claimed by
+    an anchor, it is removed from the candidate pool so no two anchors
+    can claim the same entity.  When multiple candidates have the same
+    COM distance, a bounding-box tiebreaker is used (if both the
+    anchor and the candidate have bbox data).
+
     Parameters
     ----------
     anchors : list[dict]
         Anchors as produced by :func:`collect_anchors` — each must
-        have ``pg_name``, ``dim``, and ``com``.
+        have ``pg_name``, ``dim``, and ``com``.  May optionally have
+        ``bbox`` for tiebreaking.
     imported_entities : dict
         The ``entities`` dict produced by ``_import_cad`` — maps
         ``dim`` to the list of imported entity tags at that dim.
@@ -283,48 +303,102 @@ def rebind_physical_groups(
         )
     abs_tol = float(tolerance) * max(characteristic_length, 1.0)
 
-    # Cache imported COMs per dim.
-    imported_coms: dict[int, list[tuple[int, np.ndarray]]] = {}
+    # -- Cache imported COMs and bboxes per dim -------------------------
+    imported_info: dict[int, list[tuple[int, np.ndarray, list[float] | None]]] = {}
     for dim, tags in imported_entities.items():
         for tag in tags:
             try:
                 com = gmsh_module.model.occ.getCenterOfMass(int(dim), int(tag))
             except Exception:
                 continue
-            imported_coms.setdefault(dim, []).append(
-                (int(tag), np.asarray(com, dtype=float)),
+            try:
+                bb = list(gmsh_module.model.getBoundingBox(int(dim), int(tag)))
+            except Exception:
+                bb = None
+            imported_info.setdefault(dim, []).append(
+                (int(tag), np.asarray(com, dtype=float), bb),
             )
+
+    # -- Build all (anchor_idx, dim, candidate_tag, com_dist, bbox_dist)
+    #    pairs, then sort by (com_dist, bbox_dist) for greedy exclusive
+    #    assignment. ---------------------------------------------------
+    scored: list[tuple[float, float, int, int, int]] = []
+    #   (com_dist, bbox_dist, anchor_idx, dim, candidate_tag)
+
+    for ai, anchor in enumerate(anchors):
+        dim = int(anchor['dim'])
+        com = np.asarray(anchor['com'], dtype=float)
+        expected_com = apply_transform_to_com(com, translate, rotate)
+        anchor_bbox = anchor.get('bbox')
+
+        # Transform bbox if present — transform the 8 corner points
+        # and take the new AABB.  For a pure translation this is
+        # exact; for rotation it's an over-estimate but still a
+        # valid discriminator.
+        expected_bbox: list[float] | None = None
+        if anchor_bbox is not None:
+            corners = np.array([
+                [anchor_bbox[0], anchor_bbox[1], anchor_bbox[2]],
+                [anchor_bbox[3], anchor_bbox[1], anchor_bbox[2]],
+                [anchor_bbox[0], anchor_bbox[4], anchor_bbox[2]],
+                [anchor_bbox[3], anchor_bbox[4], anchor_bbox[2]],
+                [anchor_bbox[0], anchor_bbox[1], anchor_bbox[5]],
+                [anchor_bbox[3], anchor_bbox[1], anchor_bbox[5]],
+                [anchor_bbox[0], anchor_bbox[4], anchor_bbox[5]],
+                [anchor_bbox[3], anchor_bbox[4], anchor_bbox[5]],
+            ], dtype=float)
+            transformed = np.array([
+                apply_transform_to_com(c, translate, rotate)
+                for c in corners
+            ])
+            expected_bbox = [
+                *transformed.min(axis=0).tolist(),
+                *transformed.max(axis=0).tolist(),
+            ]
+
+        candidates = imported_info.get(dim, [])
+        for tag, cand_com, cand_bbox in candidates:
+            com_dist = float(np.linalg.norm(cand_com - expected_com))
+            if com_dist > abs_tol:
+                continue
+            # Bbox tiebreaker: compare only when both sides have data
+            bbox_dist = 0.0
+            if expected_bbox is not None and cand_bbox is not None:
+                bbox_dist = _bbox_distance(expected_bbox, cand_bbox)
+            scored.append((com_dist, bbox_dist, ai, dim, tag))
+
+    # Sort by (com_dist, bbox_dist) — best overall match first
+    scored.sort()
+
+    # -- Greedy exclusive assignment -----------------------------------
+    claimed_entities: dict[int, set[int]] = {}   # dim → {claimed tags}
+    assigned_anchors: set[int] = set()
 
     pg_matches: dict[str, list[tuple[int, int]]] = {}
 
-    for anchor in anchors:
-        pg_name = anchor.get('pg_name') or anchor.get('label', '')
-        dim = int(anchor['dim'])
-        com = np.asarray(anchor['com'], dtype=float)
-        expected = apply_transform_to_com(com, translate, rotate)
-
-        candidates = imported_coms.get(dim, [])
-        if not candidates:
+    for _com_d, _bb_d, ai, dim, tag in scored:
+        if ai in assigned_anchors:
+            continue
+        if tag in claimed_entities.get(dim, set()):
             continue
 
-        best_tag: int | None = None
-        best_dist = float('inf')
-        for tag, cand_com in candidates:
-            d = float(np.linalg.norm(cand_com - expected))
-            if d < best_dist:
-                best_tag = tag
-                best_dist = d
+        # Claim this match
+        assigned_anchors.add(ai)
+        claimed_entities.setdefault(dim, set()).add(tag)
 
-        if best_tag is None or best_dist > abs_tol:
+        pg_name = anchors[ai].get('pg_name') or anchors[ai].get('label', '')
+        pg_matches.setdefault(pg_name, []).append((dim, tag))
+
+    # -- Warn about unmatched anchors ----------------------------------
+    for ai, anchor in enumerate(anchors):
+        if ai not in assigned_anchors:
+            pg_name = anchor.get('pg_name') or anchor.get('label', '')
+            dim = int(anchor['dim'])
             warnings.warn(
                 f"apeGmsh: PG anchor {pg_name!r} (dim={dim}) has no "
-                f"import match within {abs_tol:.3e} — best distance "
-                f"was {best_dist:.3e}.",
+                f"import match within tolerance {abs_tol:.3e}.",
                 stacklevel=2,
             )
-            continue
-
-        pg_matches.setdefault(pg_name, []).append((dim, int(best_tag)))
 
     return pg_matches
 

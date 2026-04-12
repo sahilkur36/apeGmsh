@@ -23,22 +23,22 @@ EntityRef = int | str | tuple[int, int]
 EntityRefs = EntityRef | list[EntityRef] | None
 
 
-def resolve_dim(tag: int, default_dim: int, registry: dict) -> int:
-    """Look up *tag*'s dimension from *registry*, fallback to *default_dim*.
+def resolve_dim(tag: int, default_dim: int) -> int:
+    """Look up *tag*'s dimension by querying the live Gmsh model.
 
-    If the tag appears at exactly one dimension, return that dimension.
-    If ambiguous (same tag at multiple dims) or missing, return *default_dim*.
+    Searches dimensions 3 → 0 and returns the first match.
+    If the tag is not found at any dimension, returns *default_dim*.
     """
-    found = [d for (d, t) in registry if t == tag]
-    if len(found) == 1:
-        return found[0]
+    for d in (3, 2, 1, 0):
+        for _, t in gmsh.model.getEntities(d):
+            if t == tag:
+                return d
     return default_dim
 
 
 def as_dimtags(
     tags: TagsLike,
     default_dim: int = 3,
-    registry: dict | None = None,
 ) -> list[DimTag]:
     """Normalize flexible tag input to ``[(dim, tag), ...]``.
 
@@ -48,14 +48,11 @@ def as_dimtags(
     - ``(2, 5)``           -> ``[(2, 5)]``
     - ``[(2, 5), (2, 6)]`` -> ``[(2, 5), (2, 6)]``
 
-    When *registry* is provided and a bare int tag appears at exactly
-    one dimension in the registry, that dimension is used.  Otherwise
-    *default_dim* is used.
+    Bare int tags are resolved to their dimension by querying the
+    live Gmsh model.  If not found, *default_dim* is used.
     """
     def _dim(t: int) -> int:
-        if registry is not None:
-            return resolve_dim(t, default_dim, registry)
-        return default_dim
+        return resolve_dim(t, default_dim)
 
     if isinstance(tags, int):
         return [(_dim(tags), tags)]

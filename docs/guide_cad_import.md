@@ -33,7 +33,7 @@ All snippets assume `from apeGmsh import apeGmsh, MshLoader`.
 Both formats share a single code path inside the model
 (`_model_io._import_shapes`), which wraps
 `gmsh.model.occ.importShapes`, synchronises the OCC kernel, and
-registers every imported entity in `Model._registry` so that later
+registers every imported entity in `Model._metadata` so that later
 boolean ops, transforms, and queries can address it.
 
 ```python

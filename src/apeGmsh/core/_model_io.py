@@ -196,7 +196,7 @@ class _IO:
             gmsh.model.occ.synchronize()
 
         for d, t in out:
-            if (d, t) not in self._model._registry:
+            if (d, t) not in self._model._metadata:
                 self._model._register(d, t, None, 'healed')
         self._model._log(
             f"heal_shapes(tol={tolerance}) -> {len(out)} entities output"

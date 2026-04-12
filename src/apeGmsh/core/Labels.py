@@ -33,6 +33,15 @@ ready to expose it to the solver::
     tags = g.labels.entities("shaft")
     g.physical.add_volume(tags, name="column_shaft")
 
+Boolean safety
+--------------
+Both label PGs and user PGs survive every OCC boolean operation
+(``fragment``, ``fuse``, ``cut``, ``intersect``).  Two module-level
+functions — :func:`snapshot_physical_groups` and
+:func:`remap_physical_groups` — implement a snapshot-then-remap
+pattern that every boolean call site wraps around the OCC call.
+Users never need to re-resolve labels after a boolean.
+
 Naming convention
 -----------------
 At the Gmsh level, a label named ``"shaft"`` is stored as a
@@ -43,6 +52,7 @@ with ``_label:`` so the two tiers do not interfere.
 """
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 import gmsh
@@ -50,6 +60,7 @@ import gmsh
 if TYPE_CHECKING:
     from apeGmsh._session import _SessionBase
 
+DimTag = tuple[int, int]
 
 # The internal prefix that distinguishes label PGs from user PGs.
 LABEL_PREFIX = "_label:"
@@ -72,6 +83,239 @@ def add_prefix(name: str) -> str:
     if name.startswith(LABEL_PREFIX):
         return name
     return LABEL_PREFIX + name
+
+
+# =====================================================================
+# Boolean-safe PG preservation
+# =====================================================================
+#
+# Gmsh's OCC boolean operations (fragment, fuse, cut, intersect)
+# destroy physical group membership after synchronize().  These two
+# functions implement a snapshot-then-remap pattern that every boolean
+# call site must wrap around the OCC call:
+#
+#     snap = snapshot_physical_groups()
+#     result, result_map = gmsh.model.occ.fragment(obj, tool, ...)
+#     gmsh.model.occ.synchronize()
+#     remap_physical_groups(snap, obj + tool, result_map)
+# =====================================================================
+
+
+def snapshot_physical_groups() -> list[dict]:
+    """Capture every physical group (both ``_label:*`` and user PGs).
+
+    Call this **before** any OCC boolean + synchronize sequence.
+
+    Returns
+    -------
+    list[dict]
+        One entry per PG: ``{'dim', 'pg_tag', 'name', 'entity_tags'}``.
+    """
+    snapshot: list[dict] = []
+    for dim, pg_tag in gmsh.model.getPhysicalGroups():
+        name = gmsh.model.getPhysicalName(dim, pg_tag)
+        ent_tags = list(gmsh.model.getEntitiesForPhysicalGroup(dim, pg_tag))
+        snapshot.append({
+            'dim':         dim,
+            'pg_tag':      pg_tag,
+            'name':        name,
+            'entity_tags': [int(t) for t in ent_tags],
+        })
+    return snapshot
+
+
+def remap_physical_groups(
+    snapshot: list[dict],
+    input_dimtags: list[DimTag],
+    result_map: list[list[DimTag]],
+    *,
+    absorbed_into_result: bool = False,
+) -> None:
+    """Recreate PGs with remapped entity tags after a boolean operation.
+
+    Must be called **after** ``occ.synchronize()``.
+
+    Parameters
+    ----------
+    snapshot
+        Value returned by :func:`snapshot_physical_groups`.
+    input_dimtags
+        The ``obj + tool`` dimtags that were passed to the OCC boolean
+        call — same ordering as ``result_map``.
+    result_map
+        The second return value of the OCC boolean call.  ``result_map[i]``
+        lists the dimtags that ``input_dimtags[i]`` became.
+    absorbed_into_result : bool, default False
+        When True, entities whose ``result_map`` entry is empty are
+        remapped to the **result** entities at the same dimension
+        (the material merged, so the PG should follow).  Use this
+        for ``fuse`` and ``intersect``.  When False (the default,
+        appropriate for ``cut``), empty mappings mean the entity was
+        consumed and a warning is emitted.
+
+    Notes
+    -----
+    * Entities in a PG that were **inputs** to the boolean are remapped
+      through ``result_map``.
+    * Entities that were **not** inputs are kept if they still exist in
+      the model.  If they disappeared (sub-topology casualty of a
+      higher-dim boolean), a warning is emitted and they are dropped.
+    * If a PG becomes entirely empty, a warning is emitted and the PG
+      is not recreated.
+    """
+    if not snapshot:
+        return
+
+    # -- Build old-dimtag → [new-dimtags] mapping ----------------------
+    dt_map: dict[DimTag, list[DimTag]] = {}
+    for old_dt, new_dts in zip(input_dimtags, result_map):
+        key = (int(old_dt[0]), int(old_dt[1]))
+        dt_map[key] = [(int(d), int(t)) for d, t in new_dts]
+
+    input_set = {(int(d), int(t)) for d, t in input_dimtags}
+
+    # -- Collect result entities per dimension (for absorbed-entity fallback)
+    result_by_dim: dict[int, list[int]] = {}
+    for new_dts in result_map:
+        for d, t in new_dts:
+            result_by_dim.setdefault(int(d), []).append(int(t))
+    # Deduplicate
+    for d in result_by_dim:
+        result_by_dim[d] = sorted(set(result_by_dim[d]))
+
+    # -- Current model entities (post-synchronize) ---------------------
+    current_entities: set[DimTag] = set()
+    for d in range(4):
+        for _, t in gmsh.model.getEntities(d):
+            current_entities.add((d, int(t)))
+
+    # -- Remove surviving stale PGs, then recreate ---------------------
+    for entry in snapshot:
+        dim = entry['dim']
+        old_pg_tag = entry['pg_tag']
+        name = entry['name']
+        old_tags = entry['entity_tags']
+
+        # Remove the old PG if it survived synchronize with stale data.
+        # Expected to fail when the PG was already destroyed by
+        # synchronize() — Gmsh raises bare Exception, so we can't
+        # narrow the catch.
+        try:
+            gmsh.model.removePhysicalGroups([(dim, old_pg_tag)])
+        except Exception:
+            pass
+
+        # Remap each entity tag
+        new_tags: list[int] = []
+        for et in old_tags:
+            old_dt = (dim, et)
+            if old_dt in dt_map:
+                # Entity was a boolean input — remap via result_map
+                mapped = [t for d, t in dt_map[old_dt] if d == dim]
+                if mapped:
+                    new_tags.extend(mapped)
+                else:
+                    if absorbed_into_result:
+                        # Entity was absorbed (e.g. fuse tool merged
+                        # into the union).  Fall back to the result
+                        # entities at this dim — material still there.
+                        fallback = result_by_dim.get(dim, [])
+                        if fallback:
+                            new_tags.extend(fallback)
+                            continue
+                    warnings.warn(
+                        f"Physical group '{name}' (dim={dim}): entity "
+                        f"{et} was consumed by the boolean operation.",
+                        stacklevel=3,
+                    )
+            elif old_dt in current_entities:
+                # Not a boolean input and still exists — keep as-is
+                new_tags.append(et)
+            else:
+                # Disappeared as sub-topology side-effect
+                warnings.warn(
+                    f"Physical group '{name}' (dim={dim}): entity {et} "
+                    f"was lost (sub-topology renumbering). Cannot remap.",
+                    stacklevel=3,
+                )
+
+        new_tags = sorted(set(new_tags))
+        if new_tags:
+            new_pg = gmsh.model.addPhysicalGroup(dim, new_tags)
+            gmsh.model.setPhysicalName(dim, new_pg, name)
+        elif old_tags:
+            warnings.warn(
+                f"Physical group '{name}' (dim={dim}) is now empty — "
+                f"all its entities were consumed by the boolean.",
+                stacklevel=3,
+            )
+
+
+# =====================================================================
+# Label PG cleanup after entity removal
+# =====================================================================
+
+
+def cleanup_label_pgs(removed_dimtags: list[DimTag]) -> None:
+    """Remove deleted entity tags from label PGs.
+
+    Call after ``occ.remove()`` + ``synchronize()`` when the caller
+    knows exactly which entities were deleted.  Drops any label PG
+    that becomes empty after the cleanup.
+
+    Only touches ``_label:*`` PGs — user-facing PGs are left alone
+    because the caller may want different semantics there.
+    """
+    if not removed_dimtags:
+        return
+    removed_set = {(int(d), int(t)) for d, t in removed_dimtags}
+    for dim, pg_tag in list(gmsh.model.getPhysicalGroups()):
+        name = gmsh.model.getPhysicalName(dim, pg_tag)
+        if not is_label_pg(name):
+            continue
+        ent_tags = list(gmsh.model.getEntitiesForPhysicalGroup(dim, pg_tag))
+        new_tags = [int(t) for t in ent_tags if (dim, int(t)) not in removed_set]
+        if len(new_tags) == len(ent_tags):
+            continue  # nothing changed
+        # Gmsh raises bare Exception — can't narrow the catch.
+        try:
+            gmsh.model.removePhysicalGroups([(dim, pg_tag)])
+        except Exception:
+            pass
+        if new_tags:
+            new_pg = gmsh.model.addPhysicalGroup(dim, new_tags)
+            gmsh.model.setPhysicalName(dim, new_pg, name)
+
+
+def reconcile_label_pgs() -> None:
+    """Remove stale entity tags from ALL label PGs.
+
+    Walks every ``_label:*`` PG and drops any tag whose entity no
+    longer exists in the Gmsh model.  Use this after operations
+    like ``removeAllDuplicates()`` that renumber entities without
+    providing a result map.
+    """
+    current: set[DimTag] = set()
+    for d in range(4):
+        for _, t in gmsh.model.getEntities(d):
+            current.add((d, int(t)))
+
+    for dim, pg_tag in list(gmsh.model.getPhysicalGroups()):
+        name = gmsh.model.getPhysicalName(dim, pg_tag)
+        if not is_label_pg(name):
+            continue
+        ent_tags = list(gmsh.model.getEntitiesForPhysicalGroup(dim, pg_tag))
+        new_tags = [int(t) for t in ent_tags if (dim, int(t)) in current]
+        if len(new_tags) == len(ent_tags):
+            continue  # nothing changed
+        # Gmsh raises bare Exception — can't narrow the catch.
+        try:
+            gmsh.model.removePhysicalGroups([(dim, pg_tag)])
+        except Exception:
+            pass
+        if new_tags:
+            new_pg = gmsh.model.addPhysicalGroup(dim, new_tags)
+            gmsh.model.setPhysicalName(dim, new_pg, name)
 
 
 class Labels:
@@ -116,11 +360,15 @@ class Labels:
         """
         prefixed = add_prefix(name)
 
+        # Build a name→(dim, pg_tag) index in one pass over all label
+        # PGs.  This replaces up to 4 separate _find_pg_tag scans with
+        # a single O(n) scan + O(1) dict lookups.
+        label_index = self._label_index()
+
         # Check if this label already exists at this dim — merge
         # rather than duplicate.
-        existing_tag = self._find_pg_tag(dim, prefixed)
+        existing_tag = label_index.get((dim, prefixed))
         if existing_tag is not None:
-            import warnings
             existing_ents = list(
                 gmsh.model.getEntitiesForPhysicalGroup(dim, existing_tag)
             )
@@ -146,8 +394,7 @@ class Labels:
         for other_dim in range(4):
             if other_dim == dim:
                 continue
-            if self._find_pg_tag(other_dim, prefixed) is not None:
-                import warnings
+            if (other_dim, prefixed) in label_index:
                 warnings.warn(
                     f"Label {name!r} already exists at dim={other_dim}, "
                     f"now also being created at dim={dim}. This may "
@@ -161,12 +408,19 @@ class Labels:
         self._log(f"add({name!r}, dim={dim}, tags={tags}) -> pg_tag={pg_tag}")
         return pg_tag
 
-    def _find_pg_tag(self, dim: int, prefixed_name: str) -> int | None:
-        """Find the PG tag for a label at a given dim, or None."""
-        for d, t in gmsh.model.getPhysicalGroups(dim):
-            if gmsh.model.getPhysicalName(d, t) == prefixed_name:
-                return t
-        return None
+    @staticmethod
+    def _label_index() -> dict[tuple[int, str], int]:
+        """Build ``(dim, prefixed_name) -> pg_tag`` for all label PGs.
+
+        One pass over ``getPhysicalGroups(-1)`` replaces repeated
+        per-dimension scans.
+        """
+        index: dict[tuple[int, str], int] = {}
+        for d, t in gmsh.model.getPhysicalGroups(-1):
+            pg_name = gmsh.model.getPhysicalName(d, t)
+            if is_label_pg(pg_name):
+                index[(d, pg_name)] = t
+        return index
 
     # ------------------------------------------------------------------
     # Query
@@ -290,6 +544,39 @@ class Labels:
             f"PG {out_name!r} (dim={resolved_dim}, {len(tags)} entities)"
         )
         return pg_tag
+
+    def reverse_map(self, *, dim: int = -1) -> dict[DimTag, str]:
+        """Build a ``(dim, tag) -> label_name`` reverse lookup.
+
+        Useful when callers need to find labels for many entities at
+        once without repeated ``entities()`` calls.
+
+        Parameters
+        ----------
+        dim : int, default -1
+            Filter by dimension.  ``-1`` returns all dimensions.
+        """
+        result: dict[DimTag, str] = {}
+        for d, pg_tag in gmsh.model.getPhysicalGroups(dim):
+            pg_name = gmsh.model.getPhysicalName(d, pg_tag)
+            if not is_label_pg(pg_name):
+                continue
+            name = strip_prefix(pg_name)
+            for t in gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag):
+                result[(int(d), int(t))] = name
+        return result
+
+    def labels_for_entity(self, dim: int, tag: int) -> list[str]:
+        """Return all label names that contain the given entity."""
+        names: list[str] = []
+        for d, pg_tag in gmsh.model.getPhysicalGroups(dim):
+            pg_name = gmsh.model.getPhysicalName(d, pg_tag)
+            if not is_label_pg(pg_name):
+                continue
+            ent_tags = gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag)
+            if tag in ent_tags:
+                names.append(strip_prefix(pg_name))
+        return names
 
     def __repr__(self) -> str:
         try:

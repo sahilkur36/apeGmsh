@@ -73,8 +73,8 @@ class Model:
 
     def __init__(self, parent: "_SessionBase") -> None:
         self._parent = parent
-        # (dim, tag) -> {label, kind}
-        self._registry: dict[DimTag, dict] = {}
+        # (dim, tag) -> {kind, ...}  (labels live in g.labels, not here)
+        self._metadata: dict[DimTag, dict] = {}
 
         # Five focused sub-composites — each one holds a reference to self
         self.geometry = _Geometry(self)
@@ -100,20 +100,19 @@ class Model:
             print(f"[Model] {msg}")
 
     def _resolve_dim(self, tag: int, default_dim: int) -> int:
-        """Resolve tag dimension from registry. See :func:`_helpers.resolve_dim`."""
+        """Resolve tag dimension from the live Gmsh model. See :func:`_helpers.resolve_dim`."""
         from ._helpers import resolve_dim
-        return resolve_dim(tag, default_dim, self._registry)
+        return resolve_dim(tag, default_dim)
 
     def _as_dimtags(self, tags: TagsLike, default_dim: int = 3) -> list[DimTag]:
         """Normalize tag input to [(dim, tag), ...]. See :func:`_helpers.as_dimtags`."""
         from ._helpers import as_dimtags
-        return as_dimtags(tags, default_dim, registry=self._registry)
+        return as_dimtags(tags, default_dim)
 
     def _register(self, dim: int, tag: Tag, label: str | None, kind: str) -> Tag:
-        self._registry[(dim, tag)] = {
-            'label': label if label else f'{kind}_{tag}',
-            'kind':  kind,
-        }
+        # Metadata only — labels live exclusively in g.labels (Gmsh PGs).
+        self._metadata[(dim, tag)] = {'kind': kind}
+
         # When the owning session has ``_auto_pg_from_label`` set
         # (both Part and apeGmsh sessions), automatically create a
         # **label PG** (Tier 1 — geometry bookkeeping, prefixed with
@@ -122,15 +121,20 @@ class Model:
         # sidecar into the Assembly.  This does NOT create a solver-
         # facing physical group — the user promotes labels to PGs
         # explicitly via ``g.labels.promote_to_physical("name")``.
-        # Failures are silenced — label creation must never break
-        # geometry creation.
+        # Label creation must never break geometry creation, but
+        # failures are logged so they don't hide real bugs.
         if label and getattr(self._parent, '_auto_pg_from_label', False):
             labels_comp = getattr(self._parent, 'labels', None)
             if labels_comp is not None:
                 try:
                     labels_comp.add(dim, [tag], name=label)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    import warnings
+                    warnings.warn(
+                        f"Label {label!r} (dim={dim}, tag={tag}) could "
+                        f"not be created: {exc}",
+                        stacklevel=3,
+                    )
         return tag
 
     # ------------------------------------------------------------------
@@ -230,4 +234,4 @@ class Model:
     # ------------------------------------------------------------------
 
     def __repr__(self) -> str:
-        return f"Model(name={self._parent.name!r}, registered={len(self._registry)})"
+        return f"Model(name={self._parent.name!r}, entities={len(self._metadata)})"
