@@ -24,8 +24,9 @@ opensees = ["openseespy"]
 vtk = []  # VTKExport uses only numpy + stdlib
 g2o = ["gmsh2opensees"]
 dxf = ["ezdxf"]
-viewer = ["PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2"]
-all = ["matplotlib", "openseespy", "gmsh2opensees", "ezdxf"]
+viewer = ["PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy"]
+all = ["matplotlib", "openseespy", "gmsh2opensees", "ezdxf",
+       "PySide6>=6.5", "pyvista>=0.43", "pyvistaqt>=0.11", "vtk>=9.2", "qtpy"]
 
 [project.scripts]
 apegmsh-viewer = "apeGmshViewer.__main__:main"
