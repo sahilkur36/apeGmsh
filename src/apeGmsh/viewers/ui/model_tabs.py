@@ -320,9 +320,7 @@ class ViewTab:
         self,
         dims: list[int],
         *,
-        on_labels_changed: Callable[
-            [dict[int, bool], int, bool, bool], None
-        ] | None = None,
+        on_labels_changed: Callable[..., None] | None = None,
     ) -> None:
         """
         Parameters
@@ -355,14 +353,21 @@ class ViewTab:
 
         layout.addWidget(group)
 
-        # ── Part labels group ───────────────────────────────────────
-        parts_group = QtWidgets.QGroupBox("Part labels")
-        parts_layout = QtWidgets.QVBoxLayout(parts_group)
-        self._show_parts = QtWidgets.QCheckBox("Show part labels")
+        # ── Instance / entity labels group ─────────────────────────
+        labels_group = QtWidgets.QGroupBox("Instance & entity labels")
+        labels_layout = QtWidgets.QVBoxLayout(labels_group)
+
+        self._show_parts = QtWidgets.QCheckBox("Show part instance labels")
         self._show_parts.setChecked(False)
         self._show_parts.toggled.connect(self._fire)
-        parts_layout.addWidget(self._show_parts)
-        layout.addWidget(parts_group)
+        labels_layout.addWidget(self._show_parts)
+
+        self._show_entity_labels = QtWidgets.QCheckBox("Show entity labels (Tier 1)")
+        self._show_entity_labels.setChecked(False)
+        self._show_entity_labels.toggled.connect(self._fire)
+        labels_layout.addWidget(self._show_entity_labels)
+
+        layout.addWidget(labels_group)
 
         # ── Label style ─────────────────────────────────────────────
         style_group = QtWidgets.QGroupBox("Label style")
@@ -390,7 +395,10 @@ class ViewTab:
         font_size = self._font_size.value()
         use_names = self._use_names.isChecked()
         show_parts = self._show_parts.isChecked()
-        self._on_labels_changed(active, font_size, use_names, show_parts)
+        show_entity_labels = self._show_entity_labels.isChecked()
+        self._on_labels_changed(
+            active, font_size, use_names, show_parts, show_entity_labels,
+        )
 
 
 # ======================================================================

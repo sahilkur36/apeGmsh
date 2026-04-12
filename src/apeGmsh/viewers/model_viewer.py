@@ -225,7 +225,12 @@ class ModelViewer:
         _label_actors: list = []
         _DIM_ABBR = {0: "P", 1: "C", 2: "S", 3: "V"}
 
-        def _on_labels_changed(active_dims, font_size, use_names, show_parts=False):
+        def _on_labels_changed(
+            active_dims, font_size, use_names,
+            show_parts=False, show_entity_labels=False,
+        ):
+            from apeGmsh.core.Labels import is_label_pg, strip_prefix
+
             # Remove existing labels
             for a in _label_actors:
                 try:
@@ -240,9 +245,6 @@ class ModelViewer:
                 points = []
                 labels = []
                 for _, tag in gmsh.model.getEntities(dim=dim):
-                    # Prefer registry centroid (computed from mesh
-                    # points, always inside the geometry) over bbox
-                    # center which can be outside concave shapes.
                     dt = (dim, tag)
                     c = registry.centroid(dt)
                     if c is not None:
@@ -257,7 +259,6 @@ class ModelViewer:
                         except Exception:
                             continue
                     if use_names:
-                        # Try to get physical group name
                         name = None
                         for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(dim):
                             try:
@@ -265,10 +266,15 @@ class ModelViewer:
                                     pg_dim, pg_tag,
                                 )
                                 if tag in ents:
-                                    name = gmsh.model.getPhysicalName(
+                                    pg_name = gmsh.model.getPhysicalName(
                                         pg_dim, pg_tag,
                                     )
-                                    break
+                                    # Skip label PGs here — they show
+                                    # in the dedicated entity-label
+                                    # overlay below.
+                                    if not is_label_pg(pg_name):
+                                        name = pg_name
+                                        break
                             except Exception:
                                 pass
                         labels.append(
@@ -334,6 +340,51 @@ class ModelViewer:
                             always_visible=True,
                             bold=True,
                             name="_labels_parts",
+                        )
+                        _label_actors.append(actor)
+                    except Exception:
+                        pass
+
+            # ── Entity labels (Tier 1 — from g.labels) ────────────
+            if show_entity_labels:
+                label_points = []
+                label_texts = []
+                for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
+                    pg_name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
+                    if not is_label_pg(pg_name):
+                        continue
+                    display_name = strip_prefix(pg_name)
+                    ent_tags = gmsh.model.getEntitiesForPhysicalGroup(
+                        pg_dim, pg_tag,
+                    )
+                    for tag in ent_tags:
+                        dt = (pg_dim, int(tag))
+                        c = registry.centroid(dt)
+                        if c is not None:
+                            label_points.append(c)
+                        else:
+                            try:
+                                bb = gmsh.model.getBoundingBox(pg_dim, int(tag))
+                                cx = (bb[0] + bb[3]) * 0.5 - registry.origin_shift[0]
+                                cy = (bb[1] + bb[4]) * 0.5 - registry.origin_shift[1]
+                                cz = (bb[2] + bb[5]) * 0.5 - registry.origin_shift[2]
+                                label_points.append([cx, cy, cz])
+                            except Exception:
+                                continue
+                        label_texts.append(display_name)
+
+                if label_points:
+                    try:
+                        actor = plotter.add_point_labels(
+                            np.array(label_points), label_texts,
+                            font_size=font_size,
+                            text_color="#f9e2af",     # warm yellow
+                            shape_color="#1e1e2e",
+                            shape_opacity=0.75,
+                            show_points=False,
+                            always_visible=True,
+                            italic=True,
+                            name="_labels_entities",
                         )
                         _label_actors.append(actor)
                     except Exception:
