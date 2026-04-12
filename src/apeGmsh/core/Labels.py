@@ -120,15 +120,25 @@ class Labels:
         # rather than duplicate.
         existing_tag = self._find_pg_tag(dim, prefixed)
         if existing_tag is not None:
-            # Merge: get existing entity list, add new tags, recreate.
+            import warnings
             existing_ents = list(
                 gmsh.model.getEntitiesForPhysicalGroup(dim, existing_tag)
             )
-            merged = sorted(set(existing_ents) | set(int(t) for t in tags))
+            new_tags = set(int(t) for t in tags)
+            truly_new = new_tags - set(existing_ents)
+            if truly_new:
+                warnings.warn(
+                    f"Label {name!r} (dim={dim}) already exists with "
+                    f"{len(existing_ents)} entity(ies). Merging "
+                    f"{len(truly_new)} new tag(s) into it. If this is "
+                    f"unintentional, use a different label name.",
+                    stacklevel=3,
+                )
+            merged = sorted(set(existing_ents) | new_tags)
             gmsh.model.removePhysicalGroups([(dim, existing_tag)])
             pg_tag = gmsh.model.addPhysicalGroup(dim, merged)
             gmsh.model.setPhysicalName(dim, pg_tag, prefixed)
-            self._log(f"add({name!r}, dim={dim}) → merged into pg_tag={pg_tag}")
+            self._log(f"add({name!r}, dim={dim}) merged into pg_tag={pg_tag}")
             return pg_tag
 
         pg_tag = gmsh.model.addPhysicalGroup(dim, [int(t) for t in tags])
