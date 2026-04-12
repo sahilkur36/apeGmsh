@@ -435,7 +435,10 @@ class Labels:
             Label name (without prefix).
         dim : int, optional
             Restrict to a single dimension.  When None, searches
-            all dimensions and returns the first match.
+            all dimensions.  If the label exists at exactly one
+            dimension, returns those entities.  If it exists at
+            multiple dimensions, raises ``ValueError`` asking the
+            caller to specify ``dim=``.
 
         Returns
         -------
@@ -446,11 +449,15 @@ class Labels:
         ------
         KeyError
             When no label with this name exists.
+        ValueError
+            When ``dim=None`` and the label exists at multiple
+            dimensions.
         """
         prefixed = add_prefix(name)
-        dims = [dim] if dim is not None else [0, 1, 2, 3]
-        for d in dims:
-            for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(d):
+
+        if dim is not None:
+            # Direct lookup at a specific dimension
+            for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(dim):
                 pg_name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
                 if pg_name == prefixed:
                     return [
@@ -459,9 +466,39 @@ class Labels:
                             pg_dim, pg_tag,
                         )
                     ]
-        available = self.get_all()
-        raise KeyError(
-            f"no label {name!r} found. Available labels: {available}"
+            available = self.get_all()
+            raise KeyError(
+                f"no label {name!r} found at dim={dim}. "
+                f"Available labels: {available}"
+            )
+
+        # dim=None — search all dimensions, require unambiguous match
+        matches: list[tuple[int, int]] = []  # (pg_dim, pg_tag)
+        for d in range(4):
+            for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(d):
+                if gmsh.model.getPhysicalName(pg_dim, pg_tag) == prefixed:
+                    matches.append((pg_dim, pg_tag))
+
+        if not matches:
+            available = self.get_all()
+            raise KeyError(
+                f"no label {name!r} found. Available labels: {available}"
+            )
+
+        if len(matches) == 1:
+            pg_dim, pg_tag = matches[0]
+            return [
+                int(t)
+                for t in gmsh.model.getEntitiesForPhysicalGroup(
+                    pg_dim, pg_tag,
+                )
+            ]
+
+        dims_found = sorted(set(d for d, _ in matches))
+        raise ValueError(
+            f"Label {name!r} exists at multiple dimensions "
+            f"{dims_found}. Specify dim= to disambiguate, e.g. "
+            f"g.labels.entities({name!r}, dim={dims_found[-1]})"
         )
 
     def get_all(self, *, dim: int = -1) -> list[str]:
@@ -486,6 +523,83 @@ class Labels:
             return True
         except KeyError:
             return False
+
+    # ------------------------------------------------------------------
+    # Remove / rename
+    # ------------------------------------------------------------------
+
+    def remove(self, name: str, *, dim: int | None = None) -> None:
+        """Delete a label (and its backing physical group).
+
+        Parameters
+        ----------
+        name : str
+            Label name (without prefix).
+        dim : int, optional
+            Restrict to a single dimension.  When None, removes the
+            label at **all** dimensions where it exists.
+
+        Raises
+        ------
+        KeyError
+            When no label with this name exists.
+        """
+        prefixed = add_prefix(name)
+        dims = [dim] if dim is not None else [0, 1, 2, 3]
+        removed = False
+        for d in dims:
+            for pg_dim, pg_tag in list(gmsh.model.getPhysicalGroups(d)):
+                if gmsh.model.getPhysicalName(pg_dim, pg_tag) == prefixed:
+                    gmsh.model.removePhysicalGroups([(pg_dim, pg_tag)])
+                    removed = True
+        if not removed:
+            raise KeyError(
+                f"no label {name!r} found"
+                + (f" at dim={dim}" if dim is not None else "")
+                + f". Available labels: {self.get_all()}"
+            )
+        self._log(f"remove({name!r}, dim={dim})")
+
+    def rename(self, old_name: str, new_name: str, *, dim: int | None = None) -> None:
+        """Rename a label in place, preserving its entity membership.
+
+        Parameters
+        ----------
+        old_name : str
+            Current label name (without prefix).
+        new_name : str
+            New label name (without prefix).
+        dim : int, optional
+            Restrict to a single dimension.  When None, renames the
+            label at **all** dimensions where it exists.
+
+        Raises
+        ------
+        KeyError
+            When no label with *old_name* exists.
+        """
+        old_prefixed = add_prefix(old_name)
+        new_prefixed = add_prefix(new_name)
+        dims = [dim] if dim is not None else [0, 1, 2, 3]
+        renamed = False
+        for d in dims:
+            for pg_dim, pg_tag in list(gmsh.model.getPhysicalGroups(d)):
+                if gmsh.model.getPhysicalName(pg_dim, pg_tag) == old_prefixed:
+                    # Read entities, remove old PG, create new one
+                    ent_tags = list(
+                        gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
+                    )
+                    gmsh.model.removePhysicalGroups([(pg_dim, pg_tag)])
+                    new_pg = gmsh.model.addPhysicalGroup(pg_dim, [int(t) for t in ent_tags])
+                    gmsh.model.setPhysicalName(pg_dim, new_pg, new_prefixed)
+                    renamed = True
+        if not renamed:
+            raise KeyError(
+                f"no label {old_name!r} found"
+                + (f" at dim={dim}" if dim is not None else "")
+                + f". Available labels: {self.get_all()}"
+            )
+        self._log(f"rename({old_name!r} -> {new_name!r}, dim={dim})")
 
     # ------------------------------------------------------------------
     # Promote to physical group
