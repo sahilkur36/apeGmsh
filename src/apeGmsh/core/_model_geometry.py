@@ -732,33 +732,64 @@ class _Geometry:
             if dim == 3
         ]
 
-    @staticmethod
+    def _resolve_label_to_tags(self, label: str) -> list[Tag]:
+        """Find every dim=3 entity in the registry whose ``label``
+        field matches *label*.
+
+        Returns an empty list when no match is found — the caller
+        decides whether to raise.
+        """
+        return [
+            tag
+            for (dim, tag), entry in self._model._registry.items()
+            if dim == 3 and entry.get('label') == label
+        ]
+
     def _normalize_solid_input(
-        solid: Tag | list[Tag] | None,
+        self,
+        solid: Tag | str | list[Tag | str] | None,
         collector,
     ) -> list[Tag]:
         """Coerce the ``solid`` argument into a concrete list of tags.
 
-        ``None`` means "every registered volume" and delegates to
-        ``collector()``; a single int is wrapped into a one-element
-        list; a sequence is normalised to ``list[int]``.
+        Accepts:
+
+        * ``None`` — every registered volume (via ``collector()``).
+        * ``int`` — a single tag, wrapped into a one-element list.
+        * ``str`` — a registry label; resolved to every dim=3 entity
+          whose ``label`` field matches.  This is the key feature
+          for chained slicing: after a slice the original tag is
+          consumed but the label can be propagated to the fragments,
+          so the next slice can still say ``slice("shaft", ...)``.
+        * ``list`` — a mix of ints and/or strings, each resolved
+          individually and concatenated.
         """
         if solid is None:
             tags = collector()
+        elif isinstance(solid, str):
+            tags = self._resolve_label_to_tags(solid)
         elif isinstance(solid, int):
             tags = [int(solid)]
+        elif isinstance(solid, (list, tuple)):
+            tags = []
+            for item in solid:
+                if isinstance(item, str):
+                    tags.extend(self._resolve_label_to_tags(item))
+                else:
+                    tags.append(int(item))
         else:
-            tags = [int(t) for t in solid]
+            tags = [int(solid)]
         if not tags:
             raise ValueError(
-                "no solids to cut — pass an explicit tag list or "
-                "register at least one volume before calling the cut"
+                "no solids to cut — pass an explicit tag list, a "
+                "label string, or register at least one volume "
+                "before calling the cut"
             )
         return tags
 
     def cut_by_surface(
         self,
-        solid          : Tag | list[Tag] | None,
+        solid          : Tag | str | list[Tag | str] | None,
         surface        : Tag,
         *,
         keep_surface   : bool = True,
@@ -830,15 +861,31 @@ class _Geometry:
             int(t) for (d, t) in out_dimtags if d == 3
         ]
 
-        # OCC's fragment renumbers entities.  Consumed inputs are no
-        # longer in the registry; re-register every surviving fragment
-        # under the given kind/label so later operations can find them.
+        # Collect the original labels from consumed solids BEFORE
+        # removing them from the registry.  Fragments inherit the
+        # original label so that label-based lookups (e.g.
+        # ``slice("shaft", axis='z', ...)`` after a previous slice)
+        # still resolve to the surviving pieces.
+        inherited_label = label
+        if inherited_label is None and remove_original:
+            original_labels = {
+                entry.get('label')
+                for t in solid_tags
+                for entry in [self._model._registry.get((3, int(t)), {})]
+                if entry.get('label')
+                and entry.get('label') != f"{entry.get('kind', '')}_{t}"
+            }
+            # If all consumed solids share the same user-supplied label,
+            # propagate it.  Mixed labels → don't guess, leave unlabeled.
+            if len(original_labels) == 1:
+                inherited_label = original_labels.pop()
+
         if remove_original:
             for t in solid_tags:
                 self._model._registry.pop((3, int(t)), None)
 
         for t in new_volume_tags:
-            self._model._register(3, t, label, 'cut_fragment')
+            self._model._register(3, t, inherited_label, 'cut_fragment')
 
         # The trimmed cutting surface may have been split into multiple
         # faces; keep whichever 2-D entities came out so they stay
@@ -862,7 +909,7 @@ class _Geometry:
 
     def cut_by_plane(
         self,
-        solid          : Tag | list[Tag] | None,
+        solid          : Tag | str | list[Tag | str] | None,
         plane          : Tag,
         *,
         keep_plane     : bool = True,
@@ -1041,7 +1088,7 @@ class _Geometry:
 
     def slice(
         self,
-        solid   : Tag | list[Tag] | None = None,
+        solid   : Tag | str | list[Tag | str] | None = None,
         *,
         axis    : Literal['x', 'y', 'z'],
         offset  : float = 0.0,
