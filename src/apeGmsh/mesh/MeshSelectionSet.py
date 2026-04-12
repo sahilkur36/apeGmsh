@@ -35,10 +35,9 @@ import pandas as pd
 from . import _mesh_filters as _flt
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._types import SessionProtocol as _SessionBase
 
-Tag = int
-DimTag = tuple[int, int]
+from apeGmsh._types import Tag, DimTag
 
 _DIM_LABEL = {0: "nodes", 1: "line_elems", 2: "surf_elems", 3: "vol_elems"}
 
@@ -47,7 +46,10 @@ _DIM_LABEL = {0: "nodes", 1: "line_elems", 2: "surf_elems", 3: "vol_elems"}
 # MeshSelectionSet — mutable composite (lives on g.mesh_selection)
 # ======================================================================
 
-class MeshSelectionSet:
+from apeGmsh._logging import _HasLogging
+
+
+class MeshSelectionSet(_HasLogging):
     """Post-mesh selection composite — complementary to PhysicalGroups.
 
     Attached to ``g.mesh_selection`` by the session framework.
@@ -56,14 +58,12 @@ class MeshSelectionSet:
     downstream consumers (solvers, FEMData) can treat both identically.
     """
 
+    _log_prefix = "MeshSelection"
+
     def __init__(self, parent: "_SessionBase") -> None:
         self._parent = parent
         self._sets: dict[DimTag, dict] = {}
         self._next_tag: dict[int, int] = {0: 1, 1: 1, 2: 1, 3: 1}
-
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[MeshSelection] {msg}")
 
     # ------------------------------------------------------------------
     # Internal helpers

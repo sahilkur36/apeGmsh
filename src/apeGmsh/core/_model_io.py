@@ -12,6 +12,208 @@ if TYPE_CHECKING:
     from .Model import Model
 
 
+class _DXFImporter:
+    """Encapsulates the DXF -> OCC geometry conversion pipeline.
+
+    Owns point deduplication, per-entity-type conversion, and
+    post-dedup layer rebuilding.  Instantiated by :meth:`_IO.load_dxf`.
+    """
+
+    def __init__(self, model: "Model", tol: float) -> None:
+        self._model = model
+        self._tol = tol
+        self._pt_cache: dict[tuple[int, int, int], Tag] = {}
+        self._geom_to_layer: dict[tuple[float, ...], str] = {}
+        self._pt_to_layer: dict[tuple[int, int, int], str] = {}
+
+    # -- helpers ----------------------------------------------------------
+
+    def _point_key(self, x: float, y: float, z: float) -> tuple[int, int, int]:
+        inv = 1.0 / self._tol
+        return (round(x * inv), round(y * inv), round(z * inv))
+
+    def _get_or_add_point(self, x: float, y: float, z: float) -> Tag:
+        key = self._point_key(x, y, z)
+        if key in self._pt_cache:
+            return self._pt_cache[key]
+        tag = gmsh.model.occ.addPoint(x, y, z)
+        self._pt_cache[key] = tag
+        self._model._register(0, tag, None, 'dxf_point')
+        return tag
+
+    @staticmethod
+    def _bbox_key(
+        x0: float, y0: float, z0: float,
+        x1: float, y1: float, z1: float,
+    ) -> tuple[float, ...]:
+        return (
+            round(min(x0, x1), 8), round(min(y0, y1), 8),
+            round(min(z0, z1), 8), round(max(x0, x1), 8),
+            round(max(y0, y1), 8), round(max(z0, z1), 8),
+        )
+
+    # -- per-entity-type converters ---------------------------------------
+
+    def _convert_point(self, entity) -> None:
+        pt = entity.dxf.location
+        self._get_or_add_point(pt.x, pt.y, pt.z)
+        self._pt_to_layer[self._point_key(pt.x, pt.y, pt.z)] = entity.dxf.layer
+
+    def _convert_line(self, entity) -> None:
+        s, e = entity.dxf.start, entity.dxf.end
+        p1 = self._get_or_add_point(s.x, s.y, s.z)
+        p2 = self._get_or_add_point(e.x, e.y, e.z)
+        gmsh.model.occ.addLine(p1, p2)
+        self._geom_to_layer[self._bbox_key(s.x, s.y, s.z, e.x, e.y, e.z)] = entity.dxf.layer
+
+    def _convert_arc(self, entity) -> None:
+        c = entity.dxf.center
+        r = entity.dxf.radius
+        a1 = math.radians(entity.dxf.start_angle)
+        a2 = math.radians(entity.dxf.end_angle)
+        if a2 <= a1:
+            a2 += 2.0 * math.pi
+        gmsh.model.occ.addCircle(c.x, c.y, c.z, r, angle1=a1, angle2=a2)
+        sx = c.x + r * math.cos(a1)
+        sy = c.y + r * math.sin(a1)
+        ex = c.x + r * math.cos(a2)
+        ey = c.y + r * math.sin(a2)
+        self._geom_to_layer[self._bbox_key(sx, sy, c.z, ex, ey, c.z)] = entity.dxf.layer
+
+    def _convert_circle(self, entity) -> None:
+        c = entity.dxf.center
+        r = entity.dxf.radius
+        gmsh.model.occ.addCircle(c.x, c.y, c.z, r)
+        self._geom_to_layer[self._bbox_key(
+            c.x - r, c.y - r, c.z, c.x + r, c.y + r, c.z,
+        )] = entity.dxf.layer
+
+    def _convert_polyline(self, entity) -> None:
+        etype = entity.dxftype()
+        layer = entity.dxf.layer
+        if etype == 'LWPOLYLINE':
+            vertices = list(entity.get_points(format='xyz'))  # type: ignore[attr-defined]
+        else:
+            vertices = [
+                (v.dxf.location.x, v.dxf.location.y, v.dxf.location.z)
+                for v in entity.vertices  # type: ignore[attr-defined]
+            ]
+        pts = [self._get_or_add_point(vx, vy, vz) for vx, vy, vz in vertices]
+
+        is_closed = (
+            getattr(entity.dxf, 'flags', 0) & 1
+            if etype == 'POLYLINE' else entity.closed  # type: ignore[attr-defined]
+        )
+        vert_pairs = list(zip(vertices, vertices[1:]))
+        if is_closed and len(vertices) > 2:
+            vert_pairs.append((vertices[-1], vertices[0]))
+
+        pt_pairs = list(zip(pts, pts[1:]))
+        if is_closed and len(pts) > 2:
+            pt_pairs.append((pts[-1], pts[0]))
+
+        for (v_s, v_e), (p1, p2) in zip(vert_pairs, pt_pairs):
+            gmsh.model.occ.addLine(p1, p2)
+            self._geom_to_layer[self._bbox_key(
+                v_s[0], v_s[1], v_s[2], v_e[0], v_e[1], v_e[2],
+            )] = layer
+
+    def _convert_spline(self, entity) -> None:
+        ctrl_pts: list[Tag] = []
+        for cp in entity.control_points:  # type: ignore[attr-defined]
+            ctrl_pts.append(self._get_or_add_point(
+                cp[0], cp[1], cp[2] if len(cp) > 2 else 0.0,
+            ))
+        if len(ctrl_pts) < 2:
+            return
+        gmsh.model.occ.addBSpline(ctrl_pts)
+        cps = entity.control_points  # type: ignore[attr-defined]
+        xs = [c[0] for c in cps]
+        ys = [c[1] for c in cps]
+        zs = [c[2] if len(c) > 2 else 0.0 for c in cps]
+        self._geom_to_layer[self._bbox_key(
+            min(xs), min(ys), min(zs), max(xs), max(ys), max(zs),
+        )] = entity.dxf.layer
+
+    # -- dispatch table ---------------------------------------------------
+
+    _CONVERTERS: dict[str, str] = {
+        'POINT': '_convert_point',
+        'LINE': '_convert_line',
+        'ARC': '_convert_arc',
+        'CIRCLE': '_convert_circle',
+        'LWPOLYLINE': '_convert_polyline',
+        'POLYLINE': '_convert_polyline',
+        'SPLINE': '_convert_spline',
+    }
+
+    # -- main entry point -------------------------------------------------
+
+    def run(
+        self,
+        file_path: Path,
+        create_physical_groups: bool,
+        sync: bool,
+    ) -> dict[str, dict[int, list[Tag]]]:
+        try:
+            import ezdxf
+        except ImportError:
+            raise ImportError(
+                "ezdxf is required for DXF import.  "
+                "Install it with:  pip install ezdxf"
+            )
+
+        if not file_path.exists():
+            raise FileNotFoundError(f"DXF file not found: {file_path}")
+
+        doc = ezdxf.readfile(str(file_path))
+        msp = doc.modelspace()
+
+        # Convert entities
+        for entity in msp:
+            etype = entity.dxftype()
+            method_name = self._CONVERTERS.get(etype)
+            if method_name:
+                getattr(self, method_name)(entity)
+            else:
+                self._model._log(
+                    f"DXF: skipped unsupported entity {etype} "
+                    f"on layer '{entity.dxf.layer}'"
+                )
+
+        # Merge duplicates & synchronise
+        gmsh.model.occ.removeAllDuplicates()
+        gmsh.model.occ.synchronize()
+
+        # Rebuild layer mapping from surviving entities
+        layers = self._rebuild_layers()
+
+        if create_physical_groups:
+            for layer_name, dim_tags in layers.items():
+                for dim, tags in dim_tags.items():
+                    if tags:
+                        gmsh.model.addPhysicalGroup(dim, tags, name=layer_name)
+
+        layer_summary = {
+            name: {d: len(ts) for d, ts in ents.items()}
+            for name, ents in layers.items()
+        }
+        self._model._log(f"loaded DXF <- {file_path.name}  layers={layer_summary}")
+        return layers
+
+    def _rebuild_layers(self) -> dict[str, dict[int, list[Tag]]]:
+        layers: dict[str, dict[int, list[Tag]]] = {}
+        for dim, tag in gmsh.model.getEntities(1):
+            bb = gmsh.model.getBoundingBox(dim, tag)
+            bbox_key = self._bbox_key(*bb)
+            layer_name = self._geom_to_layer.get(bbox_key, "_unmatched")
+            self._model._register(dim, tag, None, 'dxf')
+            layers.setdefault(layer_name, {}).setdefault(1, []).append(tag)
+        for dim, tag in gmsh.model.getEntities(0):
+            self._model._register(dim, tag, None, 'dxf_point')
+        return layers
+
+
 class _IO:
     """IO sub-composite — import/export IGES, STEP, DXF, MSH."""
 
@@ -227,14 +429,6 @@ class _IO:
     # DXF (AutoCAD) — parsed with ezdxf, geometry built via OCC kernel
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _dxf_point_key(
-        x: float, y: float, z: float, tol: float,
-    ) -> tuple[int, int, int]:
-        """Discretise coordinates into a grid cell for O(1) dedup."""
-        inv = 1.0 / tol
-        return (round(x * inv), round(y * inv), round(z * inv))
-
     def load_dxf(
         self,
         file_path: Path | str,
@@ -292,193 +486,8 @@ class _IO:
             # Access beam curves:
             beam_curves = layers["V30x50"][1]
         """
-        try:
-            import ezdxf
-        except ImportError:
-            raise ImportError(
-                "ezdxf is required for DXF import.  "
-                "Install it with:  pip install ezdxf"
-            )
-
-        file_path = Path(file_path)
-        if not file_path.exists():
-            raise FileNotFoundError(f"DXF file not found: {file_path}")
-
-        doc = ezdxf.readfile(str(file_path))
-        msp = doc.modelspace()
-
-        # -- Point deduplication ------------------------------------------
-        tol = point_tolerance
-        _pt_cache: dict[tuple[int, int, int], Tag] = {}
-
-        def _get_or_add_point(x: float, y: float, z: float) -> Tag:
-            key = self._dxf_point_key(x, y, z, tol)
-            if key in _pt_cache:
-                return _pt_cache[key]
-            tag = gmsh.model.occ.addPoint(x, y, z)
-            _pt_cache[key] = tag
-            self._model._register(0, tag, None, 'dxf_point')
-            return tag
-
-        # -- Entity conversion by type ------------------------------------
-        # We store each curve's geometry fingerprint (sorted bounding-box
-        # coords) -> layer name so we can rebuild the mapping after
-        # removeAllDuplicates() potentially renumbers tags.
-
-        def _bbox_key(
-            x0: float, y0: float, z0: float,
-            x1: float, y1: float, z1: float,
-        ) -> tuple[float, ...]:
-            """Canonical bounding box: min coords then max coords."""
-            return (
-                round(min(x0, x1), 8), round(min(y0, y1), 8),
-                round(min(z0, z1), 8), round(max(x0, x1), 8),
-                round(max(y0, y1), 8), round(max(z0, z1), 8),
-            )
-
-        # fingerprint -> layer name  (for curves, dim=1)
-        _geom_to_layer: dict[tuple[float, ...], str] = {}
-        # point key -> layer name  (for dim=0 DXF POINT entities)
-        _pt_to_layer: dict[tuple[int, int, int], str] = {}
-
-        for entity in msp:
-            layer = entity.dxf.layer
-            etype = entity.dxftype()
-
-            if etype == 'POINT':
-                pt = entity.dxf.location
-                _get_or_add_point(pt.x, pt.y, pt.z)
-                key = self._dxf_point_key(pt.x, pt.y, pt.z, tol)
-                _pt_to_layer[key] = layer
-
-            elif etype == 'LINE':
-                s = entity.dxf.start
-                e = entity.dxf.end
-                p1 = _get_or_add_point(s.x, s.y, s.z)
-                p2 = _get_or_add_point(e.x, e.y, e.z)
-                gmsh.model.occ.addLine(p1, p2)
-                _geom_to_layer[_bbox_key(s.x, s.y, s.z, e.x, e.y, e.z)] = layer
-
-            elif etype == 'ARC':
-                c = entity.dxf.center
-                r = entity.dxf.radius
-                a1 = math.radians(entity.dxf.start_angle)
-                a2 = math.radians(entity.dxf.end_angle)
-                if a2 <= a1:
-                    a2 += 2.0 * math.pi
-                gmsh.model.occ.addCircle(
-                    c.x, c.y, c.z, r, angle1=a1, angle2=a2,
-                )
-                # Compute arc endpoints for the fingerprint
-                sx = c.x + r * math.cos(a1)
-                sy = c.y + r * math.sin(a1)
-                ex = c.x + r * math.cos(a2)
-                ey = c.y + r * math.sin(a2)
-                _geom_to_layer[_bbox_key(sx, sy, c.z, ex, ey, c.z)] = layer
-
-            elif etype == 'CIRCLE':
-                c = entity.dxf.center
-                r = entity.dxf.radius
-                gmsh.model.occ.addCircle(c.x, c.y, c.z, r)
-                _geom_to_layer[_bbox_key(
-                    c.x - r, c.y - r, c.z, c.x + r, c.y + r, c.z,
-                )] = layer
-
-            elif etype in ('LWPOLYLINE', 'POLYLINE'):
-                pts: list[Tag] = []
-                if etype == 'LWPOLYLINE':
-                    # ezdxf stubs don't expose shape-specific methods on DXFGraphic
-                    vertices = list(entity.get_points(format='xyz'))  # type: ignore[attr-defined]
-                else:
-                    vertices = [
-                        (v.dxf.location.x, v.dxf.location.y,
-                         v.dxf.location.z)
-                        for v in entity.vertices  # type: ignore[attr-defined]
-                    ]
-                for vx, vy, vz in vertices:
-                    pts.append(_get_or_add_point(vx, vy, vz))
-
-                is_closed = (
-                    getattr(entity.dxf, 'flags', 0) & 1
-                    if etype == 'POLYLINE' else entity.closed  # type: ignore[attr-defined]
-                )
-                vert_pairs = list(zip(vertices, vertices[1:]))
-                if is_closed and len(vertices) > 2:
-                    vert_pairs.append((vertices[-1], vertices[0]))
-
-                pt_pairs = list(zip(pts, pts[1:]))
-                if is_closed and len(pts) > 2:
-                    pt_pairs.append((pts[-1], pts[0]))
-
-                for (v_s, v_e), (p1, p2) in zip(vert_pairs, pt_pairs):
-                    gmsh.model.occ.addLine(p1, p2)
-                    _geom_to_layer[_bbox_key(
-                        v_s[0], v_s[1], v_s[2],
-                        v_e[0], v_e[1], v_e[2],
-                    )] = layer
-
-            elif etype == 'SPLINE':
-                ctrl_pts: list[Tag] = []
-                for cp in entity.control_points:  # type: ignore[attr-defined]
-                    ctrl_pts.append(
-                        _get_or_add_point(
-                            cp[0], cp[1],
-                            cp[2] if len(cp) > 2 else 0.0,
-                        )
-                    )
-                if len(ctrl_pts) >= 2:
-                    gmsh.model.occ.addBSpline(ctrl_pts)
-                    cps = entity.control_points  # type: ignore[attr-defined]
-                    xs = [c[0] for c in cps]
-                    ys = [c[1] for c in cps]
-                    zs = [c[2] if len(c) > 2 else 0.0 for c in cps]
-                    _geom_to_layer[_bbox_key(
-                        min(xs), min(ys), min(zs),
-                        max(xs), max(ys), max(zs),
-                    )] = layer
-
-            else:
-                self._model._log(f"DXF: skipped unsupported entity {etype} "
-                          f"on layer '{layer}'")
-
-        # -- Merge duplicate points & synchronise --------------------------
-        gmsh.model.occ.removeAllDuplicates()
-        gmsh.model.occ.synchronize()
-
-        # -- Rebuild layer mapping from surviving entities -----------------
-        layers: dict[str, dict[int, list[Tag]]] = {}
-
-        for dim, tag in gmsh.model.getEntities(1):
-            bb = gmsh.model.getBoundingBox(dim, tag)
-            bbox_key = _bbox_key(*bb)
-            layer_name = _geom_to_layer.get(bbox_key)
-            if layer_name:
-                self._model._register(dim, tag, None, 'dxf')
-                layers.setdefault(layer_name, {}).setdefault(1, []).append(tag)
-            else:
-                # Fallback: assign to "_unmatched"
-                self._model._register(dim, tag, None, 'dxf')
-                layers.setdefault("_unmatched", {}).setdefault(1, []).append(tag)
-
-        for dim, tag in gmsh.model.getEntities(0):
-            self._model._register(dim, tag, None, 'dxf_point')
-
-        # -- Physical groups from layers ----------------------------------
-        if create_physical_groups:
-            for layer_name, dim_tags in layers.items():
-                for dim, tags in dim_tags.items():
-                    if tags:
-                        gmsh.model.addPhysicalGroup(
-                            dim, tags, name=layer_name,
-                        )
-
-        # -- Summary ------------------------------------------------------
-        layer_summary = {
-            name: {d: len(ts) for d, ts in ents.items()}
-            for name, ents in layers.items()
-        }
-        self._model._log(f"loaded DXF <- {file_path.name}  layers={layer_summary}")
-        return layers
+        importer = _DXFImporter(self._model, point_tolerance)
+        return importer.run(Path(file_path), create_physical_groups, sync)
 
     def save_dxf(self, file_path: Path | str) -> None:
         """

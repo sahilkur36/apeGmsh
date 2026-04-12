@@ -8,13 +8,9 @@ import pandas as pd
 from apeGmsh.core.Labels import is_label_pg
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._types import SessionProtocol as _SessionBase
 
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
-Tag    = int
-DimTag = tuple[int, int]
+from apeGmsh._types import Tag, DimTag
 
 _DIM_LABEL: dict[int, str] = {
     0: 'points',
@@ -28,7 +24,10 @@ _DIM_LABEL: dict[int, str] = {
 # PhysicalGroups — composite class
 # ---------------------------------------------------------------------------
 
-class PhysicalGroups:
+from apeGmsh._logging import _HasLogging
+
+
+class PhysicalGroups(_HasLogging):
     """
     Physical-group composite attached to a ``apeGmsh`` instance as
     ``g.physical``.
@@ -57,16 +56,10 @@ class PhysicalGroups:
         The owning instance — used for ``_verbose``.
     """
 
+    _log_prefix = "PhysicalGroups"
+
     def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[PhysicalGroups] {msg}")
 
     # ------------------------------------------------------------------
     # Creation

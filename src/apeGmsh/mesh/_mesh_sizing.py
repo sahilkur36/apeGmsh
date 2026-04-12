@@ -15,10 +15,7 @@ if TYPE_CHECKING:
     from .Mesh import Mesh
 
 
-# Re-export the same type aliases used by the old Mesh.py
-Tag      = int
-DimTag   = tuple[int, int]
-TagsLike = Tag | list[Tag] | DimTag | list[DimTag]
+from apeGmsh._types import Tag, DimTag, TagsLike
 
 
 class _Sizing:

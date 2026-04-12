@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from .Mesh import Mesh
 
 
-DimTag = tuple[int, int]
+from apeGmsh._types import DimTag
 
 
 class _Structured:

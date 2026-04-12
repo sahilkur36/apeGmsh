@@ -22,8 +22,7 @@ from typing import Any
 import numpy as np
 
 
-# Type alias used throughout the viewer system
-DimTag = tuple[int, int]
+from apeGmsh._types import DimTag
 
 
 class EntityRegistry:

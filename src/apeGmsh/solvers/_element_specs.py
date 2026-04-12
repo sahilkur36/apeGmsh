@@ -14,11 +14,7 @@ from typing import Any
 
 import numpy as np
 
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
-Tag    = int
-DimTag = tuple[int, int]
+from apeGmsh._types import Tag, DimTag
 
 # ---------------------------------------------------------------------------
 # Gmsh element type -> (corner_node_count, topological_dim)

@@ -58,9 +58,9 @@ from typing import TYPE_CHECKING
 import gmsh
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._types import SessionProtocol as _SessionBase
 
-DimTag = tuple[int, int]
+from apeGmsh._types import DimTag
 
 # The internal prefix that distinguishes label PGs from user PGs.
 LABEL_PREFIX = "_label:"
@@ -98,7 +98,60 @@ def add_prefix(name: str) -> str:
 #     result, result_map = gmsh.model.occ.fragment(obj, tool, ...)
 #     gmsh.model.occ.synchronize()
 #     remap_physical_groups(snap, obj + tool, result_map)
+#
+# Or use the context manager for simpler call sites:
+#
+#     with pg_preserved() as pg:
+#         result, result_map = gmsh.model.occ.fragment(obj, tool, ...)
+#         pg.set_result(obj + tool, result_map)
 # =====================================================================
+
+from contextlib import contextmanager
+from typing import Iterator
+
+
+class _PGPreserver:
+    """Collects boolean result info and remaps PGs on context exit."""
+
+    __slots__ = ('_snap', '_input_dts', '_result_map', '_absorbed')
+
+    def __init__(self, snap: list[dict]) -> None:
+        self._snap = snap
+        self._input_dts: list[DimTag] | None = None
+        self._result_map: list[list[DimTag]] | None = None
+        self._absorbed = False
+
+    def set_result(
+        self,
+        input_dimtags: list[DimTag],
+        result_map: list[list[DimTag]],
+        *,
+        absorbed_into_result: bool = False,
+    ) -> None:
+        self._input_dts = input_dimtags
+        self._result_map = result_map
+        self._absorbed = absorbed_into_result
+
+
+@contextmanager
+def pg_preserved() -> Iterator[_PGPreserver]:
+    """Context manager that snapshots PGs on entry and remaps on exit.
+
+    Usage::
+
+        with pg_preserved() as pg:
+            result, result_map = gmsh.model.occ.fragment(obj, tool, ...)
+            pg.set_result(obj + tool, result_map)
+        # PGs are automatically remapped here
+    """
+    snap = snapshot_physical_groups()
+    ctx = _PGPreserver(snap)
+    yield ctx
+    if ctx._input_dts is not None and ctx._result_map is not None:
+        remap_physical_groups(
+            ctx._snap, ctx._input_dts, ctx._result_map,
+            absorbed_into_result=ctx._absorbed,
+        )
 
 
 def snapshot_physical_groups() -> list[dict]:
@@ -318,7 +371,10 @@ def reconcile_label_pgs() -> None:
             gmsh.model.setPhysicalName(dim, new_pg, name)
 
 
-class Labels:
+from apeGmsh._logging import _HasLogging
+
+
+class Labels(_HasLogging):
     """Geometry-time entity naming composite (``g.labels``).
 
     Backed by Gmsh physical groups with an internal ``_label:``
@@ -326,12 +382,10 @@ class Labels:
     architecture.
     """
 
+    _log_prefix = "Labels"
+
     def __init__(self, parent: "_SessionBase") -> None:
         self._parent = parent
-
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[Labels] {msg}")
 
     # ------------------------------------------------------------------
     # Create / update

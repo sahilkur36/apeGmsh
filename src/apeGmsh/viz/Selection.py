@@ -41,11 +41,8 @@ if TYPE_CHECKING:
     from apeGmsh.core.Model import Model
 
 
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
-Tag     = int
-DimTag  = tuple[int, int]
+from apeGmsh._types import Tag, DimTag
+
 BBox    = tuple[float, float, float, float, float, float]
 
 _DIM_PREFIX = {0: 'P', 1: 'C', 2: 'S', 3: 'V'}
@@ -467,7 +464,10 @@ class Selection:
 # SelectionComposite — attached to Model as `model.selection`
 # ===========================================================================
 
-class SelectionComposite:
+from apeGmsh._logging import _HasLogging
+
+
+class SelectionComposite(_HasLogging):
     """
     Query-entry composite attached to :class:`Model` as
     ``g.model.selection``.
@@ -482,6 +482,8 @@ class SelectionComposite:
     (``g.model.sync()``) before calling — OCC topology queries read
     the synced kernel state.
     """
+
+    _log_prefix = "Selection"
 
     def __init__(self, parent: _SessionBase, model: Model) -> None:
         self._parent = parent
@@ -584,10 +586,6 @@ class SelectionComposite:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[Selection] {msg}")
 
     def _query(self, dim: int, **kwargs) -> Selection:
         gmsh.model.occ.synchronize()
@@ -747,7 +745,44 @@ def _apply_filters(
 
     out = list(dimtags)
 
-    # ---- tag / exclude_tags ------------------------------------------
+    # ---- identity filters -------------------------------------------
+    out = _filter_by_identity(
+        out, dim, parent, tags=tags, exclude_tags=exclude_tags,
+        labels=labels, kinds=kinds, physical=physical,
+    )
+
+    # ---- spatial filters --------------------------------------------
+    out = _filter_by_spatial(
+        out, dim, in_box=in_box, in_sphere=in_sphere,
+        on_plane=on_plane, on_axis=on_axis, at_point=at_point,
+    )
+
+    # ---- metric / orientation filters --------------------------------
+    out = _filter_by_metrics(
+        out, dim, length_range=length_range, area_range=area_range,
+        volume_range=volume_range, horizontal=horizontal,
+        vertical=vertical, aligned=aligned,
+    )
+
+    # ---- predicate escape hatch --------------------------------------
+    if predicate is not None:
+        out = [dt for dt in out if predicate(*dt)]
+
+    return out
+
+
+def _filter_by_identity(
+    out: list[DimTag],
+    dim: int,
+    parent: _SessionBase,
+    *,
+    tags: Sequence[Tag] | None,
+    exclude_tags: Sequence[Tag] | None,
+    labels: str | Sequence[str] | None,
+    kinds: str | Sequence[str] | None,
+    physical: str | Tag | None,
+) -> list[DimTag]:
+    """Tag, label, kind, and physical-group membership filters."""
     if tags is not None:
         keep = set(int(t) for t in tags)
         out = [dt for dt in out if dt[1] in keep]
@@ -755,7 +790,6 @@ def _apply_filters(
         drop = set(int(t) for t in exclude_tags)
         out = [dt for dt in out if dt[1] not in drop]
 
-    # ---- labels (glob over g.labels — the single source of truth) -----
     if labels is not None:
         patterns = [labels] if isinstance(labels, str) else list(labels)
         labels_comp = getattr(parent, 'labels', None)
@@ -765,25 +799,34 @@ def _apply_filters(
                 label_map = labels_comp.reverse_map()
             except Exception:
                 pass
-        def _match_label(dt: DimTag) -> bool:
-            lbl = label_map.get(dt, '')
-            return any(fnmatch.fnmatch(lbl, p) for p in patterns)
-        out = [dt for dt in out if _match_label(dt)]
+        out = [dt for dt in out
+               if any(fnmatch.fnmatch(label_map.get(dt, ''), p)
+                      for p in patterns)]
 
-    # ---- kinds -------------------------------------------------------
     if kinds is not None:
         wanted = {kinds} if isinstance(kinds, str) else set(kinds)
         reg = parent.model._metadata
         out = [dt for dt in out
                if reg.get(dt, {}).get('kind') in wanted]
 
-    # ---- physical-group membership -----------------------------------
     if physical is not None:
-        pg_dimtags = _entities_of_physical(physical, dim)
-        keep_dt = set(pg_dimtags)
+        keep_dt = set(_entities_of_physical(physical, dim))
         out = [dt for dt in out if dt in keep_dt]
 
-    # ---- spatial: in_box ---------------------------------------------
+    return out
+
+
+def _filter_by_spatial(
+    out: list[DimTag],
+    dim: int,
+    *,
+    in_box: BBox | None,
+    in_sphere: tuple[float, float, float, float] | None,
+    on_plane: tuple[str, float, float] | None,
+    on_axis: tuple[str, float] | None,
+    at_point: tuple[float, float, float, float] | None,
+) -> list[DimTag]:
+    """Bounding-box, sphere, plane, axis, and point proximity filters."""
     if in_box is not None:
         x0, y0, z0, x1, y1, z1 = in_box
         in_box_set = set(
@@ -791,43 +834,30 @@ def _apply_filters(
         )
         out = [dt for dt in out if dt in in_box_set]
 
-    # ---- spatial: in_sphere (centroid within radius of center) -------
     if in_sphere is not None:
         cx, cy, cz, r = in_sphere
         r2 = r * r
         center = np.array([cx, cy, cz])
-        def _in_sphere(dt: DimTag) -> bool:
-            c = _entity_center(*dt)
-            d = c - center
-            return float(d @ d) <= r2
-        out = [dt for dt in out if _in_sphere(dt)]
+        out = [dt for dt in out
+               if float(((_entity_center(*dt) - center) ** 2).sum()) <= r2]
 
-    # ---- spatial: on_plane -------------------------------------------
     if on_plane is not None:
         axis, val, atol = on_plane
         i = _AXIS_IDX[axis.lower()]
         def _on_plane(dt: DimTag) -> bool:
             x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(*dt)
-            lo = (x0, y0, z0)[i]
-            hi = (x1, y1, z1)[i]
-            return (lo - atol) <= val <= (hi + atol)
+            return ((x0, y0, z0)[i] - atol) <= val <= ((x1, y1, z1)[i] + atol)
         out = [dt for dt in out if _on_plane(dt)]
 
-    # ---- spatial: on_axis (centroid lies on axis line through origin)
     if on_axis is not None:
         axis, atol = on_axis
         i = _AXIS_IDX[axis.lower()]
-        def _on_axis(dt: DimTag) -> bool:
-            c = _entity_center(*dt)
-            # the two *other* coords must be ~0
-            others = [c[j] for j in range(3) if j != i]
-            return all(abs(v) <= atol for v in others)
-        out = [dt for dt in out if _on_axis(dt)]
+        out = [dt for dt in out
+               if all(abs(_entity_center(*dt)[j]) <= atol
+                      for j in range(3) if j != i)]
 
-    # ---- spatial: at_point -------------------------------------------
     if at_point is not None:
         px, py, pz, atol = at_point
-        np.array([px, py, pz])
         def _at_point(dt: DimTag) -> bool:
             x0, y0, z0, x1, y1, z1 = gmsh.model.getBoundingBox(*dt)
             return (x0 - atol <= px <= x1 + atol and
@@ -835,21 +865,31 @@ def _apply_filters(
                     z0 - atol <= pz <= z1 + atol)
         out = [dt for dt in out if _at_point(dt)]
 
-    # ---- metric ranges -----------------------------------------------
+    return out
+
+
+def _filter_by_metrics(
+    out: list[DimTag],
+    dim: int,
+    *,
+    length_range: tuple[float, float] | None,
+    area_range: tuple[float, float] | None,
+    volume_range: tuple[float, float] | None,
+    horizontal: bool | None,
+    vertical: bool | None,
+    aligned: tuple[str, float] | None,
+) -> list[DimTag]:
+    """Size range and orientation filters."""
     if length_range is not None and dim == 1:
         lo, hi = length_range
-        out = [dt for dt in out
-               if lo <= _safe_mass(*dt) <= hi]
+        out = [dt for dt in out if lo <= _safe_mass(*dt) <= hi]
     if area_range is not None and dim == 2:
         lo, hi = area_range
-        out = [dt for dt in out
-               if lo <= _safe_mass(*dt) <= hi]
+        out = [dt for dt in out if lo <= _safe_mass(*dt) <= hi]
     if volume_range is not None and dim == 3:
         lo, hi = volume_range
-        out = [dt for dt in out
-               if lo <= _safe_mass(*dt) <= hi]
+        out = [dt for dt in out if lo <= _safe_mass(*dt) <= hi]
 
-    # ---- orientation (curves only) -----------------------------------
     if dim == 1:
         if horizontal is True:
             out = [dt for dt in out if _is_axis_aligned(dt, "z",
@@ -859,15 +899,11 @@ def _apply_filters(
                                                         perpendicular=False)]
         if aligned is not None:
             if isinstance(aligned, str):
-                axis, atol_deg = aligned, 5.0
+                axis_name, atol_deg = aligned, 5.0
             else:
-                axis, atol_deg = aligned
+                axis_name, atol_deg = aligned
             out = [dt for dt in out
-                   if _is_axis_aligned(dt, axis, atol_deg=atol_deg)]
-
-    # ---- predicate escape hatch --------------------------------------
-    if predicate is not None:
-        out = [dt for dt in out if predicate(*dt)]
+                   if _is_axis_aligned(dt, axis_name, atol_deg=atol_deg)]
 
     return out
 

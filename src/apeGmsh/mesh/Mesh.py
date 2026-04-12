@@ -64,12 +64,7 @@ from ._mesh_structured import _Structured
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _ApeGmshSession
 
-# ---------------------------------------------------------------------------
-# Type aliases  (mirror Model.py for consistency)
-# ---------------------------------------------------------------------------
-Tag = int
-DimTag = tuple[int, int]
-TagsLike = Tag | list[Tag] | DimTag | list[DimTag]
+from apeGmsh._types import Tag, DimTag, TagsLike
 
 
 __all__ = [
@@ -84,7 +79,10 @@ __all__ = [
 ]
 
 
-class Mesh:
+from apeGmsh._logging import _HasLogging
+
+
+class Mesh(_HasLogging):
     """
     Thin composition container for meshing.  Every action lives in a
     focused sub-composite — see the module docstring for the full map.
@@ -95,6 +93,8 @@ class Mesh:
         Owning session — used to read ``_verbose`` and access the
         ``physical`` composite during ``_by_physical`` helpers.
     """
+
+    _log_prefix = "Mesh"
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -118,9 +118,6 @@ class Mesh:
     # Internal helpers (used by sub-composites via self._mesh._*)
     # ------------------------------------------------------------------
 
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[Mesh] {msg}")
 
     def _as_dimtags(self, tags: TagsLike, default_dim: int = 0) -> list[DimTag]:
         """Normalize tag input to [(dim, tag), ...]. See :func:`core._helpers.as_dimtags`."""

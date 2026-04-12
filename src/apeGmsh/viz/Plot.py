@@ -12,12 +12,9 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection, Line3DCollection
 from numpy import ndarray
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._types import SessionProtocol as _SessionBase
 
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
-DimTag = tuple[int, int]
+from apeGmsh._types import DimTag
 
 # ---------------------------------------------------------------------------
 # Gmsh element-type -> corner-node count
@@ -45,7 +42,10 @@ _DIM_LABEL  = {0: 'points', 1: 'curves', 2: 'surfaces', 3: 'volumes'}
 # Plot — plotting composite
 # ---------------------------------------------------------------------------
 
-class Plot:
+from apeGmsh._logging import _HasLogging
+
+
+class Plot(_HasLogging):
     """
     Plotting composite attached to a ``apeGmsh`` instance as ``g.plot``.
 
@@ -74,19 +74,13 @@ class Plot:
     COLOR_SURFACES = '#5B8DB8'
     COLOR_MESH     = '#3A7CB8'
 
+    _log_prefix = "Plot"
+
     def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
         self._fig: plt.Figure | None = None
         self._ax:  Axes3D | None     = None
         self._figsize: tuple[float, float] = (9, 7)
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[Plot] {msg}")
 
     def figsize(self, size: tuple[float, float]) -> Plot:
         """

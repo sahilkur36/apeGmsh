@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 import gmsh
 import numpy as np
 
-from .core.entity_registry import DimTag
+from apeGmsh._types import DimTag
 
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _SessionBase

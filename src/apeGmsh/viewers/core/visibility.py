@@ -16,8 +16,9 @@ import numpy as np
 
 if TYPE_CHECKING:
     import pyvista as pv
+    from apeGmsh._types import DimTag
     from .color_manager import ColorManager
-    from .entity_registry import DimTag, EntityRegistry
+    from .entity_registry import EntityRegistry
     from .selection import SelectionState
 
 

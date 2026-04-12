@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import gmsh
 
 from ._helpers import Tag, TagsLike
-from .Labels import snapshot_physical_groups, remap_physical_groups, cleanup_label_pgs
+from .Labels import pg_preserved, cleanup_label_pgs
 
 if TYPE_CHECKING:
     from .Model import Model
@@ -37,19 +37,18 @@ class _Boolean:
         tool_dt = self._model._as_dimtags(tools,   default_dim)
         fn      = getattr(gmsh.model.occ, fn_name)
 
-        pg_snap = snapshot_physical_groups()
-        input_dimtags = obj_dt + tool_dt
-        result, result_map = fn(
-            obj_dt, tool_dt,
-            removeObject=remove_object,
-            removeTool=remove_tool,
-        )
-        if sync:
-            gmsh.model.occ.synchronize()
-        remap_physical_groups(
-            pg_snap, input_dimtags, result_map,
-            absorbed_into_result=(fn_name in ('fuse', 'intersect')),
-        )
+        with pg_preserved() as pg:
+            result, result_map = fn(
+                obj_dt, tool_dt,
+                removeObject=remove_object,
+                removeTool=remove_tool,
+            )
+            if sync:
+                gmsh.model.occ.synchronize()
+            pg.set_result(
+                obj_dt + tool_dt, result_map,
+                absorbed_into_result=(fn_name in ('fuse', 'intersect')),
+            )
 
         # Clean up registry: remove consumed objects/tools
         result_set = set(result)

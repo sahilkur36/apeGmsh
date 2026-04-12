@@ -1,20 +1,38 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, Iterator
 
 import gmsh
 import pandas as pd
 
 from ._helpers import Tag, DimTag, TagsLike
 from .Labels import (
-    snapshot_physical_groups,
-    remap_physical_groups,
+    pg_preserved,
     cleanup_label_pgs,
     reconcile_label_pgs,
 )
 
 if TYPE_CHECKING:
     from .Model import Model
+
+
+@contextmanager
+def _temporary_tolerance(
+    tolerance: float | None,
+    keys: tuple[str, ...] = ("Geometry.Tolerance", "Geometry.ToleranceBoolean"),
+) -> Iterator[None]:
+    """Temporarily override Gmsh tolerance options, restoring on exit."""
+    saved: dict[str, float] = {}
+    if tolerance is not None:
+        for key in keys:
+            saved[key] = gmsh.option.getNumber(key)
+            gmsh.option.setNumber(key, tolerance)
+    try:
+        yield
+    finally:
+        for key, val in saved.items():
+            gmsh.option.setNumber(key, val)
 
 
 class _Queries:
@@ -100,20 +118,8 @@ class _Queries:
         """
         before = {d: len(gmsh.model.getEntities(d)) for d in range(4)}
 
-        # Temporarily widen the OCC tolerance if the caller asked for it,
-        # then restore both options to their original values afterwards.
-        _tol_keys = ("Geometry.Tolerance", "Geometry.ToleranceBoolean")
-        _saved: dict[str, float] = {}
-        if tolerance is not None:
-            for key in _tol_keys:
-                _saved[key] = gmsh.option.getNumber(key)
-                gmsh.option.setNumber(key, tolerance)
-
-        try:
+        with _temporary_tolerance(tolerance):
             gmsh.model.occ.removeAllDuplicates()
-        finally:
-            for key, val in _saved.items():
-                gmsh.option.setNumber(key, val)
 
         if sync:
             gmsh.model.occ.synchronize()
@@ -210,25 +216,14 @@ class _Queries:
             self._model._log("make_conformal(): no entities found, nothing to do")
             return self
 
-        _tol_keys = ("Geometry.ToleranceBoolean",)
-        _saved: dict[str, float] = {}
-        if tolerance is not None:
-            for key in _tol_keys:
-                _saved[key] = gmsh.option.getNumber(key)
-                gmsh.option.setNumber(key, tolerance)
-
-        pg_snap = snapshot_physical_groups()
-        try:
+        with pg_preserved() as pg, \
+             _temporary_tolerance(tolerance, keys=("Geometry.ToleranceBoolean",)):
             _, result_map = gmsh.model.occ.fragment(
                 all_dimtags, [], removeObject=True, removeTool=True,
             )
-        finally:
-            for key, val in _saved.items():
-                gmsh.option.setNumber(key, val)
-
-        if sync:
-            gmsh.model.occ.synchronize()
-        remap_physical_groups(pg_snap, all_dimtags, result_map)
+            if sync:
+                gmsh.model.occ.synchronize()
+            pg.set_result(all_dimtags, result_map)
 
         # Rebuild metadata from scratch — fragment renumbers entities.
         # Only kind/normal/point metadata is preserved; labels live

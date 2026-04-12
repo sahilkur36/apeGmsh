@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING, Callable
 import numpy as np
 
 if TYPE_CHECKING:
-    from .entity_registry import DimTag, EntityRegistry
+    from apeGmsh._types import DimTag
+    from .entity_registry import EntityRegistry
 
 
 # ======================================================================

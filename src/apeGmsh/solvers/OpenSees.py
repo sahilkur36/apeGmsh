@@ -71,7 +71,10 @@ if TYPE_CHECKING:
 __all__ = ["OpenSees"]
 
 
-class OpenSees:
+from apeGmsh._logging import _HasLogging
+
+
+class OpenSees(_HasLogging):
     """
     Thin composition container for the OpenSees bridge.  All
     declaration state lives on this class; the sub-composites are
@@ -82,6 +85,8 @@ class OpenSees:
     parent : apeGmsh
         The owning session.
     """
+
+    _log_prefix = "OpenSees"
 
     def __init__(self, parent: "_ApeGmshSession") -> None:
         self._parent = parent
@@ -133,10 +138,6 @@ class OpenSees:
     # ------------------------------------------------------------------
     # Internal helpers (used by sub-composites via self._opensees._*)
     # ------------------------------------------------------------------
-
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[OpenSees] {msg}")
 
     def _require_built(self, method: str) -> None:
         if not self._built:

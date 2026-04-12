@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import pyvista as pv
 
-DimTag = tuple[int, int]
+from apeGmsh._types import DimTag
 
 
 def build_point_glyphs(

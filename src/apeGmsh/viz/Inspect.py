@@ -8,7 +8,7 @@ from numpy import ndarray
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._types import SessionProtocol as _SessionBase
 
 class Inspect:
     """

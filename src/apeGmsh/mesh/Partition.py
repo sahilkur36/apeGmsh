@@ -7,16 +7,15 @@ import gmsh
 import pandas as pd
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._types import SessionProtocol as _SessionBase
 
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
-Tag    = int
-DimTag = tuple[int, int]
+from apeGmsh._types import Tag, DimTag
 
 
-class Partition:
+from apeGmsh._logging import _HasLogging
+
+
+class Partition(_HasLogging):
     """
     Mesh-partitioning composite attached to a ``apeGmsh`` instance as
     ``g.partition``.
@@ -58,16 +57,10 @@ class Partition:
         The owning instance.
     """
 
+    _log_prefix = "Partition"
+
     def __init__(self, parent: _SessionBase) -> None:
         self._parent = parent
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[Partition] {msg}")
 
     # ------------------------------------------------------------------
     # Partitioning

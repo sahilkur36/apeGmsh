@@ -11,17 +11,13 @@ from ._model_queries import _Queries
 from ._model_transforms import _Transforms
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._types import SessionProtocol as _SessionBase
 
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
-Tag = int
-DimTag = tuple[int, int]
-TagsLike = Tag | list[Tag] | DimTag | list[DimTag]  # flexible input accepted everywhere
+from apeGmsh._logging import _HasLogging
+from apeGmsh._types import Tag, DimTag, TagsLike
 
 
-class Model:
+class Model(_HasLogging):
     """
     Geometry composite attached to an ``apeGmsh`` instance as
     ``g.model``.  Owns five focused sub-composites:
@@ -71,6 +67,8 @@ class Model:
         Owning session — used to read ``_verbose`` and ``name``.
     """
 
+    _log_prefix = "Model"
+
     def __init__(self, parent: "_SessionBase") -> None:
         self._parent = parent
         # (dim, tag) -> {kind, ...}  (labels live in g.labels, not here)
@@ -94,10 +92,6 @@ class Model:
     # ------------------------------------------------------------------
     # Internal helpers (used by sub-composites via self._model._*)
     # ------------------------------------------------------------------
-
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[Model] {msg}")
 
     def _resolve_dim(self, tag: int, default_dim: int) -> int:
         """Resolve tag dimension from the live Gmsh model. See :func:`_helpers.resolve_dim`."""

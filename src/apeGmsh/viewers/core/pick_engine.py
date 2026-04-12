@@ -22,7 +22,8 @@ import numpy as np
 
 if TYPE_CHECKING:
     import pyvista as pv
-    from .entity_registry import DimTag, EntityRegistry
+    from apeGmsh._types import DimTag
+    from .entity_registry import EntityRegistry
 
 
 class PickEngine:

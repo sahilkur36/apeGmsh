@@ -7,15 +7,15 @@ import numpy as np
 from numpy import ndarray
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._types import SessionProtocol as _SessionBase
 
-# ---------------------------------------------------------------------------
-# Type aliases
-# ---------------------------------------------------------------------------
-Tag = int
+from apeGmsh._types import Tag
 
 
-class View:
+from apeGmsh._logging import _HasLogging
+
+
+class View(_HasLogging):
     """
     Solver-agnostic post-processing view composite attached to a ``apeGmsh``
     instance as ``g.view``.
@@ -47,13 +47,7 @@ class View:
         self._parent = parent
         self._views: dict[Tag, str] = {}          # view_tag -> name
 
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[View] {msg}")
+    _log_prefix = "View"
 
     # ------------------------------------------------------------------
     # ElementData

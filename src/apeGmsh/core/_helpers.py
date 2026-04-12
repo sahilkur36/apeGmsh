@@ -12,15 +12,7 @@ import gmsh
 if TYPE_CHECKING:
     from apeGmsh._session import _SessionBase
 
-# Type aliases used across the library
-Tag = int
-DimTag = tuple[int, int]
-TagsLike = int | Tag | DimTag | list
-
-# Flexible entity reference — accepted wherever the library
-# expects entity tags.  Resolves through :func:`resolve_to_tags`.
-EntityRef = int | str | tuple[int, int]
-EntityRefs = EntityRef | list[EntityRef] | None
+from apeGmsh._types import Tag, DimTag, TagsLike, EntityRef, EntityRefs
 
 
 def resolve_dim(tag: int, default_dim: int) -> int:

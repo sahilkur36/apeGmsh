@@ -32,11 +32,14 @@ from typing import TYPE_CHECKING
 import gmsh
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._types import SessionProtocol as _SessionBase
     from apeGmsh.mesh.FEMData import FEMData
 
 
-class MshLoader:
+from apeGmsh._logging import _HasLogging
+
+
+class MshLoader(_HasLogging):
     """
     Load ``.msh`` files and produce solver-ready :class:`FEMData`.
 
@@ -50,16 +53,10 @@ class MshLoader:
         used standalone.
     """
 
+    _log_prefix = "MshLoader"
+
     def __init__(self, parent: "_SessionBase | None" = None) -> None:
         self._parent = parent
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
-
-    def _log(self, msg: str) -> None:
-        if self._parent is not None and self._parent._verbose:
-            print(f"[MshLoader] {msg}")
 
     @staticmethod
     def _validate_path(path: str | Path) -> Path:

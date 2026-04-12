@@ -7,7 +7,7 @@ import numpy as np
 from numpy import ndarray
 
 from ._helpers import Tag
-from .Labels import snapshot_physical_groups, remap_physical_groups, cleanup_label_pgs
+from .Labels import pg_preserved, cleanup_label_pgs
 
 if TYPE_CHECKING:
     from .Model import Model
@@ -854,25 +854,9 @@ class _Geometry:
 
         obj_dt = [(3, int(t)) for t in solid_tags]
         tool_dt = [(2, int(surface))]
-        input_dimtags = obj_dt + tool_dt
 
-        pg_snap = snapshot_physical_groups()
-        out_dimtags, result_map = gmsh.model.occ.fragment(
-            obj_dt,
-            tool_dt,
-            removeObject=remove_original,
-            removeTool=not keep_surface,
-        )
-
-        new_volume_tags: list[Tag] = [
-            int(t) for (d, t) in out_dimtags if d == 3
-        ]
-
-        # Collect the original labels from consumed solids BEFORE
-        # the boolean.  Fragments inherit the original label so that
-        # label-based lookups (e.g. ``slice("shaft", axis='z', ...)``
-        # after a previous slice) still resolve to the surviving pieces.
-        # Labels are read from g.labels (the single source of truth).
+        # Collect the original labels BEFORE the boolean so we can
+        # propagate them to fragments afterwards.
         inherited_label = label
         if inherited_label is None and remove_original:
             labels_comp = getattr(self._model._parent, 'labels', None)
@@ -882,21 +866,34 @@ class _Geometry:
                     original_labels.update(
                         labels_comp.labels_for_entity(3, int(t))
                     )
-                # If all consumed solids share one label, propagate it.
-                # Mixed labels -> don't guess, leave unlabeled.
                 if len(original_labels) == 1:
                     inherited_label = original_labels.pop()
+
+        with pg_preserved() as pg:
+            out_dimtags, result_map = gmsh.model.occ.fragment(
+                obj_dt,
+                tool_dt,
+                removeObject=remove_original,
+                removeTool=not keep_surface,
+            )
+            # Always sync before PG remap — remap needs topology visible.
+            gmsh.model.occ.synchronize()
+            pg.set_result(obj_dt + tool_dt, result_map)
+
+        new_volume_tags: list[Tag] = [
+            int(t) for (d, t) in out_dimtags if d == 3
+        ]
 
         if remove_original:
             for t in solid_tags:
                 self._model._metadata.pop((3, int(t)), None)
 
+        # Register metadata for new fragments. Label= is only passed
+        # when the user explicitly provided one; inherited labels are
+        # already handled by the snapshot-remap above.
         for t in new_volume_tags:
-            self._model._register(3, t, inherited_label, 'cut_fragment')
+            self._model._register(3, t, label, 'cut_fragment')
 
-        # The trimmed cutting surface may have been split into multiple
-        # faces; keep whichever 2-D entities came out so they stay
-        # addressable.
         if keep_surface:
             surviving_surfaces = [
                 int(t) for (d, t) in out_dimtags if d == 2
@@ -904,10 +901,6 @@ class _Geometry:
             for t in surviving_surfaces:
                 if (2, t) not in self._model._metadata:
                     self._model._register(2, t, None, 'cut_interface')
-
-        if sync:
-            gmsh.model.occ.synchronize()
-        remap_physical_groups(pg_snap, input_dimtags, result_map)
 
         self._model._log(
             f"cut_by_surface(solids={solid_tags}, surface={int(surface)}) "
@@ -986,94 +979,26 @@ class _Geometry:
             )
         """
         plane_tag = int(plane)
-
-        # Resolve the plane's defining point and normal.
-        entry = self._model._metadata.get((2, plane_tag))
-        stashed_normal = entry.get('normal') if entry else None
-        stashed_point  = entry.get('point')  if entry else None
-
-        if above_direction is not None:
-            normal = np.asarray(above_direction, dtype=float)
-            norm_len = float(np.linalg.norm(normal))
-            if norm_len == 0.0:
-                raise ValueError("above_direction must be non-zero")
-            normal = normal / norm_len
-            # Need a point on the plane for the dot-product
-            # classification.  Prefer the stashed one; otherwise ask
-            # Gmsh for a vertex of the plane.
-            if stashed_point is not None:
-                point = np.asarray(stashed_point, dtype=float)
-            else:
-                point = self._any_point_on_surface(plane_tag)
-        elif stashed_normal is not None and stashed_point is not None:
-            normal = np.asarray(stashed_normal, dtype=float)
-            point  = np.asarray(stashed_point,  dtype=float)
-        else:
-            # Fall back to gmsh.model.getNormal at the parametric
-            # midpoint.  Requires a synced model.
-            gmsh.model.occ.synchronize()
-            try:
-                nxyz = gmsh.model.getNormal(plane_tag, [0.5, 0.5])
-            except Exception as exc:
-                raise ValueError(
-                    f"cut_by_plane: plane tag {plane_tag} has no registry "
-                    f"normal and Gmsh could not compute one — pass "
-                    f"above_direction=... explicitly. ({exc})"
-                ) from exc
-            normal = np.asarray(nxyz, dtype=float)
-            norm_len = float(np.linalg.norm(normal))
-            if norm_len == 0.0:
-                raise ValueError(
-                    f"cut_by_plane: plane tag {plane_tag} returned a zero "
-                    f"normal from Gmsh; pass above_direction=..."
-                )
-            normal = normal / norm_len
-            point = self._any_point_on_surface(plane_tag)
+        normal, point = self._resolve_plane_normal(
+            plane_tag, above_direction,
+        )
 
         # Perform the actual cut via the general surface method.
+        # sync=True so the PG remap and classify step see synced topology.
         fragments = self.cut_by_surface(
             solid,
             plane_tag,
             keep_surface=keep_plane,
             remove_original=remove_original,
             label=None,          # we re-label by side below
-            sync=False,          # single sync at the end of this method
+            sync=True,
         )
 
-        # Classify each fragment by the sign of (centroid - p) . n.
-        above_tags: list[Tag] = []
-        below_tags: list[Tag] = []
-        labels_comp = getattr(self._model._parent, 'labels', None)
-        for t in fragments:
-            com = np.asarray(
-                gmsh.model.occ.getCenterOfMass(3, int(t)),
-                dtype=float,
-            )
-            signed = float(np.dot(com - point, normal))
-            if signed >= 0.0:
-                above_tags.append(t)
-                if label_above is not None and labels_comp is not None:
-                    try:
-                        labels_comp.add(3, [t], name=label_above)
-                    except Exception as exc:
-                        import warnings
-                        warnings.warn(
-                            f"Label {label_above!r} for fragment {t} "
-                            f"could not be created: {exc}",
-                            stacklevel=2,
-                        )
-            else:
-                below_tags.append(t)
-                if label_below is not None and labels_comp is not None:
-                    try:
-                        labels_comp.add(3, [t], name=label_below)
-                    except Exception as exc:
-                        import warnings
-                        warnings.warn(
-                            f"Label {label_below!r} for fragment {t} "
-                            f"could not be created: {exc}",
-                            stacklevel=2,
-                        )
+        above_tags, below_tags = self._classify_fragments(
+            fragments, normal, point,
+            label_above=label_above,
+            label_below=label_below,
+        )
 
         if not above_tags or not below_tags:
             self._model._log(
@@ -1092,6 +1017,107 @@ class _Geometry:
         )
         return above_tags, below_tags
 
+    def _resolve_plane_normal(
+        self,
+        plane_tag: int,
+        above_direction: list[float] | ndarray | None,
+    ) -> tuple[ndarray, ndarray]:
+        """Resolve a cutting plane's normal and a point on the plane.
+
+        Tries three sources in order: explicit *above_direction*,
+        stashed metadata from ``add_cutting_plane``, and finally
+        ``gmsh.model.getNormal``.
+
+        Returns ``(unit_normal, point_on_plane)`` as numpy arrays.
+        """
+        entry = self._model._metadata.get((2, plane_tag))
+        stashed_normal = entry.get('normal') if entry else None
+        stashed_point  = entry.get('point')  if entry else None
+
+        if above_direction is not None:
+            normal = np.asarray(above_direction, dtype=float)
+            norm_len = float(np.linalg.norm(normal))
+            if norm_len == 0.0:
+                raise ValueError("above_direction must be non-zero")
+            normal = normal / norm_len
+            if stashed_point is not None:
+                point = np.asarray(stashed_point, dtype=float)
+            else:
+                point = self._any_point_on_surface(plane_tag)
+            return normal, point
+
+        if stashed_normal is not None and stashed_point is not None:
+            return (
+                np.asarray(stashed_normal, dtype=float),
+                np.asarray(stashed_point, dtype=float),
+            )
+
+        # Fall back to gmsh.model.getNormal at the parametric midpoint.
+        gmsh.model.occ.synchronize()
+        try:
+            nxyz = gmsh.model.getNormal(plane_tag, [0.5, 0.5])
+        except Exception as exc:
+            raise ValueError(
+                f"cut_by_plane: plane tag {plane_tag} has no registry "
+                f"normal and Gmsh could not compute one — pass "
+                f"above_direction=... explicitly. ({exc})"
+            ) from exc
+        normal = np.asarray(nxyz, dtype=float)
+        norm_len = float(np.linalg.norm(normal))
+        if norm_len == 0.0:
+            raise ValueError(
+                f"cut_by_plane: plane tag {plane_tag} returned a zero "
+                f"normal from Gmsh; pass above_direction=..."
+            )
+        return normal / norm_len, self._any_point_on_surface(plane_tag)
+
+    def _classify_fragments(
+        self,
+        fragments: list[Tag],
+        normal: ndarray,
+        point: ndarray,
+        *,
+        label_above: str | None,
+        label_below: str | None,
+    ) -> tuple[list[Tag], list[Tag]]:
+        """Classify volume fragments as above/below a plane.
+
+        Sorts *fragments* by the sign of ``(centroid - point) . normal``
+        and optionally labels each side via ``g.labels``.
+        """
+        above_tags: list[Tag] = []
+        below_tags: list[Tag] = []
+        labels_comp = getattr(self._model._parent, 'labels', None)
+
+        for t in fragments:
+            com = np.asarray(
+                gmsh.model.occ.getCenterOfMass(3, int(t)), dtype=float,
+            )
+            signed = float(np.dot(com - point, normal))
+            if signed >= 0.0:
+                above_tags.append(t)
+                self._try_label(labels_comp, label_above, t)
+            else:
+                below_tags.append(t)
+                self._try_label(labels_comp, label_below, t)
+
+        return above_tags, below_tags
+
+    @staticmethod
+    def _try_label(labels_comp, label: str | None, tag: Tag) -> None:
+        """Apply a label to a volume tag, warning on failure."""
+        if label is None or labels_comp is None:
+            return
+        try:
+            labels_comp.add(3, [tag], name=label)
+        except Exception as exc:
+            import warnings
+            warnings.warn(
+                f"Label {label!r} for fragment {tag} "
+                f"could not be created: {exc}",
+                stacklevel=3,
+            )
+
     def _any_point_on_surface(self, surface_tag: Tag) -> ndarray:
         """Return a point in space known to lie on ``surface_tag``.
 
@@ -1102,6 +1128,46 @@ class _Geometry:
         """
         com = gmsh.model.occ.getCenterOfMass(2, int(surface_tag))
         return np.asarray(com, dtype=float)
+
+    def _cleanup_slice_orphans(
+        self,
+        pre_entities: dict[int, set[int]],
+        keep_vol_tags: set[int],
+    ) -> None:
+        """Remove entities created during a slice that aren't part of the result.
+
+        Syncs the OCC kernel, walks the boundary hierarchy of
+        *keep_vol_tags*, then removes anything new (not in
+        *pre_entities*) that isn't a boundary of a surviving volume.
+        """
+        gmsh.model.occ.synchronize()
+
+        keep_dimtags: set[tuple[int, int]] = {(3, t) for t in keep_vol_tags}
+        for vol_tag in keep_vol_tags:
+            try:
+                for dt in gmsh.model.getBoundary(
+                    [(3, vol_tag)], oriented=False, recursive=True,
+                ):
+                    keep_dimtags.add((abs(dt[0]), abs(dt[1])))
+            except Exception:
+                pass
+
+        removed_dts: list[tuple[int, int]] = []
+        for d in [2, 1, 0]:
+            for _, t in gmsh.model.getEntities(d):
+                if t in pre_entities.get(d, set()):
+                    continue
+                if (d, t) in keep_dimtags:
+                    continue
+                try:
+                    gmsh.model.occ.remove([(d, t)], recursive=False)
+                except Exception:
+                    pass
+                self._model._metadata.pop((d, t), None)
+                removed_dts.append((d, t))
+
+        if removed_dts:
+            cleanup_label_pgs(removed_dts)
 
     # ------------------------------------------------------------------
     # Slice (atomic cut + cleanup)
@@ -1208,50 +1274,10 @@ class _Geometry:
         else:
             keep_vol_tags = set(fragments)
 
-        # Sync so we can query the post-fragment entity state.
-        gmsh.model.occ.synchronize()
-
-        # Find the boundary (surfaces, edges, points) of the
-        # surviving volumes — those must be kept.
-        keep_dimtags: set[tuple[int, int]] = set()
-        for t in keep_vol_tags:
-            keep_dimtags.add((3, t))
-        # Walk down the boundary hierarchy: vol -> surfs -> edges -> pts
-        for vol_tag in keep_vol_tags:
-            try:
-                bdry_2 = gmsh.model.getBoundary(
-                    [(3, vol_tag)], oriented=False, recursive=False,
-                )
-                for dt in bdry_2:
-                    keep_dimtags.add((abs(dt[0]), abs(dt[1])))
-                bdry_1 = gmsh.model.getBoundary(
-                    [(3, vol_tag)], oriented=False, recursive=True,
-                )
-                for dt in bdry_1:
-                    keep_dimtags.add((abs(dt[0]), abs(dt[1])))
-            except Exception:
-                pass
-
-        # Remove everything created during the slice that isn't
-        # part of the surviving volumes or their boundaries.
-        removed_dts: list[tuple[int, int]] = []
-        for d in [2, 1, 0]:   # remove top-down to avoid dangling refs
-            for _, t in gmsh.model.getEntities(d):
-                if t in pre_entities.get(d, set()):
-                    continue   # existed before the slice
-                if (d, t) in keep_dimtags:
-                    continue   # part of a surviving volume
-                try:
-                    gmsh.model.occ.remove([(d, t)], recursive=False)
-                except Exception:
-                    pass
-                self._model._metadata.pop((d, t), None)
-                removed_dts.append((d, t))
+        self._cleanup_slice_orphans(pre_entities, keep_vol_tags)
 
         if sync:
             gmsh.model.occ.synchronize()
-        if removed_dts:
-            cleanup_label_pgs(removed_dts)
 
         self._model._log(
             f"slice(axis={axis!r}, offset={offset}, classify={classify})"
@@ -1261,6 +1287,16 @@ class _Geometry:
     # ------------------------------------------------------------------
     # Primitives  (dim = 3 solids)
     # ------------------------------------------------------------------
+
+    def _add_solid(
+        self, tag: int, kind: str, desc: str,
+        *, label: str | None, sync: bool,
+    ) -> Tag:
+        """Common tail for every solid primitive: sync, log, register."""
+        if sync:
+            gmsh.model.occ.synchronize()
+        self._model._log(f"{desc} -> tag {tag}")
+        return self._model._register(3, tag, label, kind)
 
     def add_box(
         self,
@@ -1279,10 +1315,10 @@ class _Geometry:
         dx, dy, dz    : extents along X, Y, Z
         """
         tag = gmsh.model.occ.addBox(x, y, z, dx, dy, dz)
-        if sync:
-            gmsh.model.occ.synchronize()
-        self._model._log(f"add_box(origin=({x},{y},{z}), size=({dx},{dy},{dz})) -> tag {tag}")
-        return self._model._register(3, tag, label, 'box')
+        return self._add_solid(
+            tag, 'box', f"add_box(origin=({x},{y},{z}), size=({dx},{dy},{dz}))",
+            label=label, sync=sync,
+        )
 
     def add_sphere(
         self,
@@ -1294,10 +1330,10 @@ class _Geometry:
     ) -> Tag:
         """Add a sphere centred at (cx, cy, cz) with the given radius."""
         tag = gmsh.model.occ.addSphere(cx, cy, cz, radius)
-        if sync:
-            gmsh.model.occ.synchronize()
-        self._model._log(f"add_sphere(centre=({cx},{cy},{cz}), r={radius}) -> tag {tag}")
-        return self._model._register(3, tag, label, 'sphere')
+        return self._add_solid(
+            tag, 'sphere', f"add_sphere(centre=({cx},{cy},{cz}), r={radius})",
+            label=label, sync=sync,
+        )
 
     def add_cylinder(
         self,
@@ -1320,10 +1356,11 @@ class _Geometry:
         angle      : sweep angle in radians (default 2π = full cylinder)
         """
         tag = gmsh.model.occ.addCylinder(x, y, z, dx, dy, dz, radius, angle=angle)
-        if sync:
-            gmsh.model.occ.synchronize()
-        self._model._log(f"add_cylinder(base=({x},{y},{z}), axis=({dx},{dy},{dz}), r={radius}) -> tag {tag}")
-        return self._model._register(3, tag, label, 'cylinder')
+        return self._add_solid(
+            tag, 'cylinder',
+            f"add_cylinder(base=({x},{y},{z}), axis=({dx},{dy},{dz}), r={radius})",
+            label=label, sync=sync,
+        )
 
     def add_cone(
         self,
@@ -1347,10 +1384,10 @@ class _Geometry:
         angle      : sweep angle in radians
         """
         tag = gmsh.model.occ.addCone(x, y, z, dx, dy, dz, r1, r2, angle=angle)
-        if sync:
-            gmsh.model.occ.synchronize()
-        self._model._log(f"add_cone(base=({x},{y},{z}), r1={r1}, r2={r2}) -> tag {tag}")
-        return self._model._register(3, tag, label, 'cone')
+        return self._add_solid(
+            tag, 'cone', f"add_cone(base=({x},{y},{z}), r1={r1}, r2={r2})",
+            label=label, sync=sync,
+        )
 
     def add_torus(
         self,
@@ -1372,10 +1409,10 @@ class _Geometry:
         angle      : sweep angle in radians
         """
         tag = gmsh.model.occ.addTorus(cx, cy, cz, r1, r2, angle=angle)
-        if sync:
-            gmsh.model.occ.synchronize()
-        self._model._log(f"add_torus(centre=({cx},{cy},{cz}), R={r1}, r={r2}) -> tag {tag}")
-        return self._model._register(3, tag, label, 'torus')
+        return self._add_solid(
+            tag, 'torus', f"add_torus(centre=({cx},{cy},{cz}), R={r1}, r={r2})",
+            label=label, sync=sync,
+        )
 
     def add_wedge(
         self,
@@ -1395,8 +1432,9 @@ class _Geometry:
         dx, dy, dz : extents
         ltx        : top X extent (0 = sharp wedge)
         """
-        tag = gmsh.model.occ.addWedge(x, y, z, dx, dy, dz, ltx)
-        if sync:
-            gmsh.model.occ.synchronize()
-        self._model._log(f"add_wedge(origin=({x},{y},{z}), size=({dx},{dy},{dz}), ltx={ltx}) -> tag {tag}")
-        return self._model._register(3, tag, label, 'wedge')
+        tag = gmsh.model.occ.addWedge(x, y, z, dx, dy, dz, ltx=ltx)
+        return self._add_solid(
+            tag, 'wedge',
+            f"add_wedge(origin=({x},{y},{z}), size=({dx},{dy},{dz}), ltx={ltx})",
+            label=label, sync=sync,
+        )

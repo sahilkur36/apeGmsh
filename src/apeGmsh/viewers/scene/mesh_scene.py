@@ -22,7 +22,8 @@ import gmsh
 import numpy as np
 import pyvista as pv
 
-from ..core.entity_registry import DimTag, EntityRegistry
+from apeGmsh._types import DimTag
+from ..core.entity_registry import EntityRegistry
 from .glyph_points import build_node_cloud
 
 

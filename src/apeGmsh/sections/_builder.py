@@ -26,19 +26,20 @@ from typing import TYPE_CHECKING
 import gmsh
 
 if TYPE_CHECKING:
-    from apeGmsh._session import _SessionBase
+    from apeGmsh._types import SessionProtocol as _SessionBase
     from apeGmsh.core._parts_registry import Instance
 
 
-class SectionsBuilder:
+from apeGmsh._logging import _HasLogging
+
+
+class SectionsBuilder(_HasLogging):
     """Direct in-session section builder (``g.sections``)."""
+
+    _log_prefix = "Sections"
 
     def __init__(self, parent: "_SessionBase") -> None:
         self._parent = parent
-
-    def _log(self, msg: str) -> None:
-        if self._parent._verbose:
-            print(f"[Sections] {msg}")
 
     def _build_section(
         self,
