@@ -55,6 +55,15 @@ class ConstraintKind:
     TIED_CONTACT       = "tied_contact"
     MORTAR             = "mortar"
 
+    # Classification for rendering / routing
+    NODE_PAIR_KINDS = frozenset({
+        "equal_dof", "rigid_beam", "rigid_rod", "rigid_diaphragm",
+        "rigid_body", "kinematic_coupling", "penalty", "node_to_surface",
+    })
+    SURFACE_KINDS = frozenset({
+        "tie", "distributing", "embedded", "tied_contact", "mortar",
+    })
+
 
 class LoadKind:
     """String constants for load record ``kind`` values.

@@ -43,15 +43,6 @@ _CONSTRAINT_COLORS: dict[str, str] = {
 
 _FALLBACK_COLOR = "#a6adc8"
 
-# Classification for rendering dispatch
-NODE_PAIR_KINDS = frozenset({
-    "equal_dof", "rigid_beam", "rigid_rod", "rigid_diaphragm",
-    "rigid_body", "kinematic_coupling", "penalty", "node_to_surface",
-})
-SURFACE_KINDS = frozenset({
-    "tie", "distributing", "embedded", "tied_contact", "mortar",
-})
-
 
 def constraint_color(kind: str) -> str:
     """Return the hex color for a constraint kind."""
@@ -249,40 +240,38 @@ class ConstraintsTabPanel:
         self._lbl_interp.setText(str(n_interp))
         self._lbl_phantoms.setText(str(n_phantom))
 
-    def _format_def_detail(self, d) -> str:
-        """One-line summary of a ConstraintDef for the Detail column."""
-        from apeGmsh.solvers.Constraints import (
-            EqualDOFDef, RigidLinkDef, PenaltyDef,
-            RigidDiaphragmDef, RigidBodyDef, KinematicCouplingDef,
-            NodeToSurfaceDef, TieDef, DistributingCouplingDef,
-            EmbeddedDef, TiedContactDef, MortarDef,
-        )
-        if isinstance(d, EqualDOFDef):
-            dofs = d.dofs or "all"
-            return f"dofs={dofs}, tol={d.tolerance}"
-        if isinstance(d, RigidLinkDef):
-            return f"type={d.link_type}"
-        if isinstance(d, PenaltyDef):
-            return f"k={d.stiffness:.3g}, dofs={d.dofs or 'all'}"
-        if isinstance(d, RigidDiaphragmDef):
-            return f"normal={tuple(d.plane_normal)}"
-        if isinstance(d, RigidBodyDef):
-            return f"master_pt={tuple(d.master_point)}"
-        if isinstance(d, KinematicCouplingDef):
-            return f"dofs={d.dofs or 'all'}"
-        if isinstance(d, NodeToSurfaceDef):
-            return f"tol={d.tolerance}"
-        if isinstance(d, TieDef):
-            return f"tol={d.tolerance}"
-        if isinstance(d, DistributingCouplingDef):
-            return f"weighting={d.weighting}"
-        if isinstance(d, EmbeddedDef):
-            return f"tol={d.tolerance}"
-        if isinstance(d, TiedContactDef):
-            return f"tol={d.tolerance}"
-        if isinstance(d, MortarDef):
-            return f"order={d.integration_order}"
-        return "(unknown)"
+    @staticmethod
+    def _format_def_detail(d) -> str:
+        """One-line summary of a ConstraintDef for the Detail column.
+
+        Extracts the most informative fields from whatever def type
+        is passed, without importing every concrete class.
+        """
+        parts: list[str] = []
+        # Most defs have these — show whichever exists
+        for attr, fmt in [
+            ('link_type',         'type={}'),
+            ('dofs',              'dofs={}'),
+            ('tolerance',         'tol={}'),
+            ('stiffness',         'k={:.3g}'),
+            ('plane_normal',      'normal={}'),
+            ('master_point',      'pt={}'),
+            ('weighting',         'weighting={}'),
+            ('integration_order', 'order={}'),
+        ]:
+            val = getattr(d, attr, None)
+            if val is None:
+                continue
+            # dofs=None means "all" by convention
+            if attr == 'dofs' and val is None:
+                continue
+            try:
+                parts.append(fmt.format(val))
+            except (TypeError, ValueError):
+                parts.append(f"{attr}={val}")
+            if len(parts) >= 2:
+                break  # two fields is enough for a one-liner
+        return ", ".join(parts) or d.kind
 
     # ── Kind state queries ────────────────────────────────────
 
