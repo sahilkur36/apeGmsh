@@ -154,6 +154,22 @@ class MeshViewer:
                     _label_actors.append(actor)
                 except Exception:
                     pass
+            if checked and len(_phantom_coords) > 0:
+                p_labels = [str(int(t)) for t in _phantom_tags]
+                try:
+                    actor = plotter.add_point_labels(
+                        _phantom_coords, p_labels,
+                        font_size=8,
+                        text_color="#f5c2e7",
+                        shape_color="#333333",
+                        shape_opacity=0.6,
+                        show_points=False,
+                        always_visible=True,
+                        name="_phantom_labels",
+                    )
+                    _label_actors.append(actor)
+                except Exception:
+                    pass
             plotter.render()
 
         def _toggle_elem_labels(checked: bool):
@@ -262,6 +278,34 @@ class MeshViewer:
             except Exception:
                 fem = None
 
+        # ── Phantom nodes (always visible) ─────────────────────────
+        import pyvista as pv
+
+        _phantom_tags: np.ndarray = np.array([], dtype=np.int64)
+        _phantom_coords: np.ndarray = np.empty((0, 3), dtype=float)
+        _phantom_actor = None
+
+        if fem is not None and fem.nodes.constraints:
+            pn = fem.nodes.constraints.get_phantom_nodes()
+            if pn:
+                tags_p, coords_p = zip(*pn)
+                _phantom_tags = np.array(tags_p, dtype=np.int64)
+                _phantom_coords = (
+                    np.array(coords_p, dtype=float)
+                    - registry.origin_shift
+                )
+                glyph_r = (0.003 * scene.model_diagonal
+                           * max(0.1, self._point_size / 10.0))
+                diamond = pv.Octahedron(radius=glyph_r * 0.8)
+                cloud = pv.PolyData(_phantom_coords)
+                glyphs = cloud.glyph(
+                    geom=diamond, orient=False, scale=False)
+                _phantom_actor = plotter.add_mesh(
+                    glyphs, color="#f5c2e7", lighting=False,
+                    name="_phantom_nodes",
+                    reset_camera=False, pickable=False,
+                )
+
         # ── Overlay infrastructure ──────────────────────────────────
         from .ui.loads_tab import LoadsTabPanel, pattern_color
         from .ui.mass_tab import MassTabPanel
@@ -270,7 +314,6 @@ class MeshViewer:
             build_node_pair_actors, build_surface_actors,
         )
         from apeGmsh.mesh._record_set import ConstraintKind
-        import pyvista as pv
 
         _load_actors: list = []
         _mass_actors: list = []
@@ -560,7 +603,26 @@ class MeshViewer:
         from .overlays.glyph_helpers import rebuild_node_cloud
 
         def _pref_point_size(v: float):
+            nonlocal _phantom_actor
             rebuild_node_cloud(plotter, scene, v)
+            # Rebuild phantom markers at the new size
+            if len(_phantom_coords) > 0:
+                if _phantom_actor is not None:
+                    try:
+                        plotter.remove_actor(_phantom_actor)
+                    except Exception:
+                        pass
+                glyph_r = (0.003 * scene.model_diagonal
+                           * max(0.1, v / 10.0))
+                diamond = pv.Octahedron(radius=glyph_r * 0.8)
+                cloud = pv.PolyData(_phantom_coords)
+                glyphs = cloud.glyph(
+                    geom=diamond, orient=False, scale=False)
+                _phantom_actor = plotter.add_mesh(
+                    glyphs, color="#f5c2e7", lighting=False,
+                    name="_phantom_nodes",
+                    reset_camera=False, pickable=False,
+                )
             plotter.render()
 
         _pref_line_width = make_line_width_cb(registry, plotter)

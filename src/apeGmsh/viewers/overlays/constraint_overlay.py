@@ -126,22 +126,8 @@ def build_node_pair_actors(
                 reset_camera=False, pickable=False,
             )))
 
-    # Phantom nodes (node_to_surface only)
-    if ConstraintKind.NODE_TO_SURFACE in active_kinds:
-        phantom_pts = []
-        for nid, xyz in fem.nodes.constraints.extra_nodes():
-            shifted = np.array(xyz, dtype=float) - origin
-            phantom_pts.append(shifted)
-        if phantom_pts:
-            cloud = pv.PolyData(np.array(phantom_pts, dtype=float))
-            diamond = pv.Octahedron(radius=marker_radius * 0.7)
-            glyphs = cloud.glyph(geom=diamond, orient=False, scale=False)
-            color = color_fn(ConstraintKind.NODE_TO_SURFACE)
-            result.append((glyphs, dict(
-                color=color, lighting=False,
-                name="_cst_phantoms_node_to_surface",
-                reset_camera=False, pickable=False,
-            )))
+    # Phantom node markers are rendered permanently by MeshViewer
+    # (diamond glyphs in the node cloud), so no overlay needed here.
 
     return result
 

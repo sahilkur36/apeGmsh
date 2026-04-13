@@ -992,6 +992,11 @@ class ConstraintResolver:
             else None
         )
 
+        # Running high-water mark for phantom node tag generation.
+        # Each resolve_node_to_surface() call advances this so that
+        # multiple calls never produce overlapping phantom tag ranges.
+        self._next_phantom_tag: int = int(self.node_tags.max()) + 1
+
         # KD-tree for spatial queries (built lazily)
         self._tree = None
 
@@ -1543,9 +1548,10 @@ class ConstraintResolver:
         slave_list = sorted(slave_nodes - {master_tag})
         dofs = defn.dofs or [1, 2, 3]
 
-        # -- 2. Generate phantom node tags --
-        max_tag = int(self.node_tags.max())
-        phantom_tags = list(range(max_tag + 1, max_tag + 1 + len(slave_list)))
+        # -- 2. Generate phantom node tags (unique across calls) --
+        start = self._next_phantom_tag
+        phantom_tags = list(range(start, start + len(slave_list)))
+        self._next_phantom_tag = start + len(slave_list)
 
         phantom_coords = np.array([
             self._coords_of(t) for t in slave_list
