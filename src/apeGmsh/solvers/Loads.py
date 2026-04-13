@@ -33,11 +33,12 @@ if TYPE_CHECKING:
 class LoadDef:
     """Base class for all load definitions."""
     kind: str
-    target: object                  # part label, PG name, mesh selection name, or DimTag list
+    target: object                  # part label, PG name, label name, mesh selection, or DimTag list
     pattern: str = "default"        # pattern grouping name
     name: str | None = None
     reduction: str = "tributary"    # "tributary" | "consistent"
     target_form: str = "nodal"      # "nodal" | "element"
+    target_source: str = "auto"     # "auto" | "pg" | "label"
 
 
 @dataclass

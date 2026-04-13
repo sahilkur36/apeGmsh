@@ -51,6 +51,8 @@ class LoadsTabPanel:
         fem: "FEMData | None" = None,
         *,
         on_patterns_changed: Callable[[set[str]], None] | None = None,
+        on_force_scale: Callable[[float], None] | None = None,
+        on_moment_scale: Callable[[float], None] | None = None,
     ) -> None:
         QtWidgets, QtCore, QtGui = _qt()
         self._QtGui = QtGui
@@ -104,6 +106,33 @@ class LoadsTabPanel:
         self._pattern_items: dict[str, Any] = {}  # QTreeWidgetItem (lazy Qt import)
         # Suppress itemChanged during programmatic edits
         self._suppress_signal = False
+
+        # ── scale sliders ─────────────────────────────────────
+        scale_group = QtWidgets.QGroupBox("Scale")
+        scale_form = QtWidgets.QFormLayout(scale_group)
+        scale_form.setSpacing(4)
+
+        self._s_force = QtWidgets.QDoubleSpinBox()
+        self._s_force.setRange(0.01, 50.0)
+        self._s_force.setSingleStep(0.1)
+        self._s_force.setDecimals(2)
+        self._s_force.setValue(1.0)
+        self._s_force.setSuffix("x")
+        if on_force_scale:
+            self._s_force.valueChanged.connect(on_force_scale)
+        scale_form.addRow("Forces:", self._s_force)
+
+        self._s_moment = QtWidgets.QDoubleSpinBox()
+        self._s_moment.setRange(0.01, 50.0)
+        self._s_moment.setSingleStep(0.1)
+        self._s_moment.setDecimals(2)
+        self._s_moment.setValue(1.0)
+        self._s_moment.setSuffix("x")
+        if on_moment_scale:
+            self._s_moment.valueChanged.connect(on_moment_scale)
+        scale_form.addRow("Moments:", self._s_moment)
+
+        layout.addWidget(scale_group)
 
         # ── buttons ───────────────────────────────────────────
         btn_row = QtWidgets.QHBoxLayout()

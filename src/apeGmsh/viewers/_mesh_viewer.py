@@ -296,7 +296,8 @@ class MeshViewer:
                 return 1.0
 
         _overlay_scales = {
-            'load_arrow':         1.0,
+            'force_arrow':        1.0,
+            'moment_arrow':       1.0,
             'mass_sphere':        1.0,
             'constraint_marker':  1.0,
             'constraint_line':    1.0,
@@ -327,7 +328,8 @@ class MeshViewer:
                 return
 
             char_len = _characteristic_length()
-            base_len = char_len * 0.05 * _overlay_scales['load_arrow']
+            force_len = char_len * 0.05 * _overlay_scales['force_arrow']
+            moment_len = char_len * 0.05 * _overlay_scales['moment_arrow']
             origin = registry.origin_shift
 
             by_pat: dict[str, list] = {}
@@ -373,7 +375,7 @@ class MeshViewer:
 
                     cloud = pv.PolyData(pos_arr)
                     cloud['vectors'] = (
-                        dir_arr * scale_arr[:, np.newaxis] * base_len)
+                        dir_arr * scale_arr[:, np.newaxis] * force_len)
                     glyphs = cloud.glyph(
                         orient='vectors', scale='vectors', factor=1.0)
                     actor = plotter.add_mesh(
@@ -395,8 +397,8 @@ class MeshViewer:
                     cloud = pv.PolyData(pos_arr)
                     cloud['vectors'] = (
                         dir_arr * scale_arr[:, np.newaxis]
-                        * base_len * 0.6)
-                    template = _get_moment_template(base_len)
+                        * moment_len * 0.6)
+                    template = _get_moment_template(moment_len)
                     glyphs = cloud.glyph(
                         geom=template, orient='vectors',
                         scale='vectors', factor=1.0)
@@ -519,9 +521,19 @@ class MeshViewer:
         loads_comp = getattr(self._parent, 'loads', None)
         loads_tab = None
         if loads_comp is not None:
+            def _on_force_scale(v: float):
+                _overlay_scales['force_arrow'] = v
+                _on_loads_patterns_changed(loads_tab.active_patterns())
+
+            def _on_moment_scale(v: float):
+                _overlay_scales['moment_arrow'] = v
+                _on_loads_patterns_changed(loads_tab.active_patterns())
+
             loads_tab = LoadsTabPanel(
                 loads_comp, fem=fem,
                 on_patterns_changed=_on_loads_patterns_changed,
+                on_force_scale=_on_force_scale,
+                on_moment_scale=_on_moment_scale,
             )
             win.add_tab("Loads", loads_tab.widget)
 
@@ -557,7 +569,7 @@ class MeshViewer:
 
         def _pref_overlay_scale(key: str, mult: float):
             _overlay_scales[key] = mult
-            if key == 'load_arrow' and loads_tab is not None:
+            if key in ('force_arrow', 'moment_arrow') and loads_tab is not None:
                 _on_loads_patterns_changed(loads_tab.active_patterns())
             elif key == 'mass_sphere' and mass_tab is not None:
                 show_cb = getattr(mass_tab, '_show_cb', None)

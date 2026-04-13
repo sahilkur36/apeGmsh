@@ -209,11 +209,23 @@ class ConstraintsComposite:
         s_tags = resolve_to_tags(slave,  dim=2, session=self._parent)
         master_tag = m_tags[0]
 
+        # Build a display name from the user's original input.
+        # The resolver needs entity tags in master_label/slave_label,
+        # so we put the human-readable name in the `name` field.
+        if name is None:
+            m_name = str(master) if isinstance(master, str) else str(master_tag)
+            s_name = str(slave) if isinstance(slave, str) else "surface"
+            display_name = f"{m_name} → {s_name}"
+        else:
+            display_name = name
+
         defs = []
         for s_tag in s_tags:
             d = self._add_def(NodeToSurfaceDef(
-                master_label=str(master_tag), slave_label=str(s_tag),
-                dofs=dofs, tolerance=tolerance, name=name))
+                master_label=str(master_tag),
+                slave_label=str(s_tag),
+                dofs=dofs, tolerance=tolerance,
+                name=display_name))
             defs.append(d)
         return defs[0] if len(defs) == 1 else defs
 
@@ -334,10 +346,29 @@ class ConstraintsComposite:
 
     def _resolve_node_to_surface(self, resolver, defn, node_map, face_map, all_nodes):
         import gmsh
-        master_tag = int(defn.master_label)
-        if master_tag not in all_nodes:
+        # master_label stores a geometry entity tag (dim=0), NOT a mesh
+        # node tag.  Query Gmsh for the mesh node on that entity.
+        master_entity_tag = int(defn.master_label)
+        try:
+            nt, _, _ = gmsh.model.mesh.getNodes(
+                dim=0, tag=master_entity_tag,
+                includeBoundary=False, returnParametricCoord=False)
+            if len(nt) == 0:
+                raise ValueError(
+                    f"node_to_surface: geometry point entity "
+                    f"(dim=0, tag={master_entity_tag}) has no mesh node.")
+            master_node = int(nt[0])
+        except Exception as exc:
             raise ValueError(
-                f"node_to_surface: master node tag {master_tag} not found in the mesh.")
+                f"node_to_surface: cannot get mesh node from point "
+                f"entity (dim=0, tag={master_entity_tag}): {exc}") from exc
+
+        if master_node not in all_nodes:
+            raise ValueError(
+                f"node_to_surface: master mesh node {master_node} "
+                f"(from entity {master_entity_tag}) not found in "
+                f"the mesh node set.")
+
         slave_entity_tag = int(defn.slave_label)
         try:
             nt, _, _ = gmsh.model.mesh.getNodes(
@@ -352,7 +383,7 @@ class ConstraintsComposite:
             raise ValueError(
                 f"node_to_surface: surface entity (dim=2, "
                 f"tag={slave_entity_tag}) has no nodes.")
-        return resolver.resolve_node_to_surface(defn, master_tag, slave_nodes)
+        return resolver.resolve_node_to_surface(defn, master_node, slave_nodes)
 
     def _resolve_embedded(self, resolver, defn, node_map, face_map, all_nodes):
         raise NotImplementedError("Embedded constraint resolution is not implemented yet.")

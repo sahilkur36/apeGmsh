@@ -607,6 +607,21 @@ class PartsRegistry(_PartsFragmentationMixin):
                                     stacklevel=2,
                                 )
 
+        # Create umbrella label for the entire Part instance.
+        # This allows ``fem.nodes.get(label="column")`` to return
+        # all nodes of the part, not just a sub-component.
+        if labels_comp is not None and top_dim >= 0:
+            try:
+                labels_comp.add(top_dim, entities[top_dim], name=label)
+                label_names.append(label)
+            except Exception as exc:
+                import warnings
+                warnings.warn(
+                    f"Umbrella label creation failed for "
+                    f"{label!r} (dim={top_dim}): {exc}",
+                    stacklevel=2,
+                )
+
         inst = Instance(
             label=label,
             part_name=part_name,

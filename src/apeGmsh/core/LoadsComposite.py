@@ -113,55 +113,90 @@ class LoadsComposite:
     # Factory methods
     # ------------------------------------------------------------------
 
-    def point(self, target, *, force_xyz=None, moment_xyz=None,
+    def point(self, target=None, *, pg=None, label=None, tag=None,
+              force_xyz=None, moment_xyz=None,
               name=None) -> PointLoadDef:
-        """Concentrated force/moment at the node(s) of *target*."""
+        """Concentrated force/moment at the node(s) of *target*.
+
+        Target resolution follows the FEM broker pattern:
+        ``pg=`` explicit PG, ``label=`` explicit label,
+        ``tag=`` direct Gmsh tag,
+        positional *target* tries label first then PG.
+        """
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(PointLoadDef(
-            target=target, pattern=self._active_pattern, name=name,
+            target=t, target_source=src,
+            pattern=self._active_pattern, name=name,
             force_xyz=force_xyz, moment_xyz=moment_xyz,
         ))
 
-    def line(self, target, *, magnitude=None, direction=(0., 0., -1.),
+    def line(self, target=None, *, pg=None, label=None, tag=None,
+             magnitude=None, direction=(0., 0., -1.),
              q_xyz=None, reduction="tributary", target_form="nodal",
              name=None) -> LineLoadDef:
         """Distributed line load along curve(s) of *target*."""
         if magnitude is None and q_xyz is None:
             raise ValueError("line() requires either magnitude or q_xyz.")
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(LineLoadDef(
-            target=target, pattern=self._active_pattern, name=name,
+            target=t, target_source=src,
+            pattern=self._active_pattern, name=name,
             magnitude=magnitude or 0.0, direction=direction, q_xyz=q_xyz,
             reduction=reduction, target_form=target_form,
         ))
 
-    def surface(self, target, *, magnitude=0.0, normal=True,
+    def surface(self, target=None, *, pg=None, label=None, tag=None,
+                magnitude=0.0, normal=True,
                 direction=(0., 0., -1.), reduction="tributary",
                 target_form="nodal", name=None) -> SurfaceLoadDef:
         """Pressure or traction on surface(s) of *target*."""
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(SurfaceLoadDef(
-            target=target, pattern=self._active_pattern, name=name,
+            target=t, target_source=src,
+            pattern=self._active_pattern, name=name,
             magnitude=magnitude, normal=normal, direction=direction,
             reduction=reduction, target_form=target_form,
         ))
 
-    def gravity(self, target, *, g=(0., 0., -9.81), density=None,
+    def gravity(self, target=None, *, pg=None, label=None, tag=None,
+                g=(0., 0., -9.81), density=None,
                 reduction="tributary", target_form="nodal",
                 name=None) -> GravityLoadDef:
         """Body weight from gravity over volume(s) of *target*."""
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(GravityLoadDef(
-            target=target, pattern=self._active_pattern, name=name,
+            target=t, target_source=src,
+            pattern=self._active_pattern, name=name,
             g=g, density=density,
             reduction=reduction, target_form=target_form,
         ))
 
-    def body(self, target, *, force_per_volume=(0., 0., 0.),
+    def body(self, target=None, *, pg=None, label=None, tag=None,
+             force_per_volume=(0., 0., 0.),
              reduction="tributary", target_form="nodal",
              name=None) -> BodyLoadDef:
         """Generic per-volume body force on volume(s) of *target*."""
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(BodyLoadDef(
-            target=target, pattern=self._active_pattern, name=name,
+            target=t, target_source=src,
+            pattern=self._active_pattern, name=name,
             force_per_volume=force_per_volume,
             reduction=reduction, target_form=target_form,
         ))
+
+    @staticmethod
+    def _coalesce_target(target, *, pg=None, label=None, tag=None):
+        """Resolve explicit pg=/label=/tag= into (target, source) pair."""
+        if tag is not None:
+            return tag, "tag"
+        if pg is not None:
+            return pg, "pg"
+        if label is not None:
+            return label, "label"
+        if target is not None:
+            return target, "auto"
+        raise ValueError(
+            "One of target, pg=, label=, or tag= is required.")
 
     # ------------------------------------------------------------------
     # Internal: store + validate
@@ -184,15 +219,21 @@ class LoadsComposite:
     # Target resolution: convert flexible target -> DimTag list
     # ------------------------------------------------------------------
 
-    def _resolve_target(self, target) -> list:
+    def _resolve_target(self, target, source: str = "auto") -> list:
         """Resolve a target identifier to a list of ``(dim, tag)`` pairs.
 
-        Lookup order:
+        Lookup order (for ``source="auto"``):
             1. ``list[tuple[int, int]]``  -> as-is
             2. mesh selection name        -> entities from g.mesh_selection
-            3. physical group name        -> entities from g.physical
-            4. part label                 -> entities from g.parts.instances
+            3. label name (Tier 1)        -> ``_label:``-prefixed PG
+            4. physical group name (Tier 2)-> user PG
+            5. part label                 -> entities from g.parts.instances
+
+        When ``source="pg"`` only step 4 is tried.
+        When ``source="label"`` only step 3 is tried.
         """
+        import gmsh
+
         # 1. Raw DimTag list
         if isinstance(target, (list, tuple)) and len(target) > 0 \
                 and isinstance(target[0], (list, tuple)):
@@ -204,48 +245,64 @@ class LoadsComposite:
                 f"got {type(target).__name__}"
             )
 
-        # 2. Mesh selection name
-        ms = getattr(self._parent, "mesh_selection", None)
-        if ms is not None and hasattr(ms, "_sets"):
-            for (dim, tag), info in ms._sets.items():
-                if info.get("name") == target:
-                    # Mesh selections live at node/element level — return
-                    # as a sentinel (handled in _resolve_target_nodes/elements)
-                    return [("__ms__", dim, tag)]
+        # 2. Mesh selection name (only in auto mode)
+        if source == "auto":
+            ms = getattr(self._parent, "mesh_selection", None)
+            if ms is not None and hasattr(ms, "_sets"):
+                for (dim, tag), info in ms._sets.items():
+                    if info.get("name") == target:
+                        return [("__ms__", dim, tag)]
 
-        # 3. Physical group name
-        physical = getattr(self._parent, "physical", None)
-        if physical is not None:
+        # 3. Label name (Tier 1 — _label: prefixed PG)
+        if source in ("auto", "label"):
             try:
-                import gmsh
+                from apeGmsh.core.Labels import add_prefix
+                prefixed = add_prefix(target)
                 for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
                     try:
-                        if gmsh.model.getPhysicalName(pg_dim, pg_tag) == target:
-                            ents = gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
+                        if gmsh.model.getPhysicalName(pg_dim, pg_tag) == prefixed:
+                            ents = gmsh.model.getEntitiesForPhysicalGroup(
+                                pg_dim, pg_tag)
                             return [(pg_dim, int(t)) for t in ents]
                     except Exception:
                         pass
-            except ImportError:
+            except Exception:
                 pass
 
-        # 4. Part label
-        parts = getattr(self._parent, "parts", None)
-        if parts is not None and hasattr(parts, "_instances"):
-            inst = parts._instances.get(target)
-            if inst is not None:
-                out: list = []
-                for d, ts in inst.entities.items():
-                    out.extend((int(d), int(t)) for t in ts)
-                return out
+        # 4. Physical group name (Tier 2 — user PGs)
+        if source in ("auto", "pg"):
+            try:
+                for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
+                    try:
+                        if gmsh.model.getPhysicalName(pg_dim, pg_tag) == target:
+                            ents = gmsh.model.getEntitiesForPhysicalGroup(
+                                pg_dim, pg_tag)
+                            return [(pg_dim, int(t)) for t in ents]
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # 5. Part label
+        if source == "auto":
+            parts = getattr(self._parent, "parts", None)
+            if parts is not None and hasattr(parts, "_instances"):
+                inst = parts._instances.get(target)
+                if inst is not None:
+                    out: list = []
+                    for d, ts in inst.entities.items():
+                        out.extend((int(d), int(t)) for t in ts)
+                    return out
 
         raise KeyError(
-            f"Target {target!r} not found as part label, "
-            f"physical group name, or mesh selection name."
+            f"Target {target!r} not found as label, physical group, "
+            f"part label, or mesh selection."
         )
 
-    def _target_nodes(self, target, node_map, all_nodes) -> set[int]:
+    def _target_nodes(self, target, node_map, all_nodes,
+                      source: str = "auto") -> set[int]:
         """Resolve target to a set of mesh node IDs."""
-        dts = self._resolve_target(target)
+        dts = self._resolve_target(target, source=source)
 
         # Mesh selection sentinel
         if dts and dts[0][0] == "__ms__":
@@ -277,9 +334,9 @@ class LoadsComposite:
                 pass
         return nodes
 
-    def _target_edges(self, target) -> list[tuple[int, int]]:
+    def _target_edges(self, target, source: str = "auto") -> list[tuple[int, int]]:
         """Resolve target to a list of (n1, n2) line edges."""
-        dts = self._resolve_target(target)
+        dts = self._resolve_target(target, source=source)
         if dts and dts[0][0] == "__ms__":
             return []  # mesh selections don't expose edge connectivity
         import gmsh
@@ -300,9 +357,9 @@ class LoadsComposite:
                     edges.append((int(row[0]), int(row[-1])))
         return edges
 
-    def _target_faces(self, target) -> list[list[int]]:
+    def _target_faces(self, target, source: str = "auto") -> list[list[int]]:
         """Resolve target to a list of node-id lists (one per face element)."""
-        dts = self._resolve_target(target)
+        dts = self._resolve_target(target, source=source)
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
@@ -327,9 +384,9 @@ class LoadsComposite:
                     faces.append([int(n) for n in row[:corners_per]])
         return faces
 
-    def _target_elements(self, target):
+    def _target_elements(self, target, source: str = "auto"):
         """Resolve target to (element_ids, connectivity_rows) for volume elements."""
-        dts = self._resolve_target(target)
+        dts = self._resolve_target(target, source=source)
         if dts and dts[0][0] == "__ms__":
             return [], []
         import gmsh
@@ -396,20 +453,23 @@ class LoadsComposite:
     # ------------------------------------------------------------------
 
     def _resolve_point(self, resolver, defn, node_map, all_nodes):
-        nodes = self._target_nodes(defn.target, node_map, all_nodes)
+        src = getattr(defn, 'target_source', 'auto')
+        nodes = self._target_nodes(defn.target, node_map, all_nodes, source=src)
         return resolver.resolve_point(defn, nodes)
 
     def _resolve_line_tributary(self, resolver, defn, node_map, all_nodes):
-        edges = self._target_edges(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        edges = self._target_edges(defn.target, source=src)
         return resolver.resolve_line_tributary(defn, edges)
 
     def _resolve_line_consistent(self, resolver, defn, node_map, all_nodes):
-        edges = self._target_edges(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        edges = self._target_edges(defn.target, source=src)
         return resolver.resolve_line_consistent(defn, edges)
 
     def _resolve_line_element(self, resolver, defn, node_map, all_nodes):
-        # For element-form output we need element IDs of the target curves
-        dts = self._resolve_target(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        dts = self._resolve_target(defn.target, source=src)
         import gmsh
         eids: list[int] = []
         for d, t in dts:
@@ -424,15 +484,18 @@ class LoadsComposite:
         return resolver.resolve_line_element(defn, eids)
 
     def _resolve_surface_tributary(self, resolver, defn, node_map, all_nodes):
-        faces = self._target_faces(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        faces = self._target_faces(defn.target, source=src)
         return resolver.resolve_surface_tributary(defn, faces)
 
     def _resolve_surface_consistent(self, resolver, defn, node_map, all_nodes):
-        faces = self._target_faces(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        faces = self._target_faces(defn.target, source=src)
         return resolver.resolve_surface_consistent(defn, faces)
 
     def _resolve_surface_element(self, resolver, defn, node_map, all_nodes):
-        dts = self._resolve_target(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        dts = self._resolve_target(defn.target, source=src)
         import gmsh
         eids: list[int] = []
         for d, t in dts:
@@ -447,23 +510,28 @@ class LoadsComposite:
         return resolver.resolve_surface_element(defn, eids)
 
     def _resolve_gravity_tributary(self, resolver, defn, node_map, all_nodes):
-        _, conns = self._target_elements(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        _, conns = self._target_elements(defn.target, source=src)
         return resolver.resolve_gravity_tributary(defn, conns)
 
     def _resolve_gravity_consistent(self, resolver, defn, node_map, all_nodes):
-        _, conns = self._target_elements(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        _, conns = self._target_elements(defn.target, source=src)
         return resolver.resolve_gravity_consistent(defn, conns)
 
     def _resolve_gravity_element(self, resolver, defn, node_map, all_nodes):
-        eids, _ = self._target_elements(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        eids, _ = self._target_elements(defn.target, source=src)
         return resolver.resolve_gravity_element(defn, eids)
 
     def _resolve_body_tributary(self, resolver, defn, node_map, all_nodes):
-        _, conns = self._target_elements(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        _, conns = self._target_elements(defn.target, source=src)
         return resolver.resolve_body_tributary(defn, conns)
 
     def _resolve_body_element(self, resolver, defn, node_map, all_nodes):
-        eids, _ = self._target_elements(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        eids, _ = self._target_elements(defn.target, source=src)
         return resolver.resolve_body_element(defn, eids)
 
     # ------------------------------------------------------------------

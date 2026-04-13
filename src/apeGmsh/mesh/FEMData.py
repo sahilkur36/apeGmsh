@@ -257,6 +257,7 @@ class NodeComposite:
         *,
         pg: str | None = None,
         label: str | None = None,
+        tag: int | tuple[int, int] | None = None,
         partition: int | None = None,
     ) -> NodeResult:
         """Bundled ``(ids, coords)`` for a selection.
@@ -271,9 +272,11 @@ class NodeComposite:
             Physical group name (explicit).
         label : str, optional
             Label name (explicit).
+        tag : int or (dim, tag), optional
+            Direct Gmsh physical-group tag lookup.
         partition : int, optional
-            Partition ID.  When combined with *pg* or *label*, acts
-            as an intersection filter.
+            Partition ID.  When combined with *pg*, *label*, or
+            *tag*, acts as an intersection filter.
 
         Returns
         -------
@@ -288,12 +291,15 @@ class NodeComposite:
             fem.nodes.get("Base")                    # PG-first fallback
             fem.nodes.get(pg="Base")                 # explicit PG
             fem.nodes.get(label="col.web")           # explicit label
-            fem.nodes.get(42)                        # by Gmsh tag
-            fem.nodes.get((2, 1))                    # by (dim, tag)
+            fem.nodes.get(tag=42)                    # by Gmsh PG tag
+            fem.nodes.get(tag=(2, 1))                # by (dim, tag)
             fem.nodes.get(partition=2)               # partition 2
             fem.nodes.get(pg="Base", partition=1)    # intersection
         """
-        if pg is not None:
+        if tag is not None:
+            ids = self.physical.node_ids(tag)
+            coords = self.physical.node_coords(tag)
+        elif pg is not None:
             ids = self.physical.node_ids(pg)
             coords = self.physical.node_coords(pg)
         elif label is not None:
@@ -337,11 +343,13 @@ class NodeComposite:
         *,
         pg: str | None = None,
         label: str | None = None,
+        tag: int | tuple[int, int] | None = None,
         partition: int | None = None,
     ) -> ndarray:
         """Node IDs only for a selection."""
         return self.get(
-            target, pg=pg, label=label, partition=partition).ids
+            target, pg=pg, label=label, tag=tag,
+            partition=partition).ids
 
     def get_coords(
         self,
@@ -349,11 +357,13 @@ class NodeComposite:
         *,
         pg: str | None = None,
         label: str | None = None,
+        tag: int | tuple[int, int] | None = None,
         partition: int | None = None,
     ) -> ndarray:
         """Coordinates only for a selection."""
         return self.get(
-            target, pg=pg, label=label, partition=partition).coords
+            target, pg=pg, label=label, tag=tag,
+            partition=partition).coords
 
     # ── Lookups ──────────────────────────────────────────────
 
@@ -467,6 +477,7 @@ class ElementComposite:
         *,
         pg: str | None = None,
         label: str | None = None,
+        tag: int | tuple[int, int] | None = None,
         partition: int | None = None,
     ) -> ElementResult:
         """Bundled ``(ids, connectivity)`` for a selection.
@@ -481,9 +492,11 @@ class ElementComposite:
             Physical group name (explicit).
         label : str, optional
             Label name (explicit).
+        tag : int or (dim, tag), optional
+            Direct Gmsh physical-group tag lookup.
         partition : int, optional
-            Partition ID.  When combined with *pg* or *label*, acts
-            as an intersection filter.
+            Partition ID.  When combined with *pg*, *label*, or
+            *tag*, acts as an intersection filter.
 
         Returns
         -------
@@ -491,7 +504,10 @@ class ElementComposite:
             NamedTuple — destructure as
             ``ids, conn = fem.elements.get(...)``
         """
-        if pg is not None:
+        if tag is not None:
+            ids = self.physical.element_ids(tag)
+            conn = self.physical.connectivity(tag)
+        elif pg is not None:
             ids = self.physical.element_ids(pg)
             conn = self.physical.connectivity(pg)
         elif label is not None:
@@ -535,11 +551,13 @@ class ElementComposite:
         *,
         pg: str | None = None,
         label: str | None = None,
+        tag: int | tuple[int, int] | None = None,
         partition: int | None = None,
     ) -> ndarray:
         """Element IDs only for a selection."""
         return self.get(
-            target, pg=pg, label=label, partition=partition).ids
+            target, pg=pg, label=label, tag=tag,
+            partition=partition).ids
 
     def get_connectivity(
         self,
@@ -547,11 +565,13 @@ class ElementComposite:
         *,
         pg: str | None = None,
         label: str | None = None,
+        tag: int | tuple[int, int] | None = None,
         partition: int | None = None,
     ) -> ndarray:
         """Connectivity only for a selection."""
         return self.get(
-            target, pg=pg, label=label, partition=partition).connectivity
+            target, pg=pg, label=label, tag=tag,
+            partition=partition).connectivity
 
     # ── Lookups ──────────────────────────────────────────────
 

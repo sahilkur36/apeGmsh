@@ -382,21 +382,10 @@ def build_mesh_scene(
     t_actors_elapsed = time.perf_counter() - t_actors
 
     # ── node cloud ──────────────────────────────────────────────────
-    # Filter to only nodes in connectivity (remove orphans)
-    used_node_tags: set[int] = set()
-    for etags_list in brep_to_elems.values():
-        for etag in etags_list:
-            info = elem_data.get(etag)
-            if info is not None:
-                used_node_tags.update(info["nodes"])
-
-    if len(node_tags) > 0:
-        mask = np.isin(node_tags, list(used_node_tags))
-        filt_tags = node_tags[mask]
-        filt_coords = node_coords[mask]
-    else:
-        filt_tags = node_tags
-        filt_coords = node_coords
+    # Show ALL mesh nodes — including embedded reference points that
+    # may not appear in the displayed element connectivity.
+    filt_tags = node_tags
+    filt_coords = node_coords
 
     node_cloud = None
     node_actor = None

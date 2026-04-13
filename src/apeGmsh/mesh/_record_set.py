@@ -185,6 +185,17 @@ class NodeConstraintSet(_RecordSetBase):
                 for tag, xyz in zip(rec.phantom_nodes, coords):
                     yield int(tag), xyz.tolist()
 
+    def get_phantom_nodes(self) -> tuple[int, list[float]]:
+        """Return a list of phantom nodes that solvers must create.
+
+        Each item is a tuple of node ID and ``[x, y, z]`` coordinates.
+
+        See also
+        --------
+        :meth:`extra_nodes` for an iterator version.
+        """
+        return list(self.extra_nodes())[0]
+
     def summary(self) -> "pd.DataFrame":
         """DataFrame summarising the constraint set.
 

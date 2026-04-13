@@ -52,11 +52,32 @@ def build_node_pair_actors(
     Single pass over ``node_pairs()`` — records grouped by kind first,
     then geometry built per kind.
     """
-    # Single pass: group records by kind
+    from apeGmsh.solvers.Constraints import (
+        NodePairRecord, NodeToSurfaceRecord,
+    )
+
+    # ── Collect node-pair records (expanded) ────────────────────
+    # NodeToSurfaceRecord.expand() yields sub-records with
+    # kind="rigid_beam" / "equal_dof", not "node_to_surface".
+    # We need to map those back so the checkbox filter works.
     by_kind: dict[str, list] = defaultdict(list)
     for rec in fem.nodes.constraints.node_pairs():
         if rec.kind in active_kinds:
             by_kind[rec.kind].append(rec)
+
+    # ── node_to_surface: draw master→slave lines directly ──────
+    # The expanded sub-records (rigid_beam, equal_dof) are for
+    # solvers; for visualisation we want the high-level topology.
+    if ConstraintKind.NODE_TO_SURFACE in active_kinds:
+        for raw in fem.nodes.constraints:
+            if isinstance(raw, NodeToSurfaceRecord):
+                for slave_tag in raw.slave_nodes:
+                    by_kind["node_to_surface"].append(
+                        NodePairRecord(
+                            kind="node_to_surface",
+                            master_node=raw.master_node,
+                            slave_node=slave_tag,
+                        ))
 
     result: list[tuple] = []
 

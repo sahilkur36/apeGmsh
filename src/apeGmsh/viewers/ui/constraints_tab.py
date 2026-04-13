@@ -208,9 +208,14 @@ class ConstraintsTabPanel:
 
             for d in kind_defs:
                 child = QTreeWidgetItem(root)
-                master = getattr(d, 'master_label', '?')
-                slave = getattr(d, 'slave_label', '?')
-                child.setText(0, f"{master} \u2192 {slave}")
+                # Prefer the human-readable name if set, otherwise
+                # fall back to master_label → slave_label.
+                display = getattr(d, 'name', None)
+                if not display:
+                    master = getattr(d, 'master_label', '?')
+                    slave = getattr(d, 'slave_label', '?')
+                    display = f"{master} \u2192 {slave}"
+                child.setText(0, display)
                 child.setText(1, self._format_def_detail(d))
                 child.setData(0, self._DT_ROLE, ("def", id(d)))
 

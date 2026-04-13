@@ -32,9 +32,10 @@ if TYPE_CHECKING:
 class MassDef:
     """Base class for all mass definitions."""
     kind: str
-    target: object              # part label, PG name, mesh selection name, or DimTag list
+    target: object              # part label, PG name, label name, mesh selection, or DimTag list
     name: str | None = None
     reduction: str = "lumped"   # "lumped" | "consistent"
+    target_source: str = "auto" # "auto" | "pg" | "label"
 
 
 @dataclass

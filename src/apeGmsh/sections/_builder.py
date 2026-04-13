@@ -134,6 +134,21 @@ class SectionsBuilder(_HasLogging):
                 except Exception:
                     pass
 
+        # Create umbrella label for the entire section instance
+        # (mirrors _parts_registry._import_cad).
+        if labels_comp is not None and entities:
+            top_dim = max(entities)
+            try:
+                labels_comp.add(top_dim, entities[top_dim], name=label)
+                label_names.append(label)
+            except Exception as exc:
+                import warnings
+                warnings.warn(
+                    f"Umbrella label creation failed for "
+                    f"{label!r} (dim={top_dim}): {exc}",
+                    stacklevel=2,
+                )
+
         # Compute bbox
         bbox = None
         if parts is not None:

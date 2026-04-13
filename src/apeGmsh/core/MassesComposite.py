@@ -76,8 +76,9 @@ class MassesComposite:
 
     def point(
         self,
-        target,
+        target=None,
         *,
+        pg=None, label=None, tag=None,
         mass: float,
         rotational: tuple | None = None,
         reduction: str = "lumped",
@@ -85,76 +86,78 @@ class MassesComposite:
     ) -> PointMassDef:
         """Concentrated mass at the node(s) of *target*.
 
-        Parameters
-        ----------
-        target : str | list
-            Part label, PG name, mesh selection name, or list of
-            ``(dim, tag)`` pairs.
-        mass : float
-            Translational mass per node (e.g. kg).
-        rotational : tuple, optional
-            ``(Ixx, Iyy, Izz)`` rotational inertia.  Defaults to zero.
-        reduction : "lumped" | "consistent"
-            Point mass is unambiguous; both modes are equivalent.
-        name : str, optional
-            Human-readable label for inspection.
+        Target resolution follows the FEM broker pattern:
+        ``pg=`` explicit PG, ``label=`` explicit label,
+        ``tag=`` direct Gmsh tag,
+        positional *target* tries label first then PG.
         """
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(PointMassDef(
-            target=target, name=name, reduction=reduction,
+            target=t, target_source=src, name=name, reduction=reduction,
             mass=mass, rotational=rotational,
         ))
 
     def line(
         self,
-        target,
+        target=None,
         *,
+        pg=None, label=None, tag=None,
         linear_density: float,
         reduction: str = "lumped",
         name: str | None = None,
     ) -> LineMassDef:
-        """Distributed line mass on curve(s) of *target*.
-
-        ``linear_density`` is mass per unit length (kg/m).
-        """
+        """Distributed line mass on curve(s) of *target*."""
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(LineMassDef(
-            target=target, name=name, reduction=reduction,
+            target=t, target_source=src, name=name, reduction=reduction,
             linear_density=linear_density,
         ))
 
     def surface(
         self,
-        target,
+        target=None,
         *,
+        pg=None, label=None, tag=None,
         areal_density: float,
         reduction: str = "lumped",
         name: str | None = None,
     ) -> SurfaceMassDef:
-        """Distributed surface mass on face(s) of *target*.
-
-        ``areal_density`` is mass per unit area (kg/m²).
-        """
+        """Distributed surface mass on face(s) of *target*."""
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(SurfaceMassDef(
-            target=target, name=name, reduction=reduction,
+            target=t, target_source=src, name=name, reduction=reduction,
             areal_density=areal_density,
         ))
 
     def volume(
         self,
-        target,
+        target=None,
         *,
+        pg=None, label=None, tag=None,
         density: float,
         reduction: str = "lumped",
         name: str | None = None,
     ) -> VolumeMassDef:
-        """Distributed volume mass on volume(s) of *target*.
-
-        ``density`` is mass per unit volume (kg/m³).  Set the
-        OpenSees material's ``rho=0`` to avoid double counting.
-        """
+        """Distributed volume mass on volume(s) of *target*."""
+        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
         return self._add_def(VolumeMassDef(
-            target=target, name=name, reduction=reduction,
+            target=t, target_source=src, name=name, reduction=reduction,
             density=density,
         ))
+
+    @staticmethod
+    def _coalesce_target(target, *, pg=None, label=None, tag=None):
+        """Resolve explicit pg=/label=/tag= into (target, source) pair."""
+        if tag is not None:
+            return tag, "tag"
+        if pg is not None:
+            return pg, "pg"
+        if label is not None:
+            return label, "label"
+        if target is not None:
+            return target, "auto"
+        raise ValueError(
+            "One of target, pg=, label=, or tag= is required.")
 
     # ------------------------------------------------------------------
     # Internal: store + validate
@@ -174,8 +177,18 @@ class MassesComposite:
     # Target resolution (same lookup order as LoadsComposite)
     # ------------------------------------------------------------------
 
-    def _resolve_target(self, target) -> list[tuple]:
-        """Resolve target -> list of ``(dim, tag)`` or mesh-selection sentinel."""
+    def _resolve_target(self, target, source: str = "auto") -> list[tuple]:
+        """Resolve target -> list of ``(dim, tag)`` or mesh-selection sentinel.
+
+        Lookup order (for ``source="auto"``):
+            1. Raw DimTag list -> as-is
+            2. Mesh selection name
+            3. Label name (Tier 1, ``_label:`` prefixed PG)
+            4. Physical group name (Tier 2)
+            5. Part label
+        """
+        import gmsh
+
         if isinstance(target, (list, tuple)) and len(target) > 0 \
                 and isinstance(target[0], (list, tuple)):
             return [(int(d), int(t)) for d, t in target]
@@ -186,43 +199,63 @@ class MassesComposite:
                 f"got {type(target).__name__}"
             )
 
-        # Mesh selection name
-        ms = getattr(self._parent, "mesh_selection", None)
-        if ms is not None and hasattr(ms, "_sets"):
-            for (dim, tag), info in ms._sets.items():
-                if info.get("name") == target:
-                    return [("__ms__", dim, tag)]
+        # Mesh selection name (auto only)
+        if source == "auto":
+            ms = getattr(self._parent, "mesh_selection", None)
+            if ms is not None and hasattr(ms, "_sets"):
+                for (dim, tag), info in ms._sets.items():
+                    if info.get("name") == target:
+                        return [("__ms__", dim, tag)]
 
-        # Physical group name
-        try:
-            import gmsh
-            for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
-                try:
-                    if gmsh.model.getPhysicalName(pg_dim, pg_tag) == target:
-                        ents = gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
-                        return [(pg_dim, int(t)) for t in ents]
-                except Exception:
-                    pass
-        except ImportError:
-            pass
+        # Label name (Tier 1)
+        if source in ("auto", "label"):
+            try:
+                from apeGmsh.core.Labels import add_prefix
+                prefixed = add_prefix(target)
+                for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
+                    try:
+                        if gmsh.model.getPhysicalName(pg_dim, pg_tag) == prefixed:
+                            ents = gmsh.model.getEntitiesForPhysicalGroup(
+                                pg_dim, pg_tag)
+                            return [(pg_dim, int(t)) for t in ents]
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # Physical group name (Tier 2)
+        if source in ("auto", "pg"):
+            try:
+                for pg_dim, pg_tag in gmsh.model.getPhysicalGroups():
+                    try:
+                        if gmsh.model.getPhysicalName(pg_dim, pg_tag) == target:
+                            ents = gmsh.model.getEntitiesForPhysicalGroup(
+                                pg_dim, pg_tag)
+                            return [(pg_dim, int(t)) for t in ents]
+                    except Exception:
+                        pass
+            except Exception:
+                pass
 
         # Part label
-        parts = getattr(self._parent, "parts", None)
-        if parts is not None and hasattr(parts, "_instances"):
-            inst = parts._instances.get(target)
-            if inst is not None:
-                out: list = []
-                for d, ts in inst.entities.items():
-                    out.extend((int(d), int(t)) for t in ts)
-                return out
+        if source == "auto":
+            parts = getattr(self._parent, "parts", None)
+            if parts is not None and hasattr(parts, "_instances"):
+                inst = parts._instances.get(target)
+                if inst is not None:
+                    out: list = []
+                    for d, ts in inst.entities.items():
+                        out.extend((int(d), int(t)) for t in ts)
+                    return out
 
         raise KeyError(
-            f"Mass target {target!r} not found as part label, "
-            f"physical group name, or mesh selection name."
+            f"Mass target {target!r} not found as label, physical group, "
+            f"part label, or mesh selection."
         )
 
-    def _target_nodes(self, target, node_map, all_nodes) -> set[int]:
-        dts = self._resolve_target(target)
+    def _target_nodes(self, target, node_map, all_nodes,
+                      source: str = "auto") -> set[int]:
+        dts = self._resolve_target(target, source=source)
         if dts and dts[0][0] == "__ms__":
             _, dim, tag = dts[0]
             ms = self._parent.mesh_selection
@@ -250,8 +283,8 @@ class MassesComposite:
                 pass
         return nodes
 
-    def _target_edges(self, target) -> list[tuple[int, int]]:
-        dts = self._resolve_target(target)
+    def _target_edges(self, target, source: str = "auto") -> list[tuple[int, int]]:
+        dts = self._resolve_target(target, source=source)
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
@@ -270,8 +303,8 @@ class MassesComposite:
                     edges.append((int(row[0]), int(row[-1])))
         return edges
 
-    def _target_faces(self, target) -> list[list[int]]:
-        dts = self._resolve_target(target)
+    def _target_faces(self, target, source: str = "auto") -> list[list[int]]:
+        dts = self._resolve_target(target, source=source)
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
@@ -294,8 +327,8 @@ class MassesComposite:
                     faces.append([int(n) for n in row[:corners_per]])
         return faces
 
-    def _target_elements(self, target):
-        dts = self._resolve_target(target)
+    def _target_elements(self, target, source: str = "auto"):
+        dts = self._resolve_target(target, source=source)
         if dts and dts[0][0] == "__ms__":
             return []
         import gmsh
@@ -380,31 +413,38 @@ class MassesComposite:
     # ------------------------------------------------------------------
 
     def _resolve_point(self, resolver, defn, node_map, all_nodes):
-        nodes = self._target_nodes(defn.target, node_map, all_nodes)
+        src = getattr(defn, 'target_source', 'auto')
+        nodes = self._target_nodes(defn.target, node_map, all_nodes, source=src)
         return resolver.resolve_point_lumped(defn, nodes)
 
     def _resolve_line_lumped(self, resolver, defn, node_map, all_nodes):
-        edges = self._target_edges(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        edges = self._target_edges(defn.target, source=src)
         return resolver.resolve_line_lumped(defn, edges)
 
     def _resolve_line_consistent(self, resolver, defn, node_map, all_nodes):
-        edges = self._target_edges(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        edges = self._target_edges(defn.target, source=src)
         return resolver.resolve_line_consistent(defn, edges)
 
     def _resolve_surface_lumped(self, resolver, defn, node_map, all_nodes):
-        faces = self._target_faces(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        faces = self._target_faces(defn.target, source=src)
         return resolver.resolve_surface_lumped(defn, faces)
 
     def _resolve_surface_consistent(self, resolver, defn, node_map, all_nodes):
-        faces = self._target_faces(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        faces = self._target_faces(defn.target, source=src)
         return resolver.resolve_surface_consistent(defn, faces)
 
     def _resolve_volume_lumped(self, resolver, defn, node_map, all_nodes):
-        elements = self._target_elements(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        elements = self._target_elements(defn.target, source=src)
         return resolver.resolve_volume_lumped(defn, elements)
 
     def _resolve_volume_consistent(self, resolver, defn, node_map, all_nodes):
-        elements = self._target_elements(defn.target)
+        src = getattr(defn, 'target_source', 'auto')
+        elements = self._target_elements(defn.target, source=src)
         return resolver.resolve_volume_consistent(defn, elements)
 
     # ------------------------------------------------------------------
