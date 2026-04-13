@@ -60,18 +60,17 @@ class PreferencesTab:
         geo_form = QtWidgets.QFormLayout(geo_group)
         geo_form.setSpacing(4)
 
-        self._s_point = QtWidgets.QSpinBox()
-        self._s_point.setRange(1, 50)
-        self._s_point.setValue(int(point_size))
-        self._s_point.setSuffix(" px")
+        self._s_point = QtWidgets.QDoubleSpinBox()
+        self._s_point.setRange(0.1, 9999.0)
+        self._s_point.setSingleStep(1.0)
+        self._s_point.setDecimals(1)
+        self._s_point.setValue(float(point_size))
         if on_point_size:
-            self._s_point.valueChanged.connect(
-                lambda v: on_point_size(float(v))
-            )
+            self._s_point.valueChanged.connect(on_point_size)
         geo_form.addRow("Point size", self._s_point)
 
         self._s_line = QtWidgets.QDoubleSpinBox()
-        self._s_line.setRange(0.5, 20.0)
+        self._s_line.setRange(0.1, 9999.0)
         self._s_line.setSingleStep(0.5)
         self._s_line.setDecimals(1)
         self._s_line.setValue(float(line_width))
