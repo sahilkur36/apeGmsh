@@ -43,7 +43,8 @@ def _install_fake_gmsh() -> None:
 _install_fake_gmsh()
 
 
-from apeGmsh.mesh.FEMData import FEMData, MeshInfo, PhysicalGroupSet
+from apeGmsh.mesh.FEMData import FEMData, MeshInfo, NodeComposite, ElementComposite
+from apeGmsh.mesh._group_set import PhysicalGroupSet, LabelSet
 from apeGmsh.results.Results import Results
 
 
@@ -79,15 +80,22 @@ def _make_unit_tet_fem() -> FEMData:
         },
     }
     physical = PhysicalGroupSet(groups)
+    labels = LabelSet({})
 
-    return FEMData(
+    nodes = NodeComposite(
         node_ids=node_ids,
         node_coords=node_coords,
+        physical=physical,
+        labels=labels,
+    )
+    elements = ElementComposite(
         element_ids=element_ids,
         connectivity=connectivity,
-        info=info,
         physical=physical,
+        labels=labels,
     )
+
+    return FEMData(nodes=nodes, elements=elements, info=info)
 
 
 # =====================================================================

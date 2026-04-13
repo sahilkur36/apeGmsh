@@ -177,28 +177,26 @@ class LibraryContractTests(unittest.TestCase):
 
         fake_gmsh.model = _FakeModel()
 
-        mod = importlib.import_module("apeGmsh.mesh._fem_extract")
-        fem = mod.build_fem_data(dim=3)
+        FEMData_mod = importlib.import_module("apeGmsh.mesh.FEMData")
+        fem = FEMData_mod.FEMData.from_gmsh(dim=3)
 
         self.assertEqual(fem.info.n_nodes, 4)
         self.assertEqual(fem.info.n_elems, 1)
-        np.testing.assert_array_equal(fem.node_ids, np.array([1, 2, 3, 4]))
+        np.testing.assert_array_equal(fem.nodes.ids, np.array([1, 2, 3, 4]))
         np.testing.assert_array_equal(
-            fem.connectivity,
+            fem.elements.connectivity,
             np.array([[1, 2, 3, 4]], dtype=int),
         )
 
-        body_tag = fem.physical.get_tag(3, "Body")
+        body_tag = fem.nodes.physical.get_tag(3, "Body")
         self.assertEqual(body_tag, 1)
 
-        body = fem.physical.get_elements(3, body_tag)
-        face = fem.physical.get_elements(2, 2)
-        edge = fem.physical.get_elements(1, 3)
+        pg = fem.nodes.physical
 
-        self.assertEqual(body["connectivity"].shape, (1, 4))
-        self.assertEqual(face["connectivity"].shape, (1, 3))
-        self.assertEqual(edge["connectivity"].shape, (1, 2))
-        self.assertEqual(list(map(int, body["element_ids"])), [101])
+        self.assertEqual(pg.connectivity((3, body_tag)).shape, (1, 4))
+        self.assertEqual(pg.connectivity((2, 2)).shape, (1, 3))
+        self.assertEqual(pg.connectivity((1, 3)).shape, (1, 2))
+        self.assertEqual(list(map(int, pg.element_ids((3, body_tag)))), [101])
 
     # ------------------------------------------------------------------
     # BRep surface tessellation helper

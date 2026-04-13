@@ -10,9 +10,13 @@ sub-composites.
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 
 from ._fem_extract import extract_raw, extract_physical_groups, extract_labels
+
+_log = logging.getLogger(__name__)
 from ._group_set import PhysicalGroupSet, LabelSet
 
 
@@ -45,7 +49,10 @@ def _split_constraints(records: list) -> tuple[list, list]:
                               SurfaceCouplingRecord)):
             surface_recs.append(rec)
         else:
-            # Unknown type — put in node-level as fallback
+            _log.warning(
+                "Unknown constraint record type %s (kind=%r) — "
+                "placed in node-level set as fallback.",
+                type(rec).__name__, getattr(rec, 'kind', '?'))
             node_recs.append(rec)
 
     return node_recs, surface_recs
@@ -73,6 +80,10 @@ def _split_loads(records: list) -> tuple[list, list]:
         elif isinstance(rec, ElementLoadRecord):
             element.append(rec)
         else:
+            _log.warning(
+                "Unknown load record type %s (kind=%r) — "
+                "placed in nodal set as fallback.",
+                type(rec).__name__, getattr(rec, 'kind', '?'))
             nodal.append(rec)
 
     return nodal, element
@@ -102,56 +113,11 @@ def _from_gmsh(cls, *, dim: int, session=None, ndf: int = 6):
     -------
     FEMData
     """
-    from .FEMData import (
-        MeshInfo, NodeComposite, ElementComposite, _compute_bandwidth,
-    )
+    from .FEMData import NodeComposite, ElementComposite
 
-    # ── 1. Extract raw mesh arrays ──────────────────────────
-    raw = extract_raw(dim=dim)
-
-    node_tags    = raw['node_tags']
-    node_coords  = raw['node_coords']
-    connectivity = raw['connectivity']
-    elem_tags    = np.asarray(raw['elem_tags'], dtype=int)
-    used_tags    = raw['used_tags']
-
-    # ── 2. Filter orphan nodes ──────────────────────────────
-    mask      = np.isin(node_tags, list(used_tags))
-    n_total   = len(node_tags)
-    node_ids  = np.asarray(node_tags[mask], dtype=int)
-    node_coords_filtered = node_coords[mask]
-    n_orphans = n_total - len(node_ids)
-    if n_orphans > 0:
-        orphan_tags = node_tags[~mask]
-        print(
-            f"[FEMData] WARNING: {n_orphans} orphan node(s) removed "
-            f"(not connected to any element). "
-            f"Tags: {orphan_tags.tolist()[:20]}"
-            + (f" ... (+{n_orphans - 20} more)"
-               if n_orphans > 20 else ""))
-
-    # ── 3. Extract PGs and labels ───────────────────────────
-    physical = PhysicalGroupSet(extract_physical_groups())
-    labels   = LabelSet(extract_labels())
-
-    # ── 4. Build MeshInfo ───────────────────────────────────
-    type_info = raw.get('elem_type_info', {})
-    if type_info:
-        first = next(iter(type_info.values()))
-        elem_type_name = first[0]
-        nodes_per_elem = first[2]
-    else:
-        elem_type_name = ""
-        nodes_per_elem = (connectivity.shape[1]
-                          if connectivity.size else 0)
-
-    info = MeshInfo(
-        n_nodes=len(node_ids),
-        n_elems=len(elem_tags),
-        bandwidth=_compute_bandwidth(connectivity),
-        nodes_per_elem=nodes_per_elem,
-        elem_type_name=elem_type_name,
-    )
+    # ── 1-4. Extract + filter + PGs + MeshInfo ─────────────
+    node_ids, node_coords_filtered, elem_tags, connectivity, \
+        info, physical, labels = _extract_mesh_core(dim)
 
     # ── 5. Resolve BCs (warn on failure, continue) ──────────
     node_constraints = []
@@ -192,8 +158,7 @@ def _from_gmsh(cls, *, dim: int, session=None, ndf: int = 6):
                 node_constraints, surface_constraints = \
                     _split_constraints(all_constraints)
             except Exception as exc:
-                print(f"[FEMData] WARNING: constraint resolve "
-                      f"failed: {exc}")
+                _log.warning("Constraint resolve failed: %s", exc)
 
         # Loads
         loads_comp = getattr(session, "loads", None)
@@ -205,8 +170,7 @@ def _from_gmsh(cls, *, dim: int, session=None, ndf: int = 6):
                     ndf=ndf, **resolve_kw)
                 nodal_loads, element_loads = _split_loads(all_loads)
             except Exception as exc:
-                print(f"[FEMData] WARNING: load resolve "
-                      f"failed: {exc}")
+                _log.warning("Load resolve failed: %s", exc)
 
         # Masses
         masses_comp = getattr(session, "masses", None)
@@ -217,8 +181,7 @@ def _from_gmsh(cls, *, dim: int, session=None, ndf: int = 6):
                     node_ids, node_coords_filtered,
                     ndf=ndf, **resolve_kw)
             except Exception as exc:
-                print(f"[FEMData] WARNING: mass resolve "
-                      f"failed: {exc}")
+                _log.warning("Mass resolve failed: %s", exc)
 
     # ── 6. Build composites ─────────────────────────────────
     nodes = NodeComposite(
@@ -261,82 +224,86 @@ def _from_gmsh(cls, *, dim: int, session=None, ndf: int = 6):
 # from_msh
 # =====================================================================
 
+def _extract_mesh_core(dim: int):
+    """Shared extraction: raw arrays → filtered nodes + MeshInfo + PGs.
+
+    Returns (node_ids, node_coords, elem_tags, connectivity,
+             info, physical, labels).
+    """
+    from .FEMData import MeshInfo, _compute_bandwidth
+
+    raw = extract_raw(dim=dim)
+
+    node_tags    = raw['node_tags']
+    node_coords  = raw['node_coords']
+    connectivity = raw['connectivity']
+    elem_tags    = np.asarray(raw['elem_tags'], dtype=int)
+    used_tags    = raw['used_tags']
+
+    # Filter orphan nodes
+    mask     = np.isin(node_tags, list(used_tags))
+    node_ids = np.asarray(node_tags[mask], dtype=int)
+    node_coords_filtered = node_coords[mask]
+    n_orphans = len(node_tags) - len(node_ids)
+    if n_orphans > 0:
+        orphan_tags = node_tags[~mask]
+        _log.warning(
+            "%d orphan node(s) removed (not connected to any element). "
+            "First tags: %s%s",
+            n_orphans,
+            orphan_tags.tolist()[:20],
+            f" ... (+{n_orphans - 20} more)" if n_orphans > 20 else "")
+
+    physical = PhysicalGroupSet(extract_physical_groups())
+    labels   = LabelSet(extract_labels())
+
+    type_info = raw.get('elem_type_info', {})
+    if type_info:
+        first = next(iter(type_info.values()))
+        elem_type_name = first[0]
+        nodes_per_elem = first[2]
+    else:
+        elem_type_name = ""
+        nodes_per_elem = (connectivity.shape[1]
+                          if connectivity.size else 0)
+
+    info = MeshInfo(
+        n_nodes=len(node_ids),
+        n_elems=len(elem_tags),
+        bandwidth=_compute_bandwidth(connectivity),
+        nodes_per_elem=nodes_per_elem,
+        elem_type_name=elem_type_name,
+    )
+
+    return node_ids, node_coords_filtered, elem_tags, connectivity, \
+        info, physical, labels
+
+
 def _from_msh(cls, *, path: str, dim: int = 2):
     """Build a FEMData from an external ``.msh`` file.
 
     Called by ``FEMData.from_msh()``.
-
     Opens a temporary Gmsh session, merges the file, extracts, closes.
-
-    Parameters
-    ----------
-    cls : type
-        The FEMData class.
-    path : str
-        Path to the ``.msh`` file.
-    dim : int
-        Element dimension to extract.
-
-    Returns
-    -------
-    FEMData
     """
     import gmsh
-
-    from .FEMData import (
-        MeshInfo, NodeComposite, ElementComposite, _compute_bandwidth,
-    )
+    from .FEMData import NodeComposite, ElementComposite
 
     gmsh.initialize()
     try:
         gmsh.option.setNumber("General.Terminal", 0)
         gmsh.merge(str(path))
 
-        raw = extract_raw(dim=dim)
-        physical = PhysicalGroupSet(extract_physical_groups())
-        labels = LabelSet(extract_labels())
-
-        node_tags   = raw['node_tags']
-        node_coords = raw['node_coords']
-        connectivity = raw['connectivity']
-        elem_tags   = np.asarray(raw['elem_tags'], dtype=int)
-        used_tags   = raw['used_tags']
-
-        mask     = np.isin(node_tags, list(used_tags))
-        node_ids = np.asarray(node_tags[mask], dtype=int)
-        node_coords_filtered = node_coords[mask]
-
-        type_info = raw.get('elem_type_info', {})
-        if type_info:
-            first = next(iter(type_info.values()))
-            elem_type_name = first[0]
-            nodes_per_elem = first[2]
-        else:
-            elem_type_name = ""
-            nodes_per_elem = (connectivity.shape[1]
-                              if connectivity.size else 0)
-
-        info = MeshInfo(
-            n_nodes=len(node_ids),
-            n_elems=len(elem_tags),
-            bandwidth=_compute_bandwidth(connectivity),
-            nodes_per_elem=nodes_per_elem,
-            elem_type_name=elem_type_name,
-        )
+        node_ids, node_coords, elem_tags, connectivity, \
+            info, physical, labels = _extract_mesh_core(dim)
 
         nodes = NodeComposite(
-            node_ids=node_ids,
-            node_coords=node_coords_filtered,
-            physical=physical,
-            labels=labels,
+            node_ids=node_ids, node_coords=node_coords,
+            physical=physical, labels=labels,
         )
         elements = ElementComposite(
-            element_ids=elem_tags,
-            connectivity=connectivity,
-            physical=physical,
-            labels=labels,
+            element_ids=elem_tags, connectivity=connectivity,
+            physical=physical, labels=labels,
         )
-
     finally:
         gmsh.finalize()
 

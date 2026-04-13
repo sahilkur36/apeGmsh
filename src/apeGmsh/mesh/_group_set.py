@@ -73,11 +73,22 @@ class NamedGroupSet:
 
     def _build_name_index(self) -> dict[str, tuple[int, int]]:
         if self._name_index is None:
+            import logging
+            _log = logging.getLogger(__name__)
             idx: dict[str, tuple[int, int]] = {}
             for (d, t) in sorted(self._groups.keys()):
                 name = self._groups[(d, t)].get('name', '')
-                if name and name not in idx:
-                    idx[name] = (d, t)
+                if not name:
+                    continue
+                if name in idx:
+                    existing = idx[name]
+                    _log.warning(
+                        "Duplicate group name %r: (dim=%d, tag=%d) "
+                        "shadows (dim=%d, tag=%d). Use (dim, tag) "
+                        "tuple for explicit access.",
+                        name, d, t, existing[0], existing[1])
+                    continue
+                idx[name] = (d, t)
             self._name_index = idx
         return self._name_index
 

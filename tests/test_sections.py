@@ -46,7 +46,7 @@ class TestWSolid:
                 g.mesh.sizing.set_global_size(80)
                 g.mesh.generation.generate(3)
                 fem = g.mesh.queries.get_fem_data(dim=3)
-                assert fem.connectivity.shape[1] == 8  # hexes
+                assert fem.elements.connectivity.shape[1] == 8  # hexes
         finally:
             col.cleanup()
 

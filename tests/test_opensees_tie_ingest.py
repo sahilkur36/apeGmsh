@@ -63,7 +63,7 @@ def _fresh_imports():
     ``apeGmsh.solvers.Constraints`` module.  The return tuple is
     unpacked at the top of each TestCase's setUp."""
     _purge_apegmsh_modules()
-    from apeGmsh.mesh.FEMData import ConstraintSet
+    from apeGmsh.mesh._record_set import SurfaceConstraintSet as ConstraintSet
     from apeGmsh.solvers.Constraints import InterpolationRecord
     from apeGmsh.solvers._opensees_constraints import (
         _make_tie_tag_allocator,

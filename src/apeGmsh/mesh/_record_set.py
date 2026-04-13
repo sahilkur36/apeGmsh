@@ -55,13 +55,14 @@ class ConstraintKind:
     TIED_CONTACT       = "tied_contact"
     MORTAR             = "mortar"
 
-    # Classification for rendering / routing
+    # Classification for rendering / routing.
+    # Keep these next to the constants above so additions are obvious.
     NODE_PAIR_KINDS = frozenset({
-        "equal_dof", "rigid_beam", "rigid_rod", "rigid_diaphragm",
-        "rigid_body", "kinematic_coupling", "penalty", "node_to_surface",
+        EQUAL_DOF, RIGID_BEAM, RIGID_ROD, RIGID_DIAPHRAGM,
+        RIGID_BODY, KINEMATIC_COUPLING, PENALTY, NODE_TO_SURFACE,
     })
     SURFACE_KINDS = frozenset({
-        "tie", "distributing", "embedded", "tied_contact", "mortar",
+        TIE, DISTRIBUTING, EMBEDDED, TIED_CONTACT, MORTAR,
     })
 
 

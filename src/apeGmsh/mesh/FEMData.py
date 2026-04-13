@@ -158,11 +158,11 @@ class MeshInfo:
         nodes_per_elem: int = 0,
         elem_type_name: str = "",
     ) -> None:
-        object.__setattr__(self, 'n_nodes', n_nodes)
-        object.__setattr__(self, 'n_elems', n_elems)
-        object.__setattr__(self, 'bandwidth', bandwidth)
-        object.__setattr__(self, 'nodes_per_elem', nodes_per_elem)
-        object.__setattr__(self, 'elem_type_name', elem_type_name)
+        self.n_nodes = n_nodes
+        self.n_elems = n_elems
+        self.bandwidth = bandwidth
+        self.nodes_per_elem = nodes_per_elem
+        self.elem_type_name = elem_type_name
 
     def __repr__(self) -> str:
         parts = (
@@ -288,7 +288,7 @@ class NodeComposite:
                 return NodeResult(
                     self.physical.node_ids(target),
                     self.physical.node_coords(target))
-            except KeyError:
+            except (KeyError, ValueError):
                 return NodeResult(
                     self.labels.node_ids(target),
                     self.labels.node_coords(target))
@@ -331,12 +331,14 @@ class NodeComposite:
         try:
             return self._id_to_idx[int(nid)]
         except KeyError:
-            raise KeyError(
-                f"Node ID {nid} not found. "
-                f"Valid range: {int(self._ids.min())}-"
-                f"{int(self._ids.max())} "
-                f"({len(self._ids)} nodes)"
-            ) from None
+            if len(self._ids) > 0:
+                msg = (f"Node ID {nid} not found. "
+                       f"Valid range: {int(self._ids.min())}-"
+                       f"{int(self._ids.max())} "
+                       f"({len(self._ids)} nodes)")
+            else:
+                msg = f"Node ID {nid} not found (no nodes in composite)"
+            raise KeyError(msg) from None
 
     # ── Dunder ───────────────────────────────────────────────
 
@@ -483,12 +485,14 @@ class ElementComposite:
         try:
             return self._id_to_idx[int(eid)]
         except KeyError:
-            raise KeyError(
-                f"Element ID {eid} not found. "
-                f"Valid range: {int(self._ids.min())}-"
-                f"{int(self._ids.max())} "
-                f"({len(self._ids)} elements)"
-            ) from None
+            if len(self._ids) > 0:
+                msg = (f"Element ID {eid} not found. "
+                       f"Valid range: {int(self._ids.min())}-"
+                       f"{int(self._ids.max())} "
+                       f"({len(self._ids)} elements)")
+            else:
+                msg = f"Element ID {eid} not found (no elements in composite)"
+            raise KeyError(msg) from None
 
     # ── Dunder ───────────────────────────────────────────────
 
@@ -620,40 +624,32 @@ class InspectComposite:
         f = self._fem
         lines = []
 
+        def _kind_summary(record_set, header):
+            """Single-pass kind counting + name hint extraction."""
+            if not record_set:
+                return
+            lines.append(f"{header} ({len(record_set)} records):")
+            # Single pass: count + capture first named record per kind
+            counts: dict[str, int] = {}
+            names: dict[str, str] = {}
+            for r in record_set:
+                k = r.kind
+                counts[k] = counts.get(k, 0) + 1
+                if k not in names and getattr(r, 'name', None):
+                    names[k] = r.name
+            for k, count in sorted(counts.items()):
+                hint = f"  (source: {names[k]!r})" if k in names else ""
+                lines.append(f"  {k:24s} {count:>4d}{hint}")
+
+        _kind_summary(f.nodes.constraints, "Node constraints")
         nc = f.nodes.constraints
         if nc:
-            lines.append(f"Node constraints ({len(nc)} records):")
-            kinds: dict[str, int] = {}
-            for r in nc:
-                kinds[r.kind] = kinds.get(r.kind, 0) + 1
-            for k, count in sorted(kinds.items()):
-                name_hint = ""
-                # Try to get source name from first record of this kind
-                for r in nc:
-                    if r.kind == k and getattr(r, 'name', None):
-                        name_hint = f"  (source: {r.name!r})"
-                        break
-                lines.append(f"  {k:24s} {count:>4d}{name_hint}")
-            # Phantom nodes
             n_phantom = sum(1 for _ in nc.extra_nodes())
             if n_phantom:
                 lines.append(
                     f"  {'phantom nodes':24s} {n_phantom:>4d}"
                     f"  (created by node_to_surface)")
-
-        sc = f.elements.constraints
-        if sc:
-            lines.append(f"Surface constraints ({len(sc)} records):")
-            kinds = {}
-            for r in sc:
-                kinds[r.kind] = kinds.get(r.kind, 0) + 1
-            for k, count in sorted(kinds.items()):
-                name_hint = ""
-                for r in sc:
-                    if r.kind == k and getattr(r, 'name', None):
-                        name_hint = f"  (source: {r.name!r})"
-                        break
-                lines.append(f"  {k:24s} {count:>4d}{name_hint}")
+        _kind_summary(f.elements.constraints, "Surface constraints")
 
         if not lines:
             return "No constraints."
