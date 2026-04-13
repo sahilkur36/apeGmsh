@@ -119,7 +119,12 @@ class _Queries:
     # FEM data
     # ------------------------------------------------------------------
 
-    def get_fem_data(self, dim: int = 2) -> FEMData:
+    def get_fem_data(
+        self,
+        dim: int = 2,
+        *,
+        remove_orphans: bool = False,
+    ) -> FEMData:
         """
         Extract solver-ready FEM data as a :class:`FEMData` object.
 
@@ -134,6 +139,10 @@ class _Queries:
         dim : int
             Element dimension to extract (2 = triangles/quads,
             3 = tets/hexes).
+        remove_orphans : bool
+            If True, remove mesh nodes not connected to any element.
+            Nodes referenced by constraints, loads, or masses are
+            always kept.  Default False.
 
         Example
         -------
@@ -143,7 +152,8 @@ class _Queries:
             fem = g.mesh.queries.get_fem_data(dim=2)
         """
         parent = self._mesh._parent
-        result = FEMData.from_gmsh(dim=dim, session=parent)
+        result = FEMData.from_gmsh(
+            dim=dim, session=parent, remove_orphans=remove_orphans)
 
         self._mesh._log(
             f"get_fem_data(dim={dim}) -> "

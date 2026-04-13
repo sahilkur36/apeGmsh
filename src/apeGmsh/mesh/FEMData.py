@@ -832,7 +832,14 @@ class FEMData:
         return self.nodes.partitions
 
     @classmethod
-    def from_gmsh(cls, dim: int, *, session=None, ndf: int = 6):
+    def from_gmsh(
+        cls,
+        dim: int,
+        *,
+        session=None,
+        ndf: int = 6,
+        remove_orphans: bool = False,
+    ):
         """Extract FEMData from a live Gmsh session.
 
         Parameters
@@ -843,16 +850,28 @@ class FEMData:
             When provided, auto-resolves constraints, loads, and masses.
         ndf : int
             DOFs per node for load/mass vector padding.
+        remove_orphans : bool
+            If True, remove mesh nodes not connected to any element.
+            Nodes referenced by constraints, loads, or masses are
+            always kept.  Default False.
 
         Returns
         -------
         FEMData
         """
         from ._fem_factory import _from_gmsh
-        return _from_gmsh(cls, dim=dim, session=session, ndf=ndf)
+        return _from_gmsh(
+            cls, dim=dim, session=session, ndf=ndf,
+            remove_orphans=remove_orphans)
 
     @classmethod
-    def from_msh(cls, path: str, dim: int = 2):
+    def from_msh(
+        cls,
+        path: str,
+        dim: int = 2,
+        *,
+        remove_orphans: bool = False,
+    ):
         """Load FEMData from an external ``.msh`` file.
 
         No session, no BCs — pure mesh + physical groups.
@@ -863,13 +882,17 @@ class FEMData:
             Path to the ``.msh`` file.
         dim : int
             Element dimension to extract.
+        remove_orphans : bool
+            If True, remove mesh nodes not connected to any element.
+            Default False.
 
         Returns
         -------
         FEMData
         """
         from ._fem_factory import _from_msh
-        return _from_msh(cls, path=path, dim=dim)
+        return _from_msh(cls, path=path, dim=dim,
+                         remove_orphans=remove_orphans)
 
     def viewer(self, *, blocking: bool = False) -> None:
         """Open a non-interactive mesh viewer from this snapshot.
