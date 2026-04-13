@@ -272,11 +272,11 @@ Resolution needs the mesh data and spatial maps:
 
 ```python
 fem = g.mesh.queries.get_fem_data(dim=3)
-node_map = g.parts.build_node_map(fem.node_ids, fem.node_coords)
+node_map = g.parts.build_node_map(fem.nodes.ids, fem.nodes.coords)
 face_map = g.parts.build_face_map(node_map)
 
 records = g.constraints.resolve(
-    fem.node_ids, fem.node_coords,
+    fem.nodes.ids, fem.nodes.coords,
     node_map=node_map, face_map=face_map,
 )
 ```
@@ -302,12 +302,12 @@ For custom solvers or post-processing:
 ```python
 fem = g.mesh.queries.get_fem_data(dim=3)
 
-fem.node_ids          # 1-based contiguous IDs
-fem.node_coords       # (N, 3) array
-fem.element_ids       # 1-based contiguous IDs
-fem.connectivity      # (E, nodes_per_element) array
-fem.physical          # PhysicalGroupSet — query by name or tag
-fem.mesh_selection    # MeshSelectionStore — query by name or tag
+fem.nodes.ids              # 1-based contiguous IDs
+fem.nodes.coords           # (N, 3) array
+fem.elements.ids           # 1-based contiguous IDs
+fem.elements.connectivity  # (E, nodes_per_element) array
+fem.nodes.physical         # PhysicalGroupSet — query by name or tag
+fem.mesh_selection         # MeshSelectionStore — query by name or tag
 ```
 
 ## Closing the Session
@@ -357,9 +357,9 @@ g.constraints.equal_dof("beam_top", "col_right", tolerance=1e-3)
 
 # Resolve and export
 fem = g.mesh.queries.get_fem_data(dim=3)
-node_map = g.parts.build_node_map(fem.node_ids, fem.node_coords)
+node_map = g.parts.build_node_map(fem.nodes.ids, fem.nodes.coords)
 face_map = g.parts.build_face_map(node_map)
-g.constraints.resolve(fem.node_ids, fem.node_coords,
+g.constraints.resolve(fem.nodes.ids, fem.nodes.coords,
                       node_map=node_map, face_map=face_map)
 
 g.opensees.build()

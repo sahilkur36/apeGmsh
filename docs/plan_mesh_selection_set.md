@@ -14,7 +14,7 @@ A new post-mesh selection system complementary to `PhysicalGroups`, using the sa
 - **Storage**: Immutable numpy array snapshots (like `PhysicalGroupSet`)
 - **Namespace**: Independent from `PhysicalGroups` (no collision risk)
 - **API verbs**: Mirror `PhysicalGroups` — `add`, `get_nodes`, `get_elements`, `get_name`, `get_tag`, `summary`
-- **FEMData integration**: `FEMData` carries both `fem.physical` (PhysicalGroupSet) and `fem.mesh_selection` (MeshSelectionStore) as parallel snapshots
+- **FEMData integration**: `FEMData` carries both `fem.nodes.physical` (PhysicalGroupSet) and `fem.mesh_selection` (MeshSelectionStore) as parallel snapshots
 
 ## Architecture
 

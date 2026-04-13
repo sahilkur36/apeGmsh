@@ -4,7 +4,7 @@ apeGmsh has two complementary selection systems that sit on opposite sides of th
 
 | System | Lives on | Operates on | Created | Exposed on the broker |
 |---|---|---|---|---|
-| Geometric selection | `g.model.selection` | BRep / OCC entities — points, curves, surfaces, volumes | **Before** `g.mesh.generation.generate()` | *indirectly*, via `fem.physical` or `fem.mesh_selection` |
+| Geometric selection | `g.model.selection` | BRep / OCC entities — points, curves, surfaces, volumes | **Before** `g.mesh.generation.generate()` | *indirectly*, via `fem.nodes.physical` or `fem.mesh_selection` |
 | Mesh selection | `g.mesh_selection` | Mesh nodes and elements | **After** `g.mesh.generation.generate()` | *directly*, via `fem.mesh_selection` |
 
 The guiding idea: **OCC selection is geometry, mesh selection is topology**. One talks in terms of `(dim, tag)` BRep entries and is invariant to how you mesh. The other talks in terms of node IDs and element IDs and only becomes meaningful once a mesh exists.
@@ -249,7 +249,7 @@ The simplest bridge. It writes an OCC selection into Gmsh's physical-group table
 ```python
 g.model.selection.select_points(on_plane=("z", 0, 1e-3)).to_physical("base")
 g.mesh.generation.generate(3)
-# Now fem.physical will contain 'base'
+# Now fem.nodes.physical will contain 'base'
 ```
 
 ### 3.2 `MeshSelectionSet.from_physical(...)` — physical group → mesh selection
@@ -299,11 +299,11 @@ Selections show up on the broker under two mirror accessors with the same API:
 ```python
 fem = g.mesh.queries.get_fem_data(dim=3)
 
-fem.physical         # PhysicalGroupSet  — snapshot of Gmsh physical groups
+fem.nodes.physical   # PhysicalGroupSet  — snapshot of Gmsh physical groups
 fem.mesh_selection   # MeshSelectionStore — snapshot of g.mesh_selection
 ```
 
-Both are immutable and both expose the same query methods. The broker-side classes live in `apeGmsh.mesh.FEMData.PhysicalGroupSet` and `apeGmsh.mesh.MeshSelectionSet.MeshSelectionStore`, and they share this contract:
+Both are immutable and both expose the same query methods. The broker-side classes live in `apeGmsh.mesh.FEMData.PhysicalGroupSet` and `apeGmsh.mesh.MeshSelectionSet.MeshSelectionStore`, and they share this contract (note: physical groups are accessed via `fem.nodes.physical`):
 
 ```python
 store.get_all(dim=-1)                 # list of (dim, tag)
@@ -314,7 +314,7 @@ store.get_nodes(dim, tag)             # {'tags': ndarray, 'coords': ndarray(N,3)
 store.get_elements(dim, tag)          # {'element_ids': ndarray, 'connectivity': ndarray(E,npe)}
 ```
 
-This is the `FEMData` source-agnostic contract in action: a constraint handler or load applicator can receive either a `fem.physical` key or a `fem.mesh_selection` key and use exactly the same code to resolve it to node or element IDs.
+This is the `FEMData` source-agnostic contract in action: a constraint handler or load applicator can receive either a `fem.nodes.physical` key or a `fem.mesh_selection` key and use exactly the same code to resolve it to node or element IDs.
 
 ### 4.1 A complete round-trip
 
@@ -360,8 +360,8 @@ g.mesh_selection.from_physical(dim=2, name_or_tag="top", ms_name="top_nodes")
 fem = g.mesh.queries.get_fem_data(dim=3)
 
 # Physical groups from Gmsh
-fem.physical.summary()
-base_nodes = fem.physical.get_nodes(dim=2, tag=fem.physical.get_tag(2, "base"))
+fem.nodes.physical.summary()
+base_nodes = fem.nodes.physical.get_nodes(dim=2, tag=fem.nodes.physical.get_tag(2, "base"))
 
 # Mesh selections from apeGmsh
 fem.mesh_selection.summary()
@@ -373,7 +373,7 @@ for nid, xyz in zip(monitor["tags"], monitor["coords"]):
     print(nid, xyz)
 ```
 
-Notice that once you are on the broker, the code never branches on where a group came from. It reaches into `fem.physical` or `fem.mesh_selection` with the same call signature and gets back the same `{'tags': ..., 'coords': ...}` dict. That uniformity is what lets solver adapters stay short.
+Notice that once you are on the broker, the code never branches on where a group came from. It reaches into `fem.nodes.physical` or `fem.mesh_selection` with the same call signature and gets back the same `{'tags': ..., 'coords': ...}` dict. That uniformity is what lets solver adapters stay short.
 
 
 ## 5. Mental model and rules of thumb
@@ -386,8 +386,8 @@ It is worth stepping back from the API and keeping a few principles in mind.
 
 **Use mesh selections as the apeGmsh-internal handle.** They are where spatial, topology-blind, or post-processing-derived queries live. They are also the only system that cleanly expresses set algebra over node and element IDs.
 
-**Do not create both sides for the same concept unless you need to.** Either promote a geometric selection to a physical group (and let `fem.physical` carry it), or bridge it into a mesh selection (and let `fem.mesh_selection` carry it). Both directions are supported, but maintaining two mirror handles for the same concept is just extra book-keeping.
+**Do not create both sides for the same concept unless you need to.** Either promote a geometric selection to a physical group (and let `fem.nodes.physical` carry it), or bridge it into a mesh selection (and let `fem.mesh_selection` carry it). Both directions are supported, but maintaining two mirror handles for the same concept is just extra book-keeping.
 
-**The broker does not care which source you used.** `fem.physical` and `fem.mesh_selection` share the same query surface by design, so you can mix sources freely when writing a solver adapter. Downstream consumers — constraints, loads, solver adapters — should stay source-agnostic and take a `(dim, tag)` plus a "which store" reference, not hardcode one side.
+**The broker does not care which source you used.** `fem.nodes.physical` and `fem.mesh_selection` share the same query surface by design, so you can mix sources freely when writing a solver adapter. Downstream consumers — constraints, loads, solver adapters — should stay source-agnostic and take a `(dim, tag)` plus a "which store" reference, not hardcode one side.
 
 Between the two systems you have a path for any grouping question: geometric and topological queries on the OCC side before meshing, spatial and ID-based queries on the mesh side after meshing, and an immutable broker at the end where both converge into a single solver-ready object.

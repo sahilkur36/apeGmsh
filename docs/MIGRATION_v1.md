@@ -618,7 +618,7 @@ The FEMData field is also renamed:
 ```diff
  fem = g.mesh.queries.get_fem_data(dim=3)
 -print(fem.mass.total_mass())
-+print(fem.masses.total_mass())
++print(fem.nodes.masses.total_mass())
 ```
 
 The class names (`MassesComposite`, `MassDef`, `MassRecord`, `MassSet`)
@@ -687,7 +687,7 @@ parts. The auto-mapping collapsed this richness.
 +with g.loads.pattern("Wind"):
 +    g.loads.point("WindwardFace", force_xyz=(1e4, 0, 0))
 
- # Then `fem.loads` is auto-populated by get_fem_data(),
+ # Then `fem.nodes.loads` / `fem.elements.loads` are auto-populated by get_fem_data(),
  # and the OpenSees bridge consumes it via consume_loads_from_fem()
  # (auto-called from build_from_fem()).
 ```
@@ -867,6 +867,15 @@ def transform(src):
     # Renames elsewhere in the v1.0 API
     out = re.sub(r'\bg\.mass\.', 'g.masses.', out)
     out = re.sub(r'\bfem\.mass\b', 'fem.masses', out)
+    # FEMData sub-broker restructure
+    out = re.sub(r'\bfem\.node_ids\b', 'fem.nodes.ids', out)
+    out = re.sub(r'\bfem\.node_coords\b', 'fem.nodes.coords', out)
+    out = re.sub(r'\bfem\.element_ids\b', 'fem.elements.ids', out)
+    out = re.sub(r'\bfem\.connectivity\b', 'fem.elements.connectivity', out)
+    out = re.sub(r'\bfem\.physical\b', 'fem.nodes.physical', out)
+    out = re.sub(r'\bfem\.labels\b', 'fem.nodes.labels', out)
+    out = re.sub(r'\bfem\.constraints\b', 'fem.nodes.constraints', out)
+    out = re.sub(r'\bfem\.loads\b', 'fem.nodes.loads', out)
     out = re.sub(r'\bg\.initialize\(\)', 'g.begin()', out)
     out = re.sub(r'\bg\.finalize\(\)', 'g.end()', out)
     out = re.sub(r'\bg\.model_name\b', 'g.name', out)
@@ -913,8 +922,11 @@ Save as `migrate_v1.py` and run: `python migrate_v1.py /path/to/your/project`
 - The session lifecycle contract (`g.begin()` / `g.end()` / context manager)
 - `g.parts`, `g.physical`, `g.constraints`, `g.loads`, `g.mesh_selection`
   composite APIs
-- `fem.node_ids`, `fem.node_coords`, `fem.element_ids`, `fem.connectivity`,
-  `fem.physical`, `fem.constraints`, `fem.loads` — all unchanged
+- `fem.nodes.ids`, `fem.nodes.coords`, `fem.elements.ids`,
+  `fem.elements.connectivity`, `fem.nodes.physical`,
+  `fem.nodes.constraints`, `fem.elements.constraints`,
+  `fem.nodes.loads`, `fem.elements.loads` — restructured under
+  `fem.nodes` and `fem.elements` sub-brokers (see Section 8a)
 - `Part` and `PartsRegistry` APIs (only docstring examples were swept)
 - `g.mesh.field.*` — the FieldHelper sub-composite was already in place
 - `g.mesh.viewer()` and `g.mesh.results_viewer()` — the two interactive
@@ -973,7 +985,7 @@ with apeGmsh(model_name="cantilever") as g:
     g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
     fem = g.mesh.queries.get_fem_data(dim=3)
 
-    print(f"total mass: {fem.masses.total_mass():.0f} kg")
+    print(f"total mass: {fem.nodes.masses.total_mass():.0f} kg")
 ```
 
 Compared to v0.x:
@@ -982,4 +994,4 @@ Compared to v0.x:
 - Model methods now live under `geometry`, `transforms`, `queries`.
 - Mesh methods now live under `sizing`, `generation`, `partitioning`,
   `queries`.
-- `g.mass` is now `g.masses`; `fem.mass` is now `fem.masses`.
+- `g.mass` is now `g.masses`; `fem.mass` is now `fem.nodes.masses`.
