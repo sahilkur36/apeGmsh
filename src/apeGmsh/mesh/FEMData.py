@@ -251,25 +251,26 @@ class NodeComposite:
 
     def get(
         self,
-        target: str | int | tuple[int, int] | None = None,
+        target=None,
         *,
-        pg: str | None = None,
-        label: str | None = None,
-        tag: int | tuple[int, int] | None = None,
+        pg=None,
+        label=None,
+        tag=None,
         partition: int | None = None,
     ) -> NodeResult:
         """Bundled ``(ids, coords)`` for a selection.
 
         Parameters
         ----------
-        target : str, int, or (dim, tag), optional
+        target : str, list[str], int, or (dim, tag), optional
             Shorthand — searches PGs first, then labels.
-        pg : str, optional
-            Physical group name (explicit).
-        label : str, optional
-            Label name (explicit).
-        tag : int or (dim, tag), optional
-            Direct Gmsh physical-group tag lookup.
+            A list is interpreted as a **union** of targets.
+        pg : str or list[str], optional
+            Physical group name(s) (explicit).
+        label : str or list[str], optional
+            Label name(s) (explicit).
+        tag : int, (dim, tag), or list, optional
+            Direct Gmsh physical-group tag lookup(s).
         partition : int, optional
             Partition ID (intersection filter).
 
@@ -277,30 +278,67 @@ class NodeComposite:
         -------
         NodeResult
         """
-        if tag is not None:
-            ids = self.physical.node_ids(tag)
-            coords = self.physical.node_coords(tag)
-        elif pg is not None:
-            ids = self.physical.node_ids(pg)
-            coords = self.physical.node_coords(pg)
-        elif label is not None:
-            ids = self.labels.node_ids(label)
-            coords = self.labels.node_coords(label)
-        elif target is not None:
-            try:
-                ids = self.physical.node_ids(target)
-                coords = self.physical.node_coords(target)
-            except (KeyError, ValueError):
-                ids = self.labels.node_ids(target)
-                coords = self.labels.node_coords(target)
-        else:
-            ids, coords = self._ids, self._coords
+        ids, coords = self._resolve_nodes(target, pg=pg,
+                                           label=label, tag=tag)
 
         if partition is not None:
             ids, coords = self._intersect_partition(
                 ids, coords, partition)
 
         return NodeResult(ids, coords)
+
+    def _resolve_nodes(self, target, *, pg, label, tag):
+        """Resolve single or list selectors to (ids, coords)."""
+        if tag is not None:
+            return self._union_nodes(
+                tag, self.physical.node_ids,
+                self.physical.node_coords)
+        if pg is not None:
+            return self._union_nodes(
+                pg, self.physical.node_ids,
+                self.physical.node_coords)
+        if label is not None:
+            return self._union_nodes(
+                label, self.labels.node_ids,
+                self.labels.node_coords)
+        if target is not None:
+            # target can be a list of mixed PG/label names
+            items = ([target] if isinstance(target, (str, int, tuple))
+                     else list(target))
+            id_parts, coord_parts = [], []
+            for t in items:
+                try:
+                    id_parts.append(self.physical.node_ids(t))
+                    coord_parts.append(self.physical.node_coords(t))
+                except (KeyError, ValueError):
+                    id_parts.append(self.labels.node_ids(t))
+                    coord_parts.append(self.labels.node_coords(t))
+            return self._dedupe_node_parts(id_parts, coord_parts)
+        return self._ids, self._coords
+
+    @staticmethod
+    def _union_nodes(selector, id_fn, coord_fn):
+        """Call id_fn/coord_fn for each item in selector, union results."""
+        items = ([selector] if isinstance(selector, (str, int, tuple))
+                 else list(selector))
+        if len(items) == 1:
+            return id_fn(items[0]), coord_fn(items[0])
+        id_parts = [id_fn(s) for s in items]
+        coord_parts = [coord_fn(s) for s in items]
+        return NodeComposite._dedupe_node_parts(id_parts, coord_parts)
+
+    @staticmethod
+    def _dedupe_node_parts(id_parts, coord_parts):
+        """Concatenate and deduplicate by node ID."""
+        if len(id_parts) == 1:
+            return id_parts[0], coord_parts[0]
+        all_ids = np.concatenate(id_parts)
+        all_coords = np.concatenate(coord_parts)
+        _, unique_idx = np.unique(
+            np.asarray(all_ids, dtype=np.int64),
+            return_index=True)
+        unique_idx.sort()  # preserve original order
+        return all_ids[unique_idx], all_coords[unique_idx]
 
     def _intersect_partition(
         self, ids: ndarray, coords: ndarray, partition: int,
@@ -492,11 +530,11 @@ class ElementComposite:
 
     def get(
         self,
-        target: str | int | tuple[int, int] | None = None,
+        target=None,
         *,
-        pg: str | None = None,
-        label: str | None = None,
-        tag: int | tuple[int, int] | None = None,
+        pg=None,
+        label=None,
+        tag=None,
         dim: int | None = None,
         element_type: str | int | None = None,
         partition: int | None = None,
@@ -508,15 +546,19 @@ class ElementComposite:
 
         Parameters
         ----------
-        target : str, int, or (dim, tag), optional
+        target : str, list[str], int, or (dim, tag), optional
             Shorthand — PGs first, then labels.
-        pg, label, tag : optional
-            Explicit selectors (same as ``NodeComposite.get``).
+            A list is interpreted as a **union**.
+        pg : str or list[str], optional
+            Physical group name(s) (explicit).
+        label : str or list[str], optional
+            Label name(s) (explicit).
+        tag : int, (dim, tag), or list, optional
+            Direct Gmsh physical-group tag lookup(s).
         dim : int, optional
             Filter by element dimension (0–3).
         element_type : str or int, optional
-            Filter by element type alias (``'tet4'``), Gmsh code
-            (``4``), or Gmsh name (``'Tetrahedron 4'``).
+            Filter by element type alias, Gmsh code, or Gmsh name.
         partition : int, optional
             Filter by partition ID.
 
@@ -524,21 +566,8 @@ class ElementComposite:
         -------
         GroupResult
         """
-        # Step 1: resolve ID set from PG/label/tag
-        id_set = None
-        if tag is not None:
-            id_set = set(int(x) for x in self.physical.element_ids(tag))
-        elif pg is not None:
-            id_set = set(int(x) for x in self.physical.element_ids(pg))
-        elif label is not None:
-            id_set = set(int(x) for x in self.labels.element_ids(label))
-        elif target is not None:
-            try:
-                id_set = set(
-                    int(x) for x in self.physical.element_ids(target))
-            except (KeyError, ValueError):
-                id_set = set(
-                    int(x) for x in self.labels.element_ids(target))
+        # Step 1: resolve ID set from PG/label/tag (union for lists)
+        id_set = self._resolve_elem_ids(target, pg=pg, label=label, tag=tag)
 
         # Step 2: partition filter
         if partition is not None:
@@ -577,6 +606,38 @@ class ElementComposite:
                 result_groups.append(g)
 
         return GroupResult(result_groups)
+
+    def _resolve_elem_ids(self, target, *, pg, label, tag):
+        """Resolve single or list selectors to an element ID set (or None)."""
+        if tag is not None:
+            return self._union_elem_ids(tag, self.physical.element_ids)
+        if pg is not None:
+            return self._union_elem_ids(pg, self.physical.element_ids)
+        if label is not None:
+            return self._union_elem_ids(label, self.labels.element_ids)
+        if target is not None:
+            items = ([target] if isinstance(target, (str, int, tuple))
+                     else list(target))
+            combined: set[int] = set()
+            for t in items:
+                try:
+                    combined.update(
+                        int(x) for x in self.physical.element_ids(t))
+                except (KeyError, ValueError):
+                    combined.update(
+                        int(x) for x in self.labels.element_ids(t))
+            return combined
+        return None
+
+    @staticmethod
+    def _union_elem_ids(selector, id_fn) -> set[int]:
+        """Call id_fn for each item in selector, union the ID sets."""
+        items = ([selector] if isinstance(selector, (str, int, tuple))
+                 else list(selector))
+        combined: set[int] = set()
+        for s in items:
+            combined.update(int(x) for x in id_fn(s))
+        return combined
 
     def get_ids(
         self,

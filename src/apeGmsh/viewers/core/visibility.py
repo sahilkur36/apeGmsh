@@ -108,7 +108,6 @@ class VisibilityManager:
         if self._verbose:
             import time
             _t0 = time.perf_counter()
-        from .color_manager import IDLE_COLORS
         plotter = self._plotter
         reg = self._registry
 
@@ -125,8 +124,19 @@ class VisibilityManager:
                 if reg.dim_meshes.get(dim) is not reg._full_meshes.get(dim):
                     affected_dims.add(dim)
 
+        # Internal metadata keys that must not be forwarded to pyvista
+        _INTERNAL_KEYS = frozenset({
+            'model_diagonal', '_tags_d0', '_centers_d0',
+        })
+
         for dim in reg.dims:
             if dim not in affected_dims:
+                continue
+
+            # Skip dim=0 (point glyphs) — they use a special rendering
+            # path (build_brep_point_glyphs) that can't be reconstructed
+            # by simple extract_cells + add_mesh.
+            if dim == 0:
                 continue
 
             full_mesh = reg._full_meshes.get(dim)
@@ -134,16 +144,12 @@ class VisibilityManager:
                 continue
 
             # Reset colors on full mesh to idle before extracting
-            idle_rgb = IDLE_COLORS.get(dim, IDLE_COLORS[2])
+            idle_rgb = self._color_mgr._idle_fn((dim, 0))
             colors = full_mesh.cell_data.get("colors")
             if colors is not None:
                 colors[:] = idle_rgb
                 full_mesh.cell_data["colors"] = colors
 
-            # Filter internal metadata keys — only pass pyvista-safe kwargs
-            _INTERNAL_KEYS = frozenset({
-                'model_diagonal', '_tags_d0', '_centers_d0',
-            })
             kwargs = {k: v for k, v in
                       reg._add_mesh_kwargs.get(dim, {}).items()
                       if k not in _INTERNAL_KEYS}

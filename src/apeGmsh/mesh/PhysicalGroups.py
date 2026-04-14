@@ -73,8 +73,10 @@ class PhysicalGroups(_HasLogging):
         name    : str = "",
         tag     : Tag = -1,
     ) -> Tag:
-        """
-        Create a physical group of dimension *dim* from the entity *tags*.
+        """Create or append to a physical group.
+
+        If *name* matches an existing PG at this *dim*, the new *tags*
+        are merged into it (upsert).  Otherwise a new PG is created.
 
         Parameters
         ----------
@@ -84,21 +86,43 @@ class PhysicalGroups(_HasLogging):
                ``(dim, tag)`` tuples, or a list mixing all of these.
                String references are resolved via ``g.labels`` first,
                then ``g.physical``.
-        name : optional human-readable label assigned immediately
-        tag  : requested physical-group tag (``-1`` = auto-assign)
+        name : human-readable name.  If a PG with this name already
+               exists at *dim*, the new entities are appended.
+        tag  : requested physical-group tag (``-1`` = auto-assign).
+               Ignored when appending to an existing named PG.
 
         Returns
         -------
-        Tag  the assigned physical-group tag
+        Tag  the physical-group tag (existing or newly created)
         """
         from apeGmsh.core._helpers import resolve_to_tags
         if isinstance(tags, (str, int)):
             tags = [tags]
         resolved = resolve_to_tags(tags, dim=dim, session=self._parent)
+
+        # Upsert: if a PG with this name already exists, merge
+        if name:
+            existing_tag = self.get_tag(dim, name)
+            if existing_tag is not None:
+                old_ents = list(
+                    gmsh.model.getEntitiesForPhysicalGroup(
+                        dim, existing_tag))
+                combined = sorted(
+                    set(old_ents) | set(int(t) for t in resolved))
+                gmsh.model.removePhysicalGroups(
+                    dimTags=[(dim, existing_tag)])
+                pg_tag = gmsh.model.addPhysicalGroup(
+                    dim, combined, tag=existing_tag)
+                gmsh.model.setPhysicalName(dim, pg_tag, name)
+                n_new = len(combined) - len(old_ents)
+                self._log(
+                    f"add(dim={dim}, name={name!r}): appended "
+                    f"{n_new} entity(ies) -> {len(combined)} total")
+                return pg_tag
+
         pg_tag = gmsh.model.addPhysicalGroup(dim, resolved, tag=tag)
         if name:
             gmsh.model.setPhysicalName(dim, pg_tag, name)
-        f"{_DIM_LABEL.get(dim, str(dim))} {tags}"
         self._log(
             f"add(dim={dim}, entities={tags}) -> pg_tag={pg_tag}"
             + (f", name={name!r}" if name else "")
@@ -124,6 +148,97 @@ class PhysicalGroups(_HasLogging):
         """Shorthand: ``add(dim=3, tags, ...)`` — returns ``self`` for chaining."""
         self.add(3, tags, name=name, tag=tag)
         return self
+
+    # ------------------------------------------------------------------
+    # From labels
+    # ------------------------------------------------------------------
+
+    def from_label(
+        self,
+        label_name: str,
+        *,
+        name: str | None = None,
+        dim: int | None = None,
+    ) -> Tag:
+        """Create (or append to) a PG from a label's entities.
+
+        Parameters
+        ----------
+        label_name : str
+            Label name (without ``_label:`` prefix).
+        name : str, optional
+            PG name.  Defaults to the label name.
+        dim : int, optional
+            Dimension.  If ``None``, inferred from the label.
+
+        Returns
+        -------
+        Tag  the physical-group tag
+        """
+        labels = getattr(self._parent, 'labels', None)
+        if labels is None:
+            raise RuntimeError("No labels composite on session.")
+        ent_tags = labels.entities(label_name, dim=dim)
+        # Infer dim from the label's PG
+        if dim is None:
+            for d in range(4):
+                for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(d):
+                    from apeGmsh.core.Labels import add_prefix
+                    if gmsh.model.getPhysicalName(pg_dim, pg_tag) == add_prefix(label_name):
+                        dim = pg_dim
+                        break
+                if dim is not None:
+                    break
+        if dim is None:
+            raise KeyError(
+                f"Cannot infer dimension for label {label_name!r}.")
+        pg_name = name if name is not None else label_name
+        return self.add(dim, ent_tags, name=pg_name)
+
+    def from_labels(
+        self,
+        label_names: list[str],
+        *,
+        name: str,
+        dim: int | None = None,
+    ) -> Tag:
+        """Create (or append to) a PG from multiple labels (union).
+
+        Parameters
+        ----------
+        label_names : list[str]
+            Label names to combine.
+        name : str
+            PG name for the combined group.
+        dim : int, optional
+            Dimension.  If ``None``, inferred from the first label.
+
+        Returns
+        -------
+        Tag  the physical-group tag
+        """
+        labels = getattr(self._parent, 'labels', None)
+        if labels is None:
+            raise RuntimeError("No labels composite on session.")
+        all_tags: list[int] = []
+        inferred_dim = dim
+        for lbl in label_names:
+            ent_tags = labels.entities(lbl, dim=dim)
+            all_tags.extend(ent_tags)
+            if inferred_dim is None:
+                # Infer from first label
+                for d in range(4):
+                    for pg_dim, pg_tag in gmsh.model.getPhysicalGroups(d):
+                        from apeGmsh.core.Labels import add_prefix
+                        if gmsh.model.getPhysicalName(pg_dim, pg_tag) == add_prefix(lbl):
+                            inferred_dim = pg_dim
+                            break
+                    if inferred_dim is not None:
+                        break
+        if inferred_dim is None:
+            raise KeyError(
+                f"Cannot infer dimension for labels {label_names!r}.")
+        return self.add(inferred_dim, sorted(set(all_tags)), name=name)
 
     # ------------------------------------------------------------------
     # Naming

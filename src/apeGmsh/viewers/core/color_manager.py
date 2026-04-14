@@ -115,7 +115,11 @@ class ColorManager:
         self._set_cells_rgb(dt, np.asarray(rgb, dtype=np.uint8))
 
     def reset_all_idle(self) -> None:
-        """Reset every entity to its idle color (vectorized)."""
+        """Reset every entity to its idle color.
+
+        Uses the custom ``_idle_fn`` if set (e.g. mesh viewer's
+        uniform scene color), otherwise falls back to per-dim defaults.
+        """
         reg = self._registry
         for dim in reg.dims:
             mesh = reg.dim_meshes.get(dim)
@@ -124,8 +128,10 @@ class ColorManager:
             colors = mesh.cell_data.get("colors")
             if colors is None:
                 continue
-            idle = IDLE_COLORS.get(dim, IDLE_COLORS[2])
-            colors[:] = idle  # broadcast fill — instant
+            # Use _idle_fn for the first entity at this dim to get
+            # the correct color (handles custom idle functions).
+            idle = self._idle_fn((dim, 0))
+            colors[:] = idle
             mesh.cell_data["colors"] = colors
 
     def recolor_all(
@@ -151,7 +157,7 @@ class ColorManager:
                 continue
 
             # Fill all with idle color for this dim
-            idle = IDLE_COLORS.get(dim, IDLE_COLORS[2])
+            idle = self._idle_fn((dim, 0))
             colors[:] = idle
 
             # Overlay pick color on picked entities

@@ -20,12 +20,17 @@ for linter-friendly kind comparisons (no magic strings).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Generic, Iterator, TypeVar
 
 import numpy as np
 
+_R = TypeVar('_R')
+
 if TYPE_CHECKING:
     import pandas as pd
+    from apeGmsh.solvers.Constraints import ConstraintRecord, NodePairRecord  # noqa: F401
+    from apeGmsh.solvers.Loads import NodalLoadRecord, ElementLoadRecord  # noqa: F401
+    from apeGmsh.solvers.Masses import MassRecord  # noqa: F401
 
 
 # =====================================================================
@@ -83,25 +88,31 @@ class LoadKind:
 # Record set base
 # =====================================================================
 
-class _RecordSetBase:
+class _RecordSetBase(Generic[_R]):
     """Shared protocol for all record sub-composites.
 
     Provides ``__iter__``, ``__len__``, ``__bool__``, and ``by_kind``
     so that sub-classes only add their domain-specific methods.
+
+    Subclasses bind the type variable so that Pylance/mypy can infer
+    the record type for iteration and query results.
     """
 
-    def __init__(self, records: list | None = None) -> None:
-        self._records: list = list(records) if records else []
+    def __init__(self, records: list[_R] | None = None) -> None:
+        self._records: list[_R] = list(records) if records else []
 
-    def by_kind(self, kind: str) -> list:
+    def by_kind(self, kind: str) -> list[_R]:
         """Return all records matching a constraint/load kind."""
         return [r for r in self._records
                 if getattr(r, 'kind', None) == kind]
 
     # ── Dunder ──────────────────────────────────────────────
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[_R]:
         return iter(self._records)
+
+    def __getitem__(self, idx: int) -> _R:
+        return self._records[idx]
 
     def __len__(self) -> int:
         return len(self._records)
@@ -120,7 +131,7 @@ class _RecordSetBase:
 # Node-side sub-composites
 # =====================================================================
 
-class NodeConstraintSet(_RecordSetBase):
+class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
     """Node-to-node constraints: equal_dof, rigid_beam, rigid_diaphragm,
     node_to_surface, penalty, etc.
 
@@ -128,19 +139,34 @@ class NodeConstraintSet(_RecordSetBase):
 
     Accessed via ``fem.nodes.constraints``.
 
-    Example
-    -------
+    Each record has at minimum:
+
+    - ``kind``        : str — constraint type (``'equal_dof'``, ``'rigid_beam'``, ...)
+    - ``master_node`` : int — master mesh node ID
+    - ``slave_node``  : int — slave mesh node ID (for NodePairRecord)
+    - ``dofs``        : list[int] — constrained DOFs (1-based)
+    - ``offset``      : ndarray | None — rigid arm vector (rigid link types)
+
+    Examples
+    --------
     ::
 
-        K = fem.nodes.constraints.Kind
-        for nid, xyz in fem.nodes.constraints.extra_nodes():
+        # Create phantom nodes first (node_to_surface)
+        ids, coords = fem.nodes.constraints.get_phantom_nodes()
+        for nid, xyz in zip(ids, coords):
             ops.node(nid, *xyz)
 
+        # Emit constraint commands
+        K = fem.nodes.constraints.Kind
         for c in fem.nodes.constraints.node_pairs():
             if c.kind == K.RIGID_BEAM:
                 ops.rigidLink("beam", c.master_node, c.slave_node)
             elif c.kind == K.EQUAL_DOF:
                 ops.equalDOF(c.master_node, c.slave_node, *c.dofs)
+
+        # Direct indexing
+        rec = fem.nodes.constraints[0]
+        print(rec.kind, rec.master_node)
     """
 
     Kind = ConstraintKind
@@ -256,19 +282,36 @@ class NodeConstraintSet(_RecordSetBase):
         return f"NodeConstraintSet({len(self._records)} records: {parts})"
 
 
-class NodalLoadSet(_RecordSetBase):
-    """Nodal load records (point forces).
+class NodalLoadSet(_RecordSetBase["NodalLoadRecord"]):
+    """Nodal load records (resolved point forces / moments).
 
     Accessed via ``fem.nodes.loads``.
 
-    Example
-    -------
+    Each record is a ``NodalLoadRecord`` with:
+
+    - ``node_id``  : int — mesh node ID
+    - ``forces``   : tuple(Fx, Fy, Fz, Mx, My, Mz) — 6-DOF vector
+    - ``pattern``  : str — load pattern name (e.g. ``"default"``)
+    - ``name``     : str | None — optional human label
+
+    Examples
+    --------
     ::
 
+        # Apply all loads in one shot
         for load in fem.nodes.loads:
             ops.load(load.node_id, *load.forces)
 
-        wind = fem.nodes.loads.by_pattern("Wind")
+        # Group by pattern (OpenSees timeSeries + pattern)
+        for pat in fem.nodes.loads.patterns():
+            ops.timeSeries('Linear', tag)
+            ops.pattern('Plain', tag, tag)
+            for load in fem.nodes.loads.by_pattern(pat):
+                ops.load(load.node_id, *load.forces)
+
+        # Inspect a single record
+        load = fem.nodes.loads[0]
+        print(load.node_id, load.forces)
     """
 
     Kind = LoadKind
@@ -281,7 +324,7 @@ class NodalLoadSet(_RecordSetBase):
                 seen.append(r.pattern)
         return seen
 
-    def by_pattern(self, name: str) -> list:
+    def by_pattern(self, name: str) -> list["NodalLoadRecord"]:
         """Return all records belonging to the named pattern."""
         return [r for r in self._records if r.pattern == name]
 
@@ -310,22 +353,38 @@ class NodalLoadSet(_RecordSetBase):
                 f"{n_pats} pattern(s))")
 
 
-class MassSet(_RecordSetBase):
+class MassSet(_RecordSetBase["MassRecord"]):
     """Resolved nodal masses.
 
     Accessed via ``fem.nodes.masses``.
 
-    Example
-    -------
+    Each record is a ``MassRecord`` with:
+
+    - ``node_id`` : int — mesh node ID
+    - ``mass``    : tuple(mx, my, mz, Ixx, Iyy, Izz) — 6-DOF mass vector
+
+    Examples
+    --------
     ::
 
+        # Apply masses
         for m in fem.nodes.masses:
             ops.mass(m.node_id, *m.mass)
 
-        fem.nodes.masses.total_mass()
+        # Query total
+        print(fem.nodes.masses.total_mass())
+
+        # Lookup by node
+        m = fem.nodes.masses.by_node(42)
+        if m is not None:
+            print(m.mass)
+
+        # Direct indexing
+        rec = fem.nodes.masses[0]
+        print(rec.node_id, rec.mass)
     """
 
-    def by_node(self, node_id: int):
+    def by_node(self, node_id: int) -> "MassRecord | None":
         """Return the MassRecord for a node, or ``None``."""
         for r in self._records:
             if r.node_id == int(node_id):
@@ -372,20 +431,30 @@ class MassSet(_RecordSetBase):
 # Element-side sub-composites
 # =====================================================================
 
-class SurfaceConstraintSet(_RecordSetBase):
+class SurfaceConstraintSet(_RecordSetBase["ConstraintRecord"]):
     """Surface coupling constraints: tie, mortar, tied_contact,
     distributing.
 
     Accessed via ``fem.elements.constraints``.
 
-    Example
-    -------
+    Provides two iterators:
+
+    - ``interpolations()`` — yields ``InterpolationRecord`` (one per
+      slave node with master weights)
+    - ``couplings()`` — yields ``SurfaceCouplingRecord`` (top-level
+      master/slave surface pairs)
+
+    Examples
+    --------
     ::
 
         K = fem.elements.constraints.Kind
         for interp in fem.elements.constraints.interpolations():
-            # build MP constraint from weights
+            # interp.slave_node, interp.master_nodes, interp.weights
             ...
+
+        # Direct indexing
+        rec = fem.elements.constraints[0]
     """
 
     Kind = ConstraintKind
@@ -469,17 +538,31 @@ class SurfaceConstraintSet(_RecordSetBase):
                 f"{len(self._records)} records: {parts})")
 
 
-class ElementLoadSet(_RecordSetBase):
+class ElementLoadSet(_RecordSetBase["ElementLoadRecord"]):
     """Element load records (surface pressure, body forces).
 
     Accessed via ``fem.elements.loads``.
 
-    Example
-    -------
+    Each record is an ``ElementLoadRecord`` with:
+
+    - ``element_id`` : int — mesh element ID
+    - ``load_type``  : str — e.g. ``'beamUniform'``, ``'surfacePressure'``
+    - ``params``     : dict — solver-specific parameters
+    - ``pattern``    : str — load pattern name
+
+    Examples
+    --------
     ::
 
         for eload in fem.elements.loads:
             ops.eleLoad(eload.element_id, eload.load_type, **eload.params)
+
+        # By pattern
+        for eload in fem.elements.loads.by_pattern("Wind"):
+            ...
+
+        # Direct indexing
+        rec = fem.elements.loads[0]
     """
 
     Kind = LoadKind
@@ -492,7 +575,7 @@ class ElementLoadSet(_RecordSetBase):
                 seen.append(r.pattern)
         return seen
 
-    def by_pattern(self, name: str) -> list:
+    def by_pattern(self, name: str) -> list["ElementLoadRecord"]:
         """Return all records belonging to the named pattern."""
         return [r for r in self._records if r.pattern == name]
 

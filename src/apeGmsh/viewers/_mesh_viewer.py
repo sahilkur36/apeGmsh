@@ -154,22 +154,8 @@ class MeshViewer:
                     _label_actors.append(actor)
                 except Exception:
                     pass
-            if checked and len(_phantom_coords) > 0:
-                p_labels = [str(int(t)) for t in _phantom_tags]
-                try:
-                    actor = plotter.add_point_labels(
-                        _phantom_coords, p_labels,
-                        font_size=8,
-                        text_color="#f5c2e7",
-                        shape_color="#333333",
-                        shape_opacity=0.6,
-                        show_points=False,
-                        always_visible=True,
-                        name="_phantom_labels",
-                    )
-                    _label_actors.append(actor)
-                except Exception:
-                    pass
+            # (phantom node labels removed — phantom nodes are now
+            #  conditional on the Constraints tab checkbox)
             plotter.render()
 
         def _toggle_elem_labels(checked: bool):
@@ -278,31 +264,7 @@ class MeshViewer:
             except Exception:
                 fem = None
 
-        # ── Phantom nodes (always visible) ─────────────────────────
         import pyvista as pv
-
-        _phantom_tags: np.ndarray = np.array([], dtype=np.int64)
-        _phantom_coords: np.ndarray = np.empty((0, 3), dtype=float)
-        _phantom_actor = None
-
-        if fem is not None and fem.nodes.constraints:
-            pn = fem.nodes.constraints.get_phantom_nodes()
-            if len(pn.ids) > 0:
-                _phantom_tags = pn.ids
-                _phantom_coords = (
-                    pn.coords - registry.origin_shift
-                )
-                glyph_r = (0.003 * scene.model_diagonal
-                           * max(0.1, self._point_size / 10.0))
-                diamond = pv.Octahedron(radius=glyph_r * 0.8)
-                cloud = pv.PolyData(_phantom_coords)
-                glyphs = cloud.glyph(
-                    geom=diamond, orient=False, scale=False)
-                _phantom_actor = plotter.add_mesh(
-                    glyphs, color="#f5c2e7", lighting=False,
-                    name="_phantom_nodes",
-                    reset_camera=False, pickable=False,
-                )
 
         # ── Overlay infrastructure ──────────────────────────────────
         from .ui.loads_tab import LoadsTabPanel, pattern_color
@@ -556,6 +518,25 @@ class MeshViewer:
                     actor = plotter.add_mesh(mesh, **kwargs)
                     _constraint_actors.append(actor)
 
+            # Phantom nodes (dark grey spheres)
+            if (ConstraintKind.NODE_TO_SURFACE in active_kinds
+                    and fem.nodes.constraints):
+                pn = fem.nodes.constraints.get_phantom_nodes()
+                if len(pn.ids) > 0:
+                    pn_coords = pn.coords - origin
+                    sphere = pv.Sphere(
+                        radius=marker_r * 0.7,
+                        theta_resolution=8, phi_resolution=8)
+                    cloud = pv.PolyData(pn_coords)
+                    glyphs = cloud.glyph(
+                        geom=sphere, orient=False, scale=False)
+                    actor = plotter.add_mesh(
+                        glyphs, color="#555555", lighting=False,
+                        name="_phantom_nodes",
+                        reset_camera=False, pickable=False,
+                    )
+                    _constraint_actors.append(actor)
+
             plotter.render()
 
         # ── Insert overlay tabs ─────────────────────────────────────
@@ -601,26 +582,7 @@ class MeshViewer:
         from .overlays.glyph_helpers import rebuild_node_cloud
 
         def _pref_point_size(v: float):
-            nonlocal _phantom_actor
             rebuild_node_cloud(plotter, scene, v)
-            # Rebuild phantom markers at the new size
-            if len(_phantom_coords) > 0:
-                if _phantom_actor is not None:
-                    try:
-                        plotter.remove_actor(_phantom_actor)
-                    except Exception:
-                        pass
-                glyph_r = (0.003 * scene.model_diagonal
-                           * max(0.1, v / 10.0))
-                diamond = pv.Octahedron(radius=glyph_r * 0.8)
-                cloud = pv.PolyData(_phantom_coords)
-                glyphs = cloud.glyph(
-                    geom=diamond, orient=False, scale=False)
-                _phantom_actor = plotter.add_mesh(
-                    glyphs, color="#f5c2e7", lighting=False,
-                    name="_phantom_nodes",
-                    reset_camera=False, pickable=False,
-                )
             plotter.render()
 
         _pref_line_width = make_line_width_cb(registry, plotter)
