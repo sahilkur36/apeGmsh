@@ -89,6 +89,603 @@ class _Geometry:
         self._model._log(f"add_line({start} -> {end}) -> tag {tag}")
         return self._model._register(1, tag, label, 'line')
 
+    def add_imperfect_line(
+        self,
+        start: Tag,
+        end  : Tag,
+        *,
+        magnitude : float = 0.0,
+        direction : tuple[float, float, float],
+        shape     : Literal['kink', 'sine', 'multi_mode'] = 'kink',
+        n_segments: int = 8,
+        modes     : list[tuple[int, float]] | None = None,
+        label     : str | None = None,
+        sync      : bool = True,
+    ) -> list[Tag]:
+        """
+        Add a line with a built-in geometric imperfection.
+
+        Used for seeding initial out-of-straightness on columns, struts,
+        or braces before running a corotational / nonlinear buckling
+        analysis. The imperfection is baked into the **geometry** as a
+        polyline through intermediate points — there is no solver-side
+        perturbation. The resulting line segments are a drop-in
+        replacement for a single :meth:`add_line` call and can be
+        grouped into a single physical group via
+        ``m.physical.add_curve(tags=[...])``.
+
+        Parameters
+        ----------
+        start, end : point tags
+            Endpoints of the imperfect line (straight-line length L).
+        magnitude : float
+            Peak perpendicular offset of the imperfection envelope.
+            Typical engineering choices are ``L/500`` to ``L/1000``.
+            Ignored when ``shape='multi_mode'`` — amplitudes come from
+            the per-mode entries of ``modes``.
+        direction : (dx, dy, dz)
+            Direction hint for the offset. The vector is projected onto
+            the plane perpendicular to the line axis and normalized.
+            Only the perpendicular component matters; e.g. for a
+            diagonal brace you can pass ``(0, 1, 0)`` to request an
+            out-of-plane-Y offset and the method takes care of
+            orthogonality. Raises ``ValueError`` if the vector is
+            parallel to the line axis.
+        shape : str
+            * ``'kink'``   — single midspan intermediate point, two
+              line segments. Produces a triangular bent; pedagogically
+              clean but not physically smooth.
+            * ``'sine'``   — half-sine envelope
+              ``y(s) = magnitude · sin(π·s/L)`` discretized into
+              ``n_segments`` pieces. Matches the first Euler buckling
+              mode exactly; recommended for quantitative work.
+            * ``'multi_mode'`` — superposition of multiple sinusoidal
+              modes, ``y(s) = Σ_k  a_k · sin(k·π·s/L)`` where
+              ``(k, a_k)`` pairs come from ``modes``. Used to seed
+              more than one buckling mode at once.
+        n_segments : int
+            Number of line pieces the imperfect line is split into.
+            Only meaningful for ``'sine'`` (default 8) and
+            ``'multi_mode'`` (default 8). ``'kink'`` always uses
+            exactly 2 segments regardless of this value.
+        modes : list[(int, float)], optional
+            Required when ``shape='multi_mode'``. Each entry is a
+            ``(mode_number, amplitude)`` pair. The mode number ``k``
+            must be a positive integer; the amplitude is absolute (not
+            relative to ``magnitude``).
+        label : str, optional
+            Label applied to *all* resulting line segments. The
+            intermediate interior points remain anonymous (no labels).
+        sync : bool
+            Whether to synchronise the OCC kernel after creation.
+
+        Returns
+        -------
+        list[Tag]
+            Line tags in geometric order from ``start`` to ``end``.
+            Pass the list directly to ``m.physical.add_curve``.
+
+        Examples
+        --------
+        Kinked brace with an L/1000 midspan offset in the global-Y
+        direction::
+
+            tags = m.model.geometry.add_imperfect_line(
+                p_base, p_top,
+                magnitude=L_brace/1000,
+                direction=(0, 1, 0),
+                shape='kink',
+                label='brace',
+            )
+
+        Half-sine imperfection discretised into 16 segments::
+
+            tags = m.model.geometry.add_imperfect_line(
+                p1, p2,
+                magnitude=L/500,
+                direction=(1, 0, 0),
+                shape='sine',
+                n_segments=16,
+                label='column',
+            )
+
+        First + third mode seeding::
+
+            tags = m.model.geometry.add_imperfect_line(
+                p1, p2,
+                direction=(0, 0, 1),
+                shape='multi_mode',
+                modes=[(1, L/1000), (3, L/5000)],
+                n_segments=24,
+            )
+        """
+        # ── Resolve endpoint coordinates ────────────────────────
+        p0 = np.asarray(
+            gmsh.model.getValue(0, int(start), []), dtype=float)
+        p1 = np.asarray(
+            gmsh.model.getValue(0, int(end),   []), dtype=float)
+        axis_vec = p1 - p0
+        L = float(np.linalg.norm(axis_vec))
+        if L <= 0.0:
+            raise ValueError(
+                f"add_imperfect_line: zero-length axis "
+                f"({start} -> {end}); endpoints coincide.")
+        axis_unit = axis_vec / L
+
+        # ── Project direction perpendicular to axis ─────────────
+        dir_arr = np.asarray(direction, dtype=float)
+        if dir_arr.shape != (3,):
+            raise ValueError(
+                f"direction must be a length-3 vector, got shape "
+                f"{dir_arr.shape}")
+        perp = dir_arr - float(np.dot(dir_arr, axis_unit)) * axis_unit
+        perp_mag = float(np.linalg.norm(perp))
+        if perp_mag < 1e-12 * max(L, 1.0):
+            raise ValueError(
+                f"direction {tuple(direction)} is (nearly) parallel to "
+                f"the line axis {tuple(axis_unit)}; pick a direction "
+                f"with a perpendicular component.")
+        perp_unit = perp / perp_mag
+
+        # ── Build the (arc-length fraction, offset) pairs ───────
+        if shape == 'kink':
+            s_list     = [0.5]
+            offset_list = [magnitude]
+            n_interior = 1
+        elif shape == 'sine':
+            if n_segments < 2:
+                raise ValueError(
+                    f"n_segments must be >= 2 for shape='sine', "
+                    f"got {n_segments}")
+            s_list = [i / n_segments for i in range(1, n_segments)]
+            offset_list = [
+                magnitude * math.sin(math.pi * s) for s in s_list
+            ]
+            n_interior = n_segments - 1
+        elif shape == 'multi_mode':
+            if not modes:
+                raise ValueError(
+                    "shape='multi_mode' requires a non-empty 'modes' "
+                    "list of (mode_number, amplitude) pairs.")
+            if n_segments < 2:
+                raise ValueError(
+                    f"n_segments must be >= 2 for shape='multi_mode', "
+                    f"got {n_segments}")
+            s_list = [i / n_segments for i in range(1, n_segments)]
+            offset_list = []
+            for s in s_list:
+                total = 0.0
+                for k, a in modes:
+                    if k <= 0 or int(k) != k:
+                        raise ValueError(
+                            f"mode number must be a positive integer, "
+                            f"got {k}")
+                    total += float(a) * math.sin(int(k) * math.pi * s)
+                offset_list.append(total)
+            n_interior = n_segments - 1
+        else:
+            raise ValueError(
+                f"shape must be 'kink', 'sine', or 'multi_mode'; "
+                f"got {shape!r}")
+
+        # ── Create intermediate points + segment lines ──────────
+        line_tags: list[Tag] = []
+        prev = int(start)
+        for s, off in zip(s_list, offset_list):
+            pos = p0 + s * (p1 - p0) + off * perp_unit
+            pt = gmsh.model.occ.addPoint(
+                float(pos[0]), float(pos[1]), float(pos[2]))
+            ln = gmsh.model.occ.addLine(prev, pt)
+            line_tags.append(ln)
+            prev = pt
+
+        # Final segment from last interior point to the end.
+        ln = gmsh.model.occ.addLine(prev, int(end))
+        line_tags.append(ln)
+
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        # Register metadata for every segment (kind='imperfect_line').
+        # Labels are skipped here: if we passed ``label`` to ``_register``
+        # it would call ``labels.add`` once per segment and emit a
+        # "duplicate label" warning on every call after the first. We
+        # batch them in a single ``labels.add`` below so the label PG
+        # contains all segments from the start.
+        for ln in line_tags:
+            self._model._register(1, ln, None, 'imperfect_line')
+
+        # Batch-label all segments under one name (if requested).
+        if label and getattr(self._model._parent, '_auto_pg_from_label', False):
+            labels_comp = getattr(self._model._parent, 'labels', None)
+            if labels_comp is not None:
+                try:
+                    labels_comp.add(1, list(line_tags), name=label)
+                except Exception as exc:
+                    import warnings as _warn
+                    _warn.warn(
+                        f"Label {label!r} (dim=1, tags={line_tags}) could "
+                        f"not be created: {exc}",
+                        stacklevel=2,
+                    )
+
+        self._model._log(
+            f"add_imperfect_line({start} -> {end}, shape={shape!r}, "
+            f"n_interior={n_interior}, magnitude={magnitude}) "
+            f"-> {len(line_tags)} segment(s) {line_tags}")
+        return list(line_tags)
+
+    def replace_line(
+        self,
+        line_tag  : Tag,
+        *,
+        magnitude : float = 0.0,
+        direction : tuple[float, float, float],
+        shape     : Literal['kink', 'sine', 'multi_mode'] = 'kink',
+        n_segments: int = 8,
+        modes     : list[tuple[int, float]] | None = None,
+        sync      : bool = True,
+    ) -> list[Tag]:
+        """
+        Retrofit an existing straight line with a geometric imperfection.
+
+        Use this when you built the frame with plain :meth:`add_line`
+        calls and then want to introduce an imperfection on a specific
+        member without rebuilding the whole geometry. The method:
+
+        1. Validates that ``line_tag`` points to a straight line
+           (``kind='line'`` in the model metadata; arcs, splines, and
+           already-imperfect lines are rejected).
+        2. Looks up the two endpoint points from the line's boundary.
+        3. Records every physical group (user-facing PGs **and** label
+           PGs of the form ``_label:…``) that contains the line.
+        4. Deletes the old curve — endpoints are preserved because
+           other geometry likely references them.
+        5. Calls :meth:`add_imperfect_line` between the same endpoints
+           to build the new polyline.
+        6. Re-wires every recorded physical group: the old line tag is
+           swapped out and the new segment tags are spliced in, so any
+           PG that used to reference the straight line now references
+           the full imperfect polyline.
+
+        Parameters
+        ----------
+        line_tag : int
+            Tag of the existing straight line to replace.
+        magnitude, direction, shape, n_segments, modes :
+            Same semantics as :meth:`add_imperfect_line`.
+        sync : bool
+            Whether to synchronise the OCC kernel at the end.
+
+        Returns
+        -------
+        list[Tag]
+            New line tags in geometric order. Same layout as
+            :meth:`add_imperfect_line` would return.
+        """
+        line_tag = int(line_tag)
+
+        # 1. Reject anything that isn't a plain straight line.
+        meta = self._model._metadata.get((1, line_tag), {})
+        kind = meta.get('kind')
+        if kind != 'line':
+            raise ValueError(
+                f"replace_line only works on straight lines created via "
+                f"add_line (kind='line'), got kind={kind!r} for tag "
+                f"{line_tag}. Rebuild the geometry explicitly if you "
+                f"need to replace an arc, spline, or already-imperfect "
+                f"line.")
+
+        # 2. Recover endpoints via the curve's boundary.
+        try:
+            bnd = gmsh.model.getBoundary(
+                [(1, line_tag)], oriented=False)
+        except Exception as exc:
+            raise ValueError(
+                f"Line {line_tag} does not exist in the OCC kernel: "
+                f"{exc}") from exc
+        point_tags = [int(t) for (d, t) in bnd if d == 0]
+        if len(point_tags) != 2:
+            raise ValueError(
+                f"Line {line_tag} has {len(point_tags)} boundary "
+                f"point(s); expected exactly 2.")
+        start_tag, end_tag = point_tags
+
+        # 3. Record every dim-1 PG that contains this line. Capture
+        # both the PG tag (for removal) and its name + entity list
+        # (for re-creation) in a single scan so we don't walk the PG
+        # table twice.
+        old_pgs: list[tuple[int, str, list[int]]] = []
+        for (pg_dim, pg_tag) in gmsh.model.getPhysicalGroups(dim=1):
+            ents = [
+                int(e) for e in
+                gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag)
+            ]
+            if line_tag not in ents:
+                continue
+            try:
+                name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
+            except Exception:
+                name = ''
+            other = [e for e in ents if e != line_tag]
+            old_pgs.append((int(pg_tag), name, other))
+
+        # 4. Delete the old physical groups FIRST, then the line.
+        # Removing the PGs first prevents Gmsh's internal synchronise
+        # from seeing a dangling entity reference when the line is
+        # deleted — otherwise it fires "Unknown entity ... in physical
+        # group" warnings.
+        if old_pgs:
+            gmsh.model.removePhysicalGroups(
+                [(1, pg_tag) for (pg_tag, _n, _o) in old_pgs])
+
+        # Delete the line itself (recursive=False keeps the endpoints).
+        gmsh.model.occ.remove([(1, line_tag)], recursive=False)
+        gmsh.model.occ.synchronize()
+
+        # Drop the old line from model metadata.
+        self._model._metadata.pop((1, line_tag), None)
+
+        # 5. Build the new polyline. Pass ``label=None`` so no label
+        # PGs are auto-created — we re-create the captured PGs
+        # (including the ``_label:…`` one if present) below in a
+        # single pass. ``sync=True`` is important: the new line tags
+        # must be committed into Gmsh's model state before we add
+        # physical groups referencing them, otherwise Gmsh accepts
+        # the PG at the model level but warns about "Unknown entity"
+        # on the next OCC synchronise.
+        new_tags = self.add_imperfect_line(
+            start_tag, end_tag,
+            magnitude=magnitude,
+            direction=direction,
+            shape=shape,
+            n_segments=n_segments,
+            modes=modes,
+            label=None,
+            sync=True,
+        )
+
+        # 6. Re-create every captured PG with (other_ents ∪ new_tags)
+        # and the original name. We pass ``name=`` to ``addPhysicalGroup``
+        # in one atomic call (rather than ``addPhysicalGroup`` + a
+        # separate ``setPhysicalName``) to avoid a brief inconsistent-
+        # -state window that some Gmsh builds complain about after a
+        # recent ``removePhysicalGroups``.
+        new_tag_set = set(int(t) for t in new_tags)
+        for (_old_pg_tag, name, other_ents) in old_pgs:
+            merged = sorted(set(other_ents) | new_tag_set)
+            try:
+                gmsh.model.addPhysicalGroup(
+                    1, merged, tag=-1, name=name or "")
+            except Exception as exc:
+                import warnings as _warn
+                _warn.warn(
+                    f"replace_line: could not re-create PG "
+                    f"{name!r}: {exc}",
+                    stacklevel=2,
+                )
+
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        self._model._log(
+            f"replace_line({line_tag}, shape={shape!r}, "
+            f"magnitude={magnitude}) -> {len(new_tags)} segment(s) "
+            f"{new_tags}, re-wired {len(old_pgs)} PG(s)")
+        return list(new_tags)
+
+    def sweep(
+        self,
+        profile_face  : Tag,
+        path_curves   : list[Tag],
+        *,
+        label         : str | None = None,
+        cleanup       : bool       = True,
+        sync          : bool       = True,
+    ) -> dict:
+        """
+        Sweep a planar profile face along a chain of curves (a polyline
+        path) to produce a 3-D solid volume.
+
+        Wraps ``gmsh.model.occ.addWire`` + ``gmsh.model.occ.addPipe``
+        and — optionally — cleans up the intermediate geometry that
+        would otherwise cause trouble downstream:
+
+        * **The profile face** that was used as the input to the pipe.
+          It persists as an orphan at the first station of the sweep,
+          which means when you try to identify the start cap by bbox
+          you pick up two coincident surfaces and their mesh nodes
+          double up.
+        * **The path curves** themselves. These live along the
+          centroid line of the swept solid — i.e. **inside** the
+          volume — and Gmsh happily meshes them into ``line2``
+          elements whose nodes sit interior to the tet mesh and are
+          *not* shared with any tet4 element. Those become floating
+          null-space DOFs if you emit them to OpenSees.
+
+        With ``cleanup=True`` (the default) both are removed after the
+        pipe has produced the volume, so the only surfaces left in the
+        model are the ones that actually bound the solid (the two end
+        caps + the ``n_path_segments * n_profile_edges`` ruled side
+        surfaces).
+
+        Parameters
+        ----------
+        profile_face : int
+            Tag of a planar surface that serves as the cross-section.
+            Most commonly built with ``addCurveLoop`` + ``addPlaneSurface``
+            on a closed polyline of vertices. Must be perpendicular —
+            at least roughly — to the start of the path; Gmsh orients
+            the local frame automatically using the Frenet trihedron.
+        path_curves : list[int]
+            Ordered list of curve tags that form the path the profile
+            is swept along. Typically the return value of
+            :meth:`add_imperfect_line` or :meth:`replace_line`.
+        label : str, optional
+            If given, the resulting volume is labelled. End caps and
+            side surfaces remain unlabelled — run the usual
+            ``select_surfaces(in_box=…)`` + ``to_physical`` pass to
+            group them explicitly.
+        cleanup : bool
+            Remove the original profile face and path curves after
+            the pipe is built. Defaults to True. Set to False if you
+            want to preserve the profile/path for downstream use
+            (e.g. another sweep on a branched path).
+        sync : bool
+            Whether to synchronise the OCC kernel at the end.
+
+        Returns
+        -------
+        dict
+            ``{'volume': tag, 'start_cap': tag, 'end_cap': tag}``.
+            The caps are identified by scanning every new dim-2
+            entity's bounding box for one whose ``x_min == x_max ==
+            path_endpoint_x``. If either cap cannot be identified its
+            entry is ``None``.
+
+        Examples
+        --------
+        Swept solid I-beam with a half-sine imperfection in the
+        weak-axis direction::
+
+            # 1. Imperfect path
+            p0 = g.model.geometry.add_point(0, 0, 0, lc=200)
+            p1 = g.model.geometry.add_point(L, 0, 0, lc=200)
+            path = g.model.geometry.replace_line(
+                g.model.geometry.add_line(p0, p1),
+                magnitude=L/1000, direction=(0, 1, 0),
+                shape='sine', n_segments=16,
+            )
+
+            # 2. Rectangular profile at x = 0
+            corners = [
+                (0, -t/2, -h/2), (0, +t/2, -h/2),
+                (0, +t/2, +h/2), (0, -t/2, +h/2),
+            ]
+            pts = [gmsh.model.occ.addPoint(*c) for c in corners]
+            lns = [gmsh.model.occ.addLine(pts[i], pts[(i+1) % 4])
+                   for i in range(4)]
+            loop = gmsh.model.occ.addCurveLoop(lns)
+            profile = gmsh.model.occ.addPlaneSurface([loop])
+            gmsh.model.occ.synchronize()
+
+            # 3. Sweep
+            swept = g.model.geometry.sweep(profile, path, label='beam')
+            # swept['volume']    — the solid tag
+            # swept['start_cap'] — surface tag at path start
+            # swept['end_cap']   — surface tag at path end
+        """
+        # Snapshot the set of existing volumes + surfaces so we can
+        # identify the ones the pipe creates.
+        before_vols  = set(int(t) for (_d, t) in gmsh.model.getEntities(3))
+        before_surfs = set(int(t) for (_d, t) in gmsh.model.getEntities(2))
+
+        # Start position: centroid of the profile face (it sits at the
+        # start of the path). End position: walk the path curves and
+        # collect every endpoint's 3-D coord, then pick the one
+        # farthest from the start. This avoids having to know how
+        # Gmsh orients the boundary points of each curve.
+        prof_com = np.asarray(
+            gmsh.model.occ.getCenterOfMass(2, int(profile_face)),
+            dtype=float)
+        start_xyz = prof_com
+
+        all_path_pts: list[np.ndarray] = []
+        for t in path_curves:
+            try:
+                bnd = gmsh.model.getBoundary(
+                    [(1, int(t))], oriented=False)
+            except Exception:
+                continue
+            for (d, pt) in bnd:
+                if d == 0:
+                    all_path_pts.append(np.asarray(
+                        gmsh.model.getValue(0, int(pt), []),
+                        dtype=float))
+        if all_path_pts:
+            # End of path = point farthest from start_xyz.
+            end_xyz = max(
+                all_path_pts,
+                key=lambda p: float(np.linalg.norm(p - start_xyz)))
+        else:
+            end_xyz = start_xyz
+
+        # Build the wire + pipe.
+        wire = gmsh.model.occ.addWire(
+            [int(t) for t in path_curves], checkClosed=False)
+        pipe_out = gmsh.model.occ.addPipe(
+            [(2, int(profile_face))], wire)
+        gmsh.model.occ.synchronize()
+
+        # Cleanup — remove the original profile face (recursive, so
+        # its boundary lines/points go too) and the path curves that
+        # live along the volume centroid.
+        if cleanup:
+            try:
+                gmsh.model.occ.remove(
+                    [(2, int(profile_face))], recursive=True)
+            except Exception:
+                pass
+            try:
+                gmsh.model.occ.remove(
+                    [(1, int(t)) for t in path_curves], recursive=False)
+            except Exception:
+                pass
+            gmsh.model.occ.synchronize()
+
+        # Find the new volume and end caps.
+        after_vols = [
+            int(t) for (_d, t) in gmsh.model.getEntities(3)
+            if int(t) not in before_vols
+        ]
+        volume_tag = after_vols[0] if after_vols else None
+
+        # Find the caps by projecting each new surface centroid onto
+        # the path direction and taking the extremes. The "new"
+        # surfaces that are actual end caps will project to approx.
+        # 0 (start) and |end - start| (end); the ruled side surfaces
+        # will project to values in between.
+        TOL = 0.1
+        start_cap = None
+        end_cap   = None
+        path_vec  = end_xyz - start_xyz
+        path_len  = float(np.linalg.norm(path_vec))
+        if path_len > TOL:
+            path_unit = path_vec / path_len
+            cands: list[tuple[float, int]] = []
+            for (d, t) in gmsh.model.getEntities(2):
+                if int(t) in before_surfs:
+                    continue
+                try:
+                    com = np.asarray(
+                        gmsh.model.occ.getCenterOfMass(2, int(t)),
+                        dtype=float)
+                except Exception:
+                    continue
+                proj = float(np.dot(com - start_xyz, path_unit))
+                cands.append((proj, int(t)))
+            if cands:
+                cands.sort()
+                start_cap = cands[0][1]
+                end_cap   = cands[-1][1]
+
+        if volume_tag is not None and label:
+            self._model._register(3, volume_tag, label, 'swept_solid')
+
+        if sync:
+            gmsh.model.occ.synchronize()
+
+        self._model._log(
+            f"sweep(profile={profile_face}, n_path={len(path_curves)}) "
+            f"-> volume={volume_tag}, start_cap={start_cap}, "
+            f"end_cap={end_cap}")
+
+        return {
+            'volume':    volume_tag,
+            'start_cap': start_cap,
+            'end_cap':   end_cap,
+        }
+
     def add_arc(
         self,
         start : Tag,

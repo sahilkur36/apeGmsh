@@ -47,6 +47,7 @@ from apeGmsh.solvers.Constraints import (
     DistributingCouplingDef,
     EmbeddedDef,
     NodeToSurfaceDef,
+    NodeToSurfaceSpringDef,
     TiedContactDef,
     MortarDef,
 )
@@ -61,7 +62,12 @@ _DISPATCH: dict[type, str] = {
     TieDef:                  "_resolve_face_slave",
     DistributingCouplingDef: "_resolve_kinematic",
     EmbeddedDef:             "_resolve_embedded",
+    # Both the constraint- and spring-based variants go through the
+    # same composite-level lookup; the final call to the resolver is
+    # dispatched off ``_RESOLVER_METHOD`` at runtime so the lookup
+    # code is not duplicated.
     NodeToSurfaceDef:        "_resolve_node_to_surface",
+    NodeToSurfaceSpringDef:  "_resolve_node_to_surface",
     TiedContactDef:          "_resolve_face_both",
     MortarDef:               "_resolve_face_both",
 }
@@ -76,6 +82,7 @@ _RESOLVER_METHOD: dict[type, str] = {
     TieDef:                  "resolve_tie",
     DistributingCouplingDef: "resolve_distributing",
     NodeToSurfaceDef:        "resolve_node_to_surface",
+    NodeToSurfaceSpringDef:  "resolve_node_to_surface_spring",
     TiedContactDef:          "resolve_tied_contact",
     MortarDef:               "resolve_mortar",
 }
@@ -222,6 +229,72 @@ class ConstraintsComposite:
         slave_label = ",".join(str(int(t)) for t in s_tags)
 
         return self._add_def(NodeToSurfaceDef(
+            master_label=str(master_tag),
+            slave_label=slave_label,
+            dofs=dofs, tolerance=tolerance,
+            name=display_name))
+
+    def node_to_surface_spring(self, master, slave, *,
+                               dofs=None, tolerance=1e-6,
+                               name=None):
+        """Spring-based variant of :meth:`node_to_surface`.
+
+        Identical topology and call signature, but the master → phantom
+        links are tagged for downstream emission as stiff
+        ``elasticBeamColumn`` elements instead of kinematic
+        ``rigidLink('beam', ...)`` constraints. Use this variant when
+        the master carries **free rotational DOFs** (fork support on a
+        solid end face) that receive direct moment loading — the
+        constraint-based variant of ``node_to_surface`` can produce an
+        ill-conditioned reduced stiffness matrix in that case because
+        the master rotation DOFs get stiffness only through the
+        kinematic constraint back-propagation, with nothing attaching
+        directly to them.
+
+        See :class:`~apeGmsh.solvers.Constraints.NodeToSurfaceSpringDef`
+        for the full rationale.
+
+        Emission in OpenSees::
+
+            # Each master → phantom link becomes a stiff beam element
+            next_eid = max_tet_eid + 1
+            for master, slaves in fem.nodes.constraints.stiff_beam_groups():
+                for phantom in slaves:
+                    ops.element(
+                        'elasticBeamColumn', next_eid,
+                        master, phantom,
+                        A_big, E, I_big, I_big, J_big, transf_tag,
+                    )
+                    next_eid += 1
+
+            # equalDOFs are unchanged from the normal variant
+            for pair in fem.nodes.constraints.equal_dofs():
+                ops.equalDOF(
+                    pair.master_node, pair.slave_node, *pair.dofs)
+
+        Parameters
+        ----------
+        Same as :meth:`node_to_surface`.
+
+        Returns
+        -------
+        NodeToSurfaceSpringDef
+        """
+        from ._helpers import resolve_to_tags
+        m_tags = resolve_to_tags(master, dim=0, session=self._parent)
+        s_tags = resolve_to_tags(slave,  dim=2, session=self._parent)
+        master_tag = m_tags[0]
+
+        if name is None:
+            m_name = str(master) if isinstance(master, str) else str(master_tag)
+            s_name = str(slave) if isinstance(slave, str) else "surface"
+            display_name = f"{m_name} \u2192 {s_name} (spring)"
+        else:
+            display_name = name
+
+        slave_label = ",".join(str(int(t)) for t in s_tags)
+
+        return self._add_def(NodeToSurfaceSpringDef(
             master_label=str(master_tag),
             slave_label=slave_label,
             dofs=dofs, tolerance=tolerance,
@@ -387,7 +460,12 @@ class ConstraintsComposite:
             raise ValueError(
                 f"node_to_surface: surface entities "
                 f"{slave_entity_tags} have no nodes.")
-        return resolver.resolve_node_to_surface(defn, master_node, slave_nodes)
+        # Dispatch to the constraint- or spring-variant resolver via
+        # the _RESOLVER_METHOD table so both def subclasses share this
+        # lookup code.
+        resolver_fn = getattr(
+            resolver, _RESOLVER_METHOD[type(defn)])
+        return resolver_fn(defn, master_node, slave_nodes)
 
     def _resolve_embedded(self, resolver, defn, node_map, face_map, all_nodes):
         raise NotImplementedError("Embedded constraint resolution is not implemented yet.")

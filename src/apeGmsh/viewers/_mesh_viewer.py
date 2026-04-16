@@ -351,19 +351,21 @@ class MeshViewer:
                     except Exception:
                         continue
 
-                    fxyz = np.array(r.forces[:3], dtype=float)
-                    fmag = float(np.linalg.norm(fxyz))
-                    if fmag > 1e-30:
-                        f_positions.append(xyz)
-                        f_dirs.append(fxyz / fmag)
-                        f_mags.append(fmag)
+                    if r.force_xyz is not None:
+                        fxyz = np.array(r.force_xyz, dtype=float)
+                        fmag = float(np.linalg.norm(fxyz))
+                        if fmag > 1e-30:
+                            f_positions.append(xyz)
+                            f_dirs.append(fxyz / fmag)
+                            f_mags.append(fmag)
 
-                    mxyz = np.array(r.forces[3:6], dtype=float)
-                    mmag = float(np.linalg.norm(mxyz))
-                    if mmag > 1e-30:
-                        m_positions.append(xyz)
-                        m_dirs.append(mxyz / mmag)
-                        m_mags.append(mmag)
+                    if r.moment_xyz is not None:
+                        mxyz = np.array(r.moment_xyz, dtype=float)
+                        mmag = float(np.linalg.norm(mxyz))
+                        if mmag > 1e-30:
+                            m_positions.append(xyz)
+                            m_dirs.append(mxyz / mmag)
+                            m_mags.append(mmag)
 
                 color = pattern_color(pat)
 
@@ -521,8 +523,8 @@ class MeshViewer:
             # Phantom nodes (dark grey spheres)
             if (ConstraintKind.NODE_TO_SURFACE in active_kinds
                     and fem.nodes.constraints):
-                pn = fem.nodes.constraints.get_phantom_nodes()
-                if len(pn.ids) > 0:
+                pn = fem.nodes.constraints.phantom_nodes()
+                if len(pn) > 0:
                     pn_coords = pn.coords - origin
                     sphere = pv.Sphere(
                         radius=marker_r * 0.7,

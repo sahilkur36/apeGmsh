@@ -407,7 +407,9 @@ class TestResolveNodeToSurface(unittest.TestCase):
         for rl in rec.rigid_link_records:
             self.assertEqual(rl.kind, "rigid_beam")
             self.assertEqual(rl.master_node, 1)
-            self.assertEqual(rl.dofs, [1, 2, 3, 4, 5, 6])
+            # rigid_beam records carry empty dofs — OpenSees picks
+            # DOFs from the model's ndf at emit time.
+            self.assertEqual(rl.dofs, [])
         for ed in rec.equal_dof_records:
             self.assertEqual(ed.kind, "equal_dof")
             self.assertEqual(ed.dofs, [1, 2, 3])

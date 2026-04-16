@@ -20,7 +20,6 @@ from apeGmsh.solvers.Loads import (
     NodalLoadRecord,
     PointLoadDef,
     SurfaceLoadDef,
-    _pad_force,
 )
 
 
@@ -28,46 +27,25 @@ from apeGmsh.solvers.Loads import (
 # Helpers
 # ---------------------------------------------------------------------
 
-def _resolver(coords_by_tag, ndf=6, elem_tags=None, connectivity=None):
+def _resolver(coords_by_tag, elem_tags=None, connectivity=None):
     tags = np.array(sorted(coords_by_tag), dtype=np.int64)
     coords = np.array([coords_by_tag[int(t)] for t in tags], dtype=float)
     return LoadResolver(
         tags, coords, elem_tags=elem_tags,
-        connectivity=connectivity, ndf=ndf,
+        connectivity=connectivity,
     )
 
 
+def _vec6(rec: NodalLoadRecord) -> np.ndarray:
+    """Flatten a record into a length-6 array for hand comparisons."""
+    out = np.zeros(6, dtype=float)
+    if rec.force_xyz  is not None: out[:3] = rec.force_xyz
+    if rec.moment_xyz is not None: out[3:] = rec.moment_xyz
+    return out
+
+
 def _by_node(records):
-    return {rec.node_id: np.array(rec.forces) for rec in records}
-
-
-# =====================================================================
-# _pad_force (helper)
-# =====================================================================
-
-class TestPadForce(unittest.TestCase):
-
-    def test_force_only(self):
-        self.assertEqual(
-            _pad_force((1.0, 2.0, 3.0), None, ndf=6),
-            (1.0, 2.0, 3.0, 0.0, 0.0, 0.0),
-        )
-
-    def test_moment_only(self):
-        self.assertEqual(
-            _pad_force(None, (0.1, 0.2, 0.3), ndf=6),
-            (0.0, 0.0, 0.0, 0.1, 0.2, 0.3),
-        )
-
-    def test_2d_force_zero_pads_z(self):
-        self.assertEqual(
-            _pad_force((1.0, 2.0), None, ndf=3),
-            (1.0, 2.0, 0.0, 0.0, 0.0, 0.0),
-        )
-
-    def test_moment_on_ndf3_raises(self):
-        with self.assertRaises(ValueError):
-            _pad_force(None, (0.0, 0.0, 5.0), ndf=3)
+    return {rec.node_id: _vec6(rec) for rec in records}
 
 
 # =====================================================================
@@ -88,9 +66,8 @@ class TestResolvePoint(unittest.TestCase):
         for rec in records:
             self.assertIsInstance(rec, NodalLoadRecord)
             self.assertEqual(rec.pattern, "default")
-            self.assertEqual(
-                rec.forces, (10.0, 0.0, -5.0, 0.0, 0.0, 0.0),
-            )
+            self.assertEqual(rec.force_xyz, (10.0, 0.0, -5.0))
+            self.assertIsNone(rec.moment_xyz)
 
     def test_moment_carried_through(self):
         coords = {1: (0, 0, 0)}
@@ -100,7 +77,8 @@ class TestResolvePoint(unittest.TestCase):
             moment_xyz=(0.0, 0.0, 7.5),
         )
         recs = r.resolve_point(defn, {1})
-        self.assertEqual(recs[0].forces, (0, 0, 0, 0, 0, 7.5))
+        self.assertIsNone(recs[0].force_xyz)
+        self.assertEqual(recs[0].moment_xyz, (0.0, 0.0, 7.5))
 
 
 # =====================================================================

@@ -393,6 +393,68 @@ class NodeToSurfaceDef(ConstraintDef):
     tolerance: float = 1e-6
 
 
+@dataclass
+class NodeToSurfaceSpringDef(NodeToSurfaceDef):
+    """
+    Spring-based variant of :class:`NodeToSurfaceDef`.
+
+    Same topology as ``NodeToSurfaceDef`` — a 6-DOF master node is
+    coupled to the 3-DOF nodes of a surface through an intermediate
+    layer of phantom nodes — but the master → phantom link is emitted
+    downstream as a **stiff** ``elasticBeamColumn`` element instead of
+    a kinematic ``rigidLink('beam', …)`` constraint.
+
+    Why this variant exists
+    -----------------------
+    The standard ``NodeToSurfaceDef`` uses rigidLink + equalDOF. That
+    chain works perfectly for most cases — rigid load transfer,
+    prescribed translations at a master, fully-fixed masters — but
+    breaks down when all three of the following are true:
+
+    * The master has **free rotational DOFs** (fork support, free
+      bending rotations at a simply-supported end).
+    * A **moment** is applied directly to those free rotation DOFs.
+    * The slave side is a solid element with ``ndf=3`` (tet4, hex8,
+      …), so the rigid-link constraint back-propagates stiffness to
+      the master rotations only through kinematic coupling — no
+      element attaches directly to ``master.ry`` / ``master.rz``.
+
+    Under those conditions the reduced stiffness matrix becomes
+    ill-conditioned and OpenSees's solver fails with
+    *"numeric analysis returns 1 -- UmfpackGenLinSolver::solve"*.
+
+    The spring variant fixes it by giving the master's rotation DOFs
+    **direct element stiffness**: each master → phantom link becomes
+    a stiff ``elasticBeamColumn`` element whose 6-DOF stiffness matrix
+    contributes terms on the master's rotation diagonal regardless of
+    any constraint handler gymnastics. Conditioning stays good.
+
+    Trade-offs
+    ----------
+    * **Pro** — robust for fork supports + moment loading.
+    * **Pro** — element-level stiffness is directly assembled into K,
+      so no penalty factor to tune.
+    * **Con** — each master → phantom link is now an **element**, so
+      the element count grows by ``n_slaves`` per coupling. For a
+      typical face with ~30 slave nodes this is ~30 extra
+      ``elasticBeamColumn`` elements per ``node_to_surface_spring``
+      call. Negligible in solve time.
+    * **Con** — approximate-rigid rather than truly rigid: the stiff
+      beams have finite stiffness, so there is a tiny compliance in
+      the coupling. Choose the section properties so they are orders
+      of magnitude stiffer than the downstream elements.
+
+    Parameters
+    ----------
+    Inherited from :class:`NodeToSurfaceDef`.
+
+    See Also
+    --------
+    NodeToSurfaceDef : constraint-based variant.
+    """
+    kind: str = field(init=False, default="node_to_surface_spring")
+
+
 # ── Level 4: Surface-to-Surface ──────────────────────────────────────
 
 @dataclass
@@ -1558,6 +1620,9 @@ class ConstraintResolver:
         ])
 
         # -- 3. Rigid beam: master -> phantom --
+        # No dofs list: OpenSees `rigidLink('beam', ...)` picks DOFs
+        # from the model's ndf at emit time. The caller's DOF space is
+        # not known at resolve time and apeGmsh refuses to guess.
         rigid_records = []
         for phantom_tag, slave_tag in zip(phantom_tags, slave_list):
             slave_xyz = self._coords_of(slave_tag)
@@ -1567,7 +1632,6 @@ class ConstraintResolver:
                 name=defn.name,
                 master_node=master_tag,
                 slave_node=phantom_tag,
-                dofs=[1, 2, 3, 4, 5, 6],
                 offset=offset,
             ))
 
@@ -1590,6 +1654,76 @@ class ConstraintResolver:
             phantom_nodes=phantom_tags,
             phantom_coords=phantom_coords,
             rigid_link_records=rigid_records,
+            equal_dof_records=edof_records,
+            dofs=list(dofs),
+        )
+
+    def resolve_node_to_surface_spring(
+        self,
+        defn: "NodeToSurfaceSpringDef",
+        master_tag: int,
+        slave_nodes: set[int],
+    ) -> NodeToSurfaceRecord:
+        """
+        Resolve a spring-variant 6-DOF → 3-DOF surface coupling.
+
+        Identical phantom-node generation and equalDOF records as
+        :meth:`resolve_node_to_surface`. The only difference is that
+        the master → phantom rigid-link records are tagged with
+        ``kind='rigid_beam_stiff'`` so they are routed through
+        ``stiff_beam_groups()`` at emission time (becoming stiff
+        ``elasticBeamColumn`` elements) instead of
+        ``rigid_link_groups()`` (which would emit ``rigidLink`` and
+        hit the ill-conditioning described in
+        :class:`NodeToSurfaceSpringDef`).
+        """
+
+        master_xyz = self._coords_of(master_tag)
+        slave_list = sorted(slave_nodes - {master_tag})
+        dofs = defn.dofs or [1, 2, 3]
+
+        start = self._next_phantom_tag
+        phantom_tags = list(range(start, start + len(slave_list)))
+        self._next_phantom_tag = start + len(slave_list)
+
+        phantom_coords = np.array([
+            self._coords_of(t) for t in slave_list
+        ])
+
+        # Stiff beams: master → phantom. Same structure as the
+        # constraint-based variant but tagged with a distinct kind so
+        # the mesh iterators can route them to the element emission
+        # path.
+        stiff_records = []
+        for phantom_tag, slave_tag in zip(phantom_tags, slave_list):
+            slave_xyz = self._coords_of(slave_tag)
+            offset = slave_xyz - master_xyz
+            stiff_records.append(NodePairRecord(
+                kind="rigid_beam_stiff",
+                name=defn.name,
+                master_node=master_tag,
+                slave_node=phantom_tag,
+                offset=offset,
+            ))
+
+        edof_records = []
+        for phantom_tag, slave_tag in zip(phantom_tags, slave_list):
+            edof_records.append(NodePairRecord(
+                kind="equal_dof",
+                name=defn.name,
+                master_node=phantom_tag,
+                slave_node=slave_tag,
+                dofs=list(dofs),
+            ))
+
+        return NodeToSurfaceRecord(
+            kind="node_to_surface_spring",
+            name=defn.name,
+            master_node=master_tag,
+            slave_nodes=slave_list,
+            phantom_nodes=phantom_tags,
+            phantom_coords=phantom_coords,
+            rigid_link_records=stiff_records,
             equal_dof_records=edof_records,
             dofs=list(dofs),
         )

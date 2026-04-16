@@ -58,26 +58,32 @@ The `object` dtype on IDs is intentional: iterating yields plain Python `int`s, 
 **Selection API** to get subsets by physical group or label:
 
 ```python
-# Bundled — returns a NodeResult(ids, coords) NamedTuple
-ids, coords = fem.nodes.get(pg="Base")           # by physical group
-ids, coords = fem.nodes.get(label="col.web")     # by label
-ids, coords = fem.nodes.get()                    # all domain nodes
+# Bundled — returns a NodeResult that yields (id, xyz) pairs on iteration
+for nid, xyz in fem.nodes.get(pg="Base"):
+    ops.node(nid, *xyz)                          # by physical group
+for nid, xyz in fem.nodes.get(label="col.web"):  # by label
+    ...
+for nid, xyz in fem.nodes.get():                 # all domain nodes
+    ...
 
-# Individual
+# Individual arrays
 ids    = fem.nodes.get_ids(pg="Base")
 coords = fem.nodes.get_coords(pg="Base")
 
 # Shorthand (searches PGs first, then labels)
-ids, coords = fem.nodes.get("Base")
+for nid, xyz in fem.nodes.get("Base"):
+    ...
 ```
 
-The return type `NodeResult` is a `NamedTuple` — destructure it or use it as an object:
+The return type `NodeResult` iterates as `(id, xyz)` pairs and also exposes bulk
+array attributes — pick whichever fits the call site:
 
 ```python
 result = fem.nodes.get(pg="Base")
-result.ids            # ndarray
-result.coords         # ndarray
+result.ids            # ndarray (object dtype — yields Python int on iter)
+result.coords         # ndarray (N, 3) float64
 result.to_dataframe() # pandas DataFrame with [node_id, x, y, z]
+len(result)           # number of nodes
 ```
 
 **Random access** by node ID:
@@ -171,11 +177,11 @@ equal_dof, rigid_beam, rigid_rod, rigid_diaphragm, node_to_surface
 K = fem.nodes.constraints.Kind    # linter-friendly constants
 
 # Create phantom nodes first
-for nid, xyz in fem.nodes.constraints.extra_nodes():
+for nid, xyz in fem.nodes.constraints.phantom_nodes():
     ops.node(nid, *xyz)
 
-# Emit node-pair constraints
-for c in fem.nodes.constraints.node_pairs():
+# Emit node-pair constraints (compound records expanded automatically)
+for c in fem.nodes.constraints.pairs():
     if c.kind == K.RIGID_BEAM:
         ops.rigidLink("beam", c.master_node, c.slave_node)
     elif c.kind == K.EQUAL_DOF:
@@ -206,7 +212,7 @@ from apeGmsh.mesh import ConstraintKind
 # Use:        c.kind == K.RIGID_BEAM     (linter catches typos)
 ```
 
-Compound constraints like `NodeToSurfaceRecord` (which creates phantom nodes + rigid links + equalDOF pairs) live in `fem.nodes.constraints` and are expanded automatically by `.node_pairs()` and `.extra_nodes()`.
+Compound constraints like `NodeToSurfaceRecord` (which creates phantom nodes + rigid links + equalDOF pairs) live in `fem.nodes.constraints` and are expanded automatically by `.pairs()` and `.phantom_nodes()`.
 
 
 ## Loads
@@ -216,8 +222,11 @@ Loads are split by type:
 **Nodal loads** (`fem.nodes.loads`) — point forces on nodes:
 
 ```python
+# 3D frame (ndf=6). Pick the slice matching your model's DOF space.
 for load in fem.nodes.loads:
-    ops.load(load.node_id, *load.forces)
+    fx, fy, fz = load.force_xyz  or (0.0, 0.0, 0.0)
+    mx, my, mz = load.moment_xyz or (0.0, 0.0, 0.0)
+    ops.load(load.node_id, fx, fy, fz, mx, my, mz)
 
 # Pattern grouping
 for pat in fem.nodes.loads.patterns():
@@ -311,11 +320,11 @@ ops.wipe()
 ops.model("basic", "-ndm", 3, "-ndf", 3)
 
 # 1. Domain nodes
-for nid, xyz in zip(*fem.nodes.get()):
+for nid, xyz in fem.nodes.get():
     ops.node(nid, *xyz)
 
 # 2. Phantom nodes from constraints
-for nid, xyz in fem.nodes.constraints.extra_nodes():
+for nid, xyz in fem.nodes.constraints.phantom_nodes():
     ops.node(nid, *xyz)
 
 # 3. Elements
@@ -328,15 +337,17 @@ for nid in fem.nodes.get_ids(pg="Base"):
 
 # 5. Node constraints
 K = fem.nodes.constraints.Kind
-for c in fem.nodes.constraints.node_pairs():
+for c in fem.nodes.constraints.pairs():
     if c.kind == K.EQUAL_DOF:
         ops.equalDOF(c.master_node, c.slave_node, *c.dofs)
 
-# 6. Loads
+# 6. Loads (3D frame, ndf=6)
 ops.timeSeries("Constant", 1)
 ops.pattern("Plain", 1, 1)
 for load in fem.nodes.loads:
-    ops.load(load.node_id, *load.forces)
+    fx, fy, fz = load.force_xyz  or (0.0, 0.0, 0.0)
+    mx, my, mz = load.moment_xyz or (0.0, 0.0, 0.0)
+    ops.load(load.node_id, fx, fy, fz, mx, my, mz)
 
 # 7. Masses
 for m in fem.nodes.masses:
@@ -351,6 +362,6 @@ g.end()
 
 ## The payoff
 
-The broker is the one place in the pipeline where the mesh stops being a live Gmsh conversation and becomes plain data. It is organized by what you, the structural engineer, actually need: **nodes** and **elements**, with named selections and boundary conditions as sub-composites you can reach into. Kind constants prevent typos. NamedTuple returns give you destructuring and DataFrames. Introspection tells you not just what you have, but why.
+The broker is the one place in the pipeline where the mesh stops being a live Gmsh conversation and becomes plain data. It is organized by what you, the structural engineer, actually need: **nodes** and **elements**, with named selections and boundary conditions as sub-composites you can reach into. Kind constants prevent typos. Pair-iterating result objects give you clean one-liners plus array access and DataFrames. Introspection tells you not just what you have, but why.
 
 Plain data is the only thing that ever ports cleanly between tools.

@@ -22,8 +22,8 @@ Construction::
 
 Usage::
 
-    # Domain nodes
-    for nid, xyz in zip(*fem.nodes.get()):
+    # Domain nodes — NodeResult iterates as (node_id, xyz) pairs
+    for nid, xyz in fem.nodes.get():
         ops.node(nid, *xyz)
 
     # Supports
@@ -40,14 +40,14 @@ Usage::
 
     # Constraints
     K = fem.nodes.constraints.Kind
-    for c in fem.nodes.constraints.node_pairs():
+    for c in fem.nodes.constraints.pairs():
         if c.kind == K.RIGID_BEAM:
             ops.rigidLink("beam", c.master_node, c.slave_node)
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy import ndarray
@@ -71,32 +71,66 @@ if TYPE_CHECKING:
 
 
 # =====================================================================
-# Result NamedTuples
+# NodeResult — pair-iterating node view
 # =====================================================================
 
-class NodeResult(NamedTuple):
-    """Bundled node IDs and coordinates.
+class NodeResult:
+    """Iterable pair-view of node IDs and coordinates.
 
-    Destructurable::
+    Iteration yields ``(node_id, xyz)`` pairs — clean one-liner for
+    solver node emission::
 
-        ids, coords = fem.nodes.get(pg="Base")
+        for nid, xyz in fem.nodes.get(pg="Base"):
+            ops.node(nid, *xyz)
 
-    Or use as an object::
+    Array access is still available::
 
         result = fem.nodes.get(pg="Base")
-        result.ids       # ndarray(N,) object dtype
+        result.ids       # ndarray(N,) object dtype — iterates as Python int
         result.coords    # ndarray(N, 3) float64
         result.to_dataframe()
+
+    The ID array uses ``dtype=object`` so iterating yields plain
+    Python ``int`` values, which OpenSees and other C-extension
+    solvers accept without ``int()`` casts.
     """
-    ids:    ndarray
-    coords: ndarray
+
+    __slots__ = ('_ids', '_coords')
+
+    def __init__(self, ids: ndarray, coords: ndarray) -> None:
+        ids_arr = np.asarray(ids)
+        if ids_arr.dtype != object:
+            ids_arr = ids_arr.astype(object)
+        self._ids = ids_arr
+        self._coords = np.asarray(coords, dtype=np.float64)
+
+    @property
+    def ids(self) -> ndarray:
+        return self._ids
+
+    @property
+    def coords(self) -> ndarray:
+        return self._coords
+
+    def __iter__(self):
+        for nid, xyz in zip(self._ids, self._coords):
+            yield nid, xyz
+
+    def __len__(self) -> int:
+        return len(self._ids)
+
+    def __bool__(self) -> bool:
+        return len(self._ids) > 0
+
+    def __repr__(self) -> str:
+        return f"NodeResult({len(self)} nodes)"
 
     def to_dataframe(self) -> "pd.DataFrame":
         import pandas as pd
         return pd.DataFrame(
-            self.coords,
+            self._coords,
             index=pd.Index(
-                [int(x) for x in self.ids], name='node_id'),
+                [int(x) for x in self._ids], name='node_id'),
             columns=['x', 'y', 'z'],
         )
 
@@ -192,7 +226,7 @@ class NodeComposite:
 
     Primary interface::
 
-        fem.nodes.get(pg="Base")    → NodeResult(ids, coords)
+        fem.nodes.get(pg="Base")    → NodeResult (iterable of (id, xyz))
         fem.nodes.get()             → all domain nodes
 
     Sub-composites::
@@ -831,7 +865,7 @@ class InspectComposite:
         _kind_summary(f.nodes.constraints, "Node constraints")
         nc = f.nodes.constraints
         if nc:
-            n_phantom = sum(1 for _ in nc.extra_nodes())
+            n_phantom = len(nc.phantom_nodes())
             if n_phantom:
                 lines.append(
                     f"  {'phantom nodes':24s} {n_phantom:>4d}"

@@ -238,9 +238,9 @@ class ConstraintsTabPanel:
         nc = self._fem.nodes.constraints
         sc = self._fem.elements.constraints
 
-        n_pairs = sum(1 for _ in nc.node_pairs())
+        n_pairs = sum(1 for _ in nc.pairs())
         n_interp = sum(1 for _ in sc.interpolations())
-        n_phantom = sum(1 for _ in nc.extra_nodes())
+        n_phantom = len(nc.phantom_nodes())
 
         self._lbl_node_pairs.setText(str(n_pairs))
         self._lbl_interp.setText(str(n_interp))

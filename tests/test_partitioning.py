@@ -194,9 +194,9 @@ class TestFEMDataPartitions:
         if not fem.partitions:
             pytest.skip("Partitioning did not produce queryable partitions")
         p = fem.partitions[0]
-        ids, coords = fem.nodes.get(partition=p)
-        assert len(ids) > 0
-        assert coords.shape[0] == len(ids)
+        result = fem.nodes.get(partition=p)
+        assert len(result.ids) > 0
+        assert result.coords.shape[0] == len(result.ids)
 
     def test_elements_get_partition(self, g):
         _build_plate(g)
@@ -240,9 +240,9 @@ class TestFEMDataPartitions:
             pytest.skip("PG or partition not available")
         p = fem.partitions[0]
         # Intersection should be <= each set
-        pg_ids, _ = fem.nodes.get(pg="Plate")
-        part_ids, _ = fem.nodes.get(partition=p)
-        both_ids, _ = fem.nodes.get(pg="Plate", partition=p)
+        pg_ids = fem.nodes.get(pg="Plate").ids
+        part_ids = fem.nodes.get(partition=p).ids
+        both_ids = fem.nodes.get(pg="Plate", partition=p).ids
         assert len(both_ids) <= len(pg_ids)
         assert len(both_ids) <= len(part_ids)
         # All intersection IDs should be in both sets
@@ -312,7 +312,7 @@ class TestPhantomNodeNumbering:
         fem = g.mesh.queries.get_fem_data(dim=3)
 
         all_phantom_ids = []
-        for nid, _ in fem.nodes.constraints.extra_nodes():
+        for nid, _ in fem.nodes.constraints.phantom_nodes():
             all_phantom_ids.append(nid)
 
         assert len(all_phantom_ids) > 0, "Expected phantom nodes"
@@ -325,7 +325,7 @@ class TestPhantomNodeNumbering:
         fem = g.mesh.queries.get_fem_data(dim=3)
 
         mesh_ids = set(int(n) for n in fem.nodes.ids)
-        for nid, _ in fem.nodes.constraints.extra_nodes():
+        for nid, _ in fem.nodes.constraints.phantom_nodes():
             assert nid not in mesh_ids, \
                 f"Phantom node {nid} collides with a mesh node"
 

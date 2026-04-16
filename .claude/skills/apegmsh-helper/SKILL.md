@@ -26,7 +26,7 @@ with apeGmsh(model_name="my_model", verbose=True) as g:
     ...
 ```
 
-`g` is an **apeGmsh session** — one `gmsh.initialize()`, one model, and 17
+`g` is an **apeGmsh session** — one `gmsh.initialize()`, one model, and 16
 composite objects as attributes. Each composite owns a focused slice of the
 API. You never call `gmsh.*` directly.
 
@@ -43,6 +43,7 @@ API. You never call `gmsh.*` directly.
 | `g.loads` | Pre-mesh load definitions (5 types, pattern grouping) |
 | `g.masses` | Pre-mesh mass definitions (4 types) |
 | `g.opensees` | OpenSees bridge (materials, elements, ingest, inspect, export) |
+| `g.loader` | `.msh` file loader — build a `FEMData` snapshot from a saved mesh |
 | `g.inspect` | Session diagnostics |
 | `g.plot` | Matplotlib (optional dep) |
 | `g.view` | Gmsh post-processing views |
@@ -71,7 +72,7 @@ The three biggest composites have focused sub-namespaces:
 | `g.mesh.structured` | `set_transfinite_curve/surface/volume`, `recombine` |
 | `g.mesh.editing` | `embed`, `set_periodic`, `remove_duplicate_nodes` |
 | `g.mesh.queries` | `get_nodes`, `get_elements`, `get_fem_data`, `quality_report` |
-| `g.mesh.partitioning` | `partition`, `renumber_mesh` |
+| `g.mesh.partitioning` | `renumber`, `partition`, `unpartition`, `summary` |
 
 **`g.opensees.*`** — solver bridge sub-composites:
 
@@ -98,19 +99,33 @@ fem
   |-- .nodes              NodeComposite
   |     |-- .ids          ndarray(N,) — all node IDs (object dtype, yields Python int)
   |     |-- .coords       ndarray(N, 3) — all coordinates (float64)
-  |     |-- .get(pg=, label=)  → NodeResult(ids, coords) NamedTuple
+  |     |-- .get(pg=, label=)  → NodeResult (iterable of (id, xyz) pairs)
   |     |-- .get_ids(pg=, label=)  → ndarray
   |     |-- .index(nid)   → O(1) array index lookup
   |     |-- .physical     PhysicalGroupSet (solver-facing PGs)
   |     |-- .labels       LabelSet (geometry-time labels)
-  |     |-- .constraints  NodeConstraintSet (equal_dof, rigid, node_to_surface)
+  |     |-- .constraints  NodeConstraintSet — mixes 3 record types:
+  |     |                    NodePairRecord (equal_dof, rigid_beam/rod, penalty)
+  |     |                    NodeGroupRecord (rigid_diaphragm, rigid_body,
+  |     |                                     kinematic_coupling)
+  |     |                    NodeToSurfaceRecord (node_to_surface + phantom nodes)
+  |     |                  Iterators:
+  |     |                    .pairs()             → flat NodePairRecord expansion
+  |     |                                           (compound records auto-expanded)
+  |     |                    .rigid_link_groups() → (master, [slaves])
+  |     |                    .rigid_diaphragms()  → (master, [slaves])
+  |     |                    .equal_dofs()        → NodePairRecord
+  |     |                    .node_to_surfaces()  → raw NodeToSurfaceRecord
   |     |-- .loads        NodalLoadSet (point forces)
   |     +-- .masses       MassSet (lumped nodal masses)
   |
   |-- .elements           ElementComposite
-  |     |-- .ids          ndarray(E,) — all element IDs
-  |     |-- .connectivity ndarray(E, npe) — connectivity
-  |     |-- .get(pg=, label=)  → ElementResult(ids, connectivity) NamedTuple
+  |     |-- .ids          ndarray(E,) — all element IDs concatenated
+  |     |-- .connectivity ndarray(E, npe) — ONLY if mesh is homogeneous
+  |     |                                  (raises TypeError on mixed types)
+  |     |-- .get(pg=, label=)  → GroupResult (iterable of ElementGroup)
+  |     |-- .resolve(pg=, label=, element_type=)
+  |     |                      → flat (ids, connectivity) for single-type selections
   |     |-- .constraints  SurfaceConstraintSet (tie, mortar, tied_contact)
   |     +-- .loads        ElementLoadSet (pressure, body force)
   |
@@ -120,21 +135,36 @@ fem
 
 **Selection API** — get subsets by physical group or label:
 ```python
-ids, coords = fem.nodes.get(pg="Base")           # by PG
-ids, coords = fem.nodes.get(label="col.web")     # by label
-ids, coords = fem.nodes.get("Base")              # shorthand (PG first)
+# NodeResult yields (id, xyz) pairs on iteration — ids are Python ints
+for nid, xyz in fem.nodes.get(pg="Base"):
+    ops.node(nid, *xyz)
+
+# Attribute access for bulk arrays
 result = fem.nodes.get(pg="Base")
-result.to_dataframe()                             # pandas DataFrame
+result.ids              # ndarray (object dtype — yields Python int on iter)
+result.coords           # ndarray (N, 3) float64
+result.to_dataframe()   # pandas DataFrame
 ```
 
-**Kind constants** — no magic strings:
+**Kind constants** — no magic strings (typed as `ClassVar[str]`):
 ```python
-K = fem.nodes.constraints.Kind
-for c in fem.nodes.constraints.node_pairs():
-    if c.kind == K.RIGID_BEAM:
-        ops.rigidLink("beam", c.master_node, c.slave_node)
-    elif c.kind == K.EQUAL_DOF:
-        ops.equalDOF(c.master_node, c.slave_node, *c.dofs)
+K = fem.nodes.constraints.Kind          # ConstraintKind
+K.RIGID_BEAM, K.EQUAL_DOF, K.TIE, ...   # 13 values
+K.NODE_PAIR_KINDS, K.SURFACE_KINDS      # frozensets for routing
+```
+
+**Grouped emission** (preferred over `pairs()` for OpenSees):
+```python
+# Rigid links — accumulated by master across rigid_beam/rod,
+# rigid_diaphragm, rigid_body, kinematic_coupling, and
+# node_to_surface phantom links
+for master, slaves in fem.nodes.constraints.rigid_link_groups():
+    for slave in slaves:
+        ops.rigidLink("beam", master, slave)
+
+# Equal DOFs — flat (direct pairs + expanded node_to_surface)
+for pair in fem.nodes.constraints.equal_dofs():
+    ops.equalDOF(pair.master_node, pair.slave_node, *pair.dofs)
 ```
 
 **Introspection** — what you have and why:
@@ -203,36 +233,76 @@ g.constraints.tie("shell", "beam", master_entities=[(2, face)],
 
 Full catalogue:
 
-| Level | Method | Record type |
-|---|---|---|
-| Node-to-node | `equal_dof`, `rigid_link`, `penalty` | `NodePairRecord` |
-| Node-to-group | `rigid_diaphragm`, `rigid_body`, `kinematic_coupling` | `NodeGroupRecord` |
-| Mixed-DOF | `node_to_surface` | `NodeToSurfaceRecord` (phantom nodes) |
-| Surface | `tie`, `distributing_coupling`, `embedded` | `InterpolationRecord` |
-| Surface-to-surface | `tied_contact`, `mortar` | `SurfaceCouplingRecord` |
+| Level | Method | Record type | Lives on |
+|---|---|---|---|
+| Node-to-node | `equal_dof`, `rigid_link`, `penalty` | `NodePairRecord` | `fem.nodes.constraints` |
+| Node-to-group | `rigid_diaphragm`, `rigid_body`, `kinematic_coupling` | `NodeGroupRecord` | `fem.nodes.constraints` |
+| Mixed-DOF | `node_to_surface` | `NodeToSurfaceRecord` (phantom nodes) | `fem.nodes.constraints` |
+| Surface | `tie`, `distributing_coupling`, `embedded` | `InterpolationRecord` | `fem.elements.constraints` |
+| Surface-to-surface | `tied_contact`, `mortar` | `SurfaceCouplingRecord` | `fem.elements.constraints` |
+
+**`node_to_surface` dedup**: when the slave resolves to multiple surface
+entities (e.g. a PG spanning several faces), one `NodeToSurfaceDef` is
+created aggregating all of them.  Shared-edge mesh nodes are
+deduplicated so each original slave node gets exactly one phantom — no
+double constraints on shared boundaries.  Return type is always a
+single `NodeToSurfaceDef`, never a list.
 
 ### 3.2  Stage 2 — resolution in get_fem_data
 
 Records split into two composites on the broker:
-- **`fem.nodes.constraints`** — node-pair types (equal_dof, rigid, node_to_surface)
-- **`fem.elements.constraints`** — surface types (tie, mortar, tied_contact)
+- **`fem.nodes.constraints`** (`NodeConstraintSet`) — node-pair, node-group,
+  and node_to_surface records
+- **`fem.elements.constraints`** (`SurfaceConstraintSet`) — surface ties,
+  distributing/embedded interpolations, mortar / tied_contact couplings
 
 ```python
-# Phantom nodes first
-for nid, xyz in fem.nodes.constraints.extra_nodes():
+# 1. Phantom nodes first (node_to_surface generates them)
+for nid, xyz in fem.nodes.constraints.phantom_nodes():
     ops.node(nid, *xyz)
 
-# Node-pair constraints
-K = fem.nodes.constraints.Kind
-for c in fem.nodes.constraints.node_pairs():
-    if c.kind == K.EQUAL_DOF:
-        ops.equalDOF(c.master_node, c.slave_node, *c.dofs)
-    elif c.kind == K.RIGID_BEAM:
-        ops.rigidLink("beam", c.master_node, c.slave_node)
+# 2. Rigid links — grouped by master (all rigid kinds merged)
+for master, slaves in fem.nodes.constraints.rigid_link_groups():
+    for slave in slaves:
+        ops.rigidLink("beam", master, slave)
 
-# Surface constraints
+# 3. Equal DOFs — flat pairs (direct + expanded node_to_surface)
+for pair in fem.nodes.constraints.equal_dofs():
+    ops.equalDOF(pair.master_node, pair.slave_node, *pair.dofs)
+
+# 4. OR: rigid diaphragms via the native multi-slave command
+for master, slaves in fem.nodes.constraints.rigid_diaphragms():
+    ops.rigidDiaphragm(3, master, *slaves)
+
+# 5. Surface constraints — interpolations (tie, distributing, embedded)
 for interp in fem.elements.constraints.interpolations():
-    # build MP constraint from weights
+    # interp.slave_node, interp.master_nodes, interp.weights, interp.dofs
+    ...
+# Top-level couplings (mortar, tied_contact)
+for coup in fem.elements.constraints.couplings():
+    ...
+```
+
+For solvers that don't have grouped commands, the flat fallback still
+works — `fem.nodes.constraints.pairs()` expands every record
+(including `NodeGroupRecord` and `NodeToSurfaceRecord`) into individual
+`NodePairRecord` objects, and you can kind-dispatch with
+`K = fem.nodes.constraints.Kind`:
+
+```python
+K = fem.nodes.constraints.Kind
+for c in fem.nodes.constraints.pairs():
+    if c.kind == K.RIGID_BEAM:
+        ops.rigidLink("beam", c.master_node, c.slave_node)
+    elif c.kind == K.EQUAL_DOF:
+        ops.equalDOF(c.master_node, c.slave_node, *c.dofs)
+```
+
+When you need fields that the flattened pairs can't expose (e.g.
+`phantom_coords` on a compound record), reach for the raw accessor:
+
+```python
+for nts in fem.nodes.constraints.node_to_surfaces(): # NodeToSurfaceRecord
     ...
 ```
 
@@ -264,8 +334,12 @@ After get_fem_data(), loads split:
 - **`fem.elements.loads`** — `ElementLoadRecord` (pressure, body force)
 
 ```python
+# 3D frame (ndf=6). Pick the slice matching your model's DOF space —
+# apeGmsh stores spatial vectors only and does not know ndf.
 for load in fem.nodes.loads:
-    ops.load(load.node_id, *load.forces)  # forces = (Fx,Fy,Fz,Mx,My,Mz)
+    fx, fy, fz = load.force_xyz  or (0.0, 0.0, 0.0)
+    mx, my, mz = load.moment_xyz or (0.0, 0.0, 0.0)
+    ops.load(load.node_id, fx, fy, fz, mx, my, mz)
 for eload in fem.elements.loads:
     ops.eleLoad(eload.element_id, eload.load_type, **eload.params)
 ```
@@ -309,18 +383,20 @@ g.opensees.export.tcl("model.tcl").py("model.py")
 ## 6. Viewer
 
 ```python
-# BRep geometry viewer
+# BRep geometry viewer — geometry only (labels, PGs, entities)
 g.model.viewer()
 
-# With FEM overlays (loads, masses, constraints)
-fem = g.mesh.queries.get_fem_data(dim=3)
-g.model.viewer(fem=fem)
-
-# Mesh viewer
+# Mesh viewer — shows the mesh and (optionally) FEM overlays
 g.mesh.viewer()
+fem = g.mesh.queries.get_fem_data(dim=3)
+g.mesh.viewer(fem=fem)        # FEM overlays live on the mesh viewer
 ```
 
-The model viewer shows:
+`g.model.viewer()` is **geometry-only** — it does not accept `fem=`.
+Loads, constraints, and masses are mesh-resolved concepts, so they
+live on `g.mesh.viewer(fem=fem)` instead.
+
+The mesh viewer with `fem=` shows:
 - Load arrows (magnitude-scaled, textbook solid style)
 - Moment curved arrows (270 arc with cone arrowhead)
 - Mass spheres (scaled by mass^1/3, viridis colormap)
@@ -343,8 +419,10 @@ mm models: `tolerance=1e-3`. Metre models: `tolerance=1e-6`.
 CAD files bake tiny per-vertex `lc` values. Global sizing won't
 override unless you disable point sources.
 
-### 7.3  `renumber_mesh(base=1)` before `get_fem_data`
-Gmsh tags are non-contiguous. OpenSees needs dense 1-based IDs. RCM
+### 7.3  `renumber(dim=, base=1)` before `get_fem_data`
+Gmsh tags are non-contiguous. OpenSees needs dense 1-based IDs.
+Call `g.mesh.partitioning.renumber(dim=N, method="rcm", base=1)` —
+`dim` is the element dimension you will later extract. `method="rcm"`
 additionally minimises bandwidth for direct solvers.
 
 ### 7.4  Don't modify FEMData after extraction
@@ -412,7 +490,7 @@ with apeGmsh(model_name="model", verbose=True) as g:
     # Mesh
     g.mesh.sizing.set_global_size(0.5)
     g.mesh.generation.generate(dim=3)
-    g.mesh.partitioning.renumber_mesh(method="rcm", base=1)
+    g.mesh.partitioning.renumber(dim=3, method="rcm", base=1)
 
     # FEM broker
     fem = g.mesh.queries.get_fem_data(dim=3)
@@ -428,8 +506,8 @@ with apeGmsh(model_name="model", verbose=True) as g:
     g.opensees.build()
     g.opensees.export.tcl("model.tcl").py("model.py")
 
-    # Viewer with overlays
-    g.model.viewer(fem=fem)
+    # Viewer with FEM overlays
+    g.mesh.viewer(fem=fem)
 ```
 
 ---

@@ -47,7 +47,7 @@ class ConstraintKind:
     gets autocomplete right where they need it::
 
         K = fem.nodes.constraints.Kind
-        for c in fem.nodes.constraints.node_pairs():
+        for c in fem.nodes.constraints.pairs():
             if c.kind == K.RIGID_BEAM:
                 ops.rigidLink("beam", c.master_node, c.slave_node)
 
@@ -56,6 +56,7 @@ class ConstraintKind:
     """
     EQUAL_DOF:          ClassVar[str] = "equal_dof"
     RIGID_BEAM:         ClassVar[str] = "rigid_beam"
+    RIGID_BEAM_STIFF:   ClassVar[str] = "rigid_beam_stiff"
     RIGID_ROD:          ClassVar[str] = "rigid_rod"
     RIGID_DIAPHRAGM:    ClassVar[str] = "rigid_diaphragm"
     RIGID_BODY:         ClassVar[str] = "rigid_body"
@@ -70,8 +71,9 @@ class ConstraintKind:
 
     # Classification for rendering / routing.
     NODE_PAIR_KINDS: ClassVar[frozenset[str]] = frozenset({
-        "equal_dof", "rigid_beam", "rigid_rod", "rigid_diaphragm",
-        "rigid_body", "kinematic_coupling", "penalty", "node_to_surface",
+        "equal_dof", "rigid_beam", "rigid_beam_stiff", "rigid_rod",
+        "rigid_diaphragm", "rigid_body", "kinematic_coupling",
+        "penalty", "node_to_surface",
     })
     SURFACE_KINDS: ClassVar[frozenset[str]] = frozenset({
         "tie", "distributing", "embedded", "tied_contact", "mortar",
@@ -157,6 +159,42 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
                            phantom nodes)
     =====================  ============================================
 
+    Record tiers: atomic vs compound
+    --------------------------------
+    Records fall into two tiers, and every iterator on this class
+    deterministically returns one tier or the other:
+
+    * **Atomic records** map 1:1 to a solver command.  The only
+      atomic type here is ``NodePairRecord``.
+    * **Compound records** wrap several atomic records and carry
+      side-band data (phantom coordinates, rigid-arm offsets, …)
+      that vanishes the moment they are flattened.  ``NodeGroupRecord``
+      and ``NodeToSurfaceRecord`` are compound.
+
+    Iterator convention:
+
+    =====================================  =========  =================
+    Iterator                               Returns    Expands compound?
+    =====================================  =========  =================
+    ``pairs()``                            atomic     yes (all compound)
+    ``equal_dofs()``                       atomic     yes (NodeToSurface)
+    ``rigid_link_groups()``                atomic+    yes (all rigid)
+    ``rigid_diaphragms()``                 atomic+    no (diaphragm only)
+    ``node_to_surfaces()``                 compound   no
+    ``phantom_nodes()``                    side-band  n/a (NodeResult)
+    direct iter (``for rec in …``)         mixed      no
+    ``by_kind(kind)``                      mixed      no
+    =====================================  =========  =================
+
+    ``atomic+`` = grouped tuples ``(master, [slaves])`` built from
+    atomic pair data — still side-band-free.
+
+    **Rule of thumb.** If you need ``phantom_coords`` or any other
+    compound-only field, iterate the compound accessor
+    (``node_to_surfaces()``, ``phantom_nodes()``, or direct iter).
+    If you just need flat solver commands, use an atomic iterator —
+    compound records are expanded for you automatically.
+
     Common fields
     -------------
     All records have ``kind`` (str) and ``name`` (str | None).
@@ -168,9 +206,8 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
     ::
 
         # 1. Create phantom nodes first (node_to_surface)
-        ids, coords = fem.nodes.constraints.get_phantom_nodes()
-        for nid, xyz in zip(ids, coords):
-            ops.node(int(nid), *xyz)
+        for nid, xyz in fem.nodes.constraints.phantom_nodes():
+            ops.node(nid, *xyz)
 
         # 2. Rigid links — grouped by master (physical hierarchy)
         for master, slaves in fem.nodes.constraints.rigid_link_groups():
@@ -193,20 +230,23 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
     ---------
     ::
 
-        # Raw kind filter — returns list[ConstraintRecord] (base type)
+        # Kind filter — returns list[ConstraintRecord] (base type)
         rigid = fem.nodes.constraints.by_kind(
             fem.nodes.constraints.Kind.RIGID_BEAM)
 
-        # Typed iterators — Pylance knows the exact subclass
-        for pair in fem.nodes.constraints.pairs():        # NodePairRecord
-            ...
-        for group in fem.nodes.constraints.groups():      # NodeGroupRecord
-            ...
-        for nts in fem.nodes.constraints.node_to_surfaces():  # NodeToSurfaceRecord
+        # Flat pair iteration — compound records expanded automatically
+        for pair in fem.nodes.constraints.pairs():
+            # pair is a NodePairRecord from any source (direct pair,
+            # NodeGroupRecord expansion, or NodeToSurfaceRecord expansion)
             ...
 
-        # Expanded pair iteration (compound records flattened)
-        for pair in fem.nodes.constraints.node_pairs():   # NodePairRecord
+        # Raw access to compound records (when you need fields the
+        # flattened pairs can't expose, e.g. phantom_coords)
+        for nts in fem.nodes.constraints.node_to_surfaces():
+            ...
+
+        # Or iterate the set directly for mixed-subclass access
+        for rec in fem.nodes.constraints:
             ...
 
         # Direct indexing
@@ -215,48 +255,19 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
 
     Kind = ConstraintKind
 
-    # ── Typed iterators (Pylance-friendly) ─────────────────
+    # ── Typed iterators ────────────────────────────────────
 
     def pairs(self) -> Iterator["NodePairRecord"]:
-        """Yield only ``NodePairRecord`` instances (raw, not expanded).
-
-        Use this when you need the original pair records without
-        expanding ``NodeGroupRecord`` / ``NodeToSurfaceRecord``.
-        """
-        from apeGmsh.solvers.Constraints import NodePairRecord
-        for rec in self._records:
-            if isinstance(rec, NodePairRecord):
-                yield rec
-
-    def groups(self) -> Iterator["NodeGroupRecord"]:
-        """Yield only ``NodeGroupRecord`` instances.
-
-        These are ``rigid_diaphragm``, ``rigid_body``, and
-        ``kinematic_coupling`` constraints — one master to many slaves.
-        """
-        from apeGmsh.solvers.Constraints import NodeGroupRecord
-        for rec in self._records:
-            if isinstance(rec, NodeGroupRecord):
-                yield rec
-
-    def node_to_surfaces(self) -> Iterator["NodeToSurfaceRecord"]:
-        """Yield only ``NodeToSurfaceRecord`` instances.
-
-        Each record carries the master node, slave surface nodes,
-        and the generated phantom nodes for 6-DOF ↔ 3-DOF coupling.
-        """
-        from apeGmsh.solvers.Constraints import NodeToSurfaceRecord
-        for rec in self._records:
-            if isinstance(rec, NodeToSurfaceRecord):
-                yield rec
-
-    def node_pairs(self) -> Iterator["NodePairRecord"]:
         """Iterate over every constraint as a flat sequence of pairs.
 
         Compound records (``NodeGroupRecord``, ``NodeToSurfaceRecord``)
         are **expanded automatically** into individual
         ``NodePairRecord`` objects — this is the natural emission
         order for solvers like OpenSees.
+
+        For access to the compound records themselves (e.g. to reach
+        ``NodeToSurfaceRecord.phantom_coords``), iterate the set
+        directly or use :meth:`node_to_surfaces`.
         """
         from apeGmsh.solvers.Constraints import (
             NodePairRecord, NodeGroupRecord, NodeToSurfaceRecord,
@@ -269,6 +280,19 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
                 yield from rec.expand_to_pairs()
             elif isinstance(rec, NodeToSurfaceRecord):
                 yield from rec.expand()
+
+    def node_to_surfaces(self) -> Iterator["NodeToSurfaceRecord"]:
+        """Yield only ``NodeToSurfaceRecord`` instances.
+
+        Each record carries the master node, slave surface nodes,
+        and the generated phantom nodes for 6-DOF ↔ 3-DOF coupling.
+        Use this when you need fields that the flattened
+        :meth:`pairs` iterator can't expose (e.g. ``phantom_coords``).
+        """
+        from apeGmsh.solvers.Constraints import NodeToSurfaceRecord
+        for rec in self._records:
+            if isinstance(rec, NodeToSurfaceRecord):
+                yield rec
 
     # ── Solver-ready grouped iterators ──────────────────────
 
@@ -322,9 +346,62 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
                 for sn in rec.slave_nodes:
                     _add(rec.master_node, sn)
             elif isinstance(rec, NodeToSurfaceRecord):
-                # master → each phantom (6-DOF rigid link)
+                # master → each phantom (6-DOF rigid link). Skip pairs
+                # that the spring variant of node_to_surface generated —
+                # those go out through stiff_beam_groups().
                 for pair in rec.rigid_link_records:
-                    _add(pair.master_node, pair.slave_node)
+                    if pair.kind in _RIGID_KINDS:
+                        _add(pair.master_node, pair.slave_node)
+
+        for master, slaves in groups.items():
+            yield master, slaves
+
+    def stiff_beam_groups(
+        self,
+    ) -> Iterator[tuple[int, list[int]]]:
+        """Yield ``(master, [slaves])`` tuples for stiff-beam-link records.
+
+        Used by the spring variant of :meth:`node_to_surface_spring`:
+        instead of OpenSees ``rigidLink('beam', …)`` constraints the
+        emission side uses stiff ``elasticBeamColumn`` elements between
+        the master and each phantom, giving the master rotation DOFs
+        direct element stiffness. This avoids the ill-conditioned
+        reduced stiffness that a pure constraint-based rigid link on
+        an ``ndf=3`` solid face can produce when the master's rotation
+        DOFs are free and directly loaded by a moment.
+
+        Only pair records with ``kind='rigid_beam_stiff'`` are yielded —
+        the regular ``rigid_link_groups()`` iterator skips them.
+
+        ::
+
+            # OpenSees emission for the spring variant
+            for master, slaves in fem.nodes.constraints.stiff_beam_groups():
+                for slave in slaves:
+                    ops.element(
+                        'elasticBeamColumn', next_eid,
+                        master, slave,
+                        A_big, E, I_big, I_big, J_big, transf_tag,
+                    )
+                    next_eid += 1
+        """
+        from apeGmsh.solvers.Constraints import (
+            NodePairRecord, NodeToSurfaceRecord,
+        )
+
+        groups: dict[int, list[int]] = {}
+
+        def _add(master: int, slave: int) -> None:
+            groups.setdefault(int(master), []).append(int(slave))
+
+        for rec in self._records:
+            if isinstance(rec, NodePairRecord):
+                if rec.kind == "rigid_beam_stiff":
+                    _add(rec.master_node, rec.slave_node)
+            elif isinstance(rec, NodeToSurfaceRecord):
+                for pair in rec.rigid_link_records:
+                    if pair.kind == "rigid_beam_stiff":
+                        _add(pair.master_node, pair.slave_node)
 
         for master, slaves in groups.items():
             yield master, slaves
@@ -382,46 +459,47 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
             elif isinstance(rec, NodeToSurfaceRecord):
                 yield from rec.equal_dof_records
 
-    def extra_nodes(self):
-        """Iterate ``(node_id, coords)`` for phantom nodes that solvers
-        must create **before** emitting constraint commands.
+    def phantom_nodes(self):
+        """Phantom nodes that solvers must create **before** emitting
+        constraint commands (created by ``node_to_surface``).
 
-        Yields
-        ------
-        (int, list[float])
-            Node ID and ``[x, y, z]`` coordinates.
-        """
-        from apeGmsh.solvers.Constraints import NodeToSurfaceRecord
+        Returns a :class:`NodeResult` — iterate as ``(node_id, xyz)``
+        pairs for clean solver emission::
 
-        for rec in self._records:
-            if isinstance(rec, NodeToSurfaceRecord):
-                coords = rec.phantom_coords
-                if coords is None:
-                    continue
-                for tag, xyz in zip(rec.phantom_nodes, coords):
-                    yield int(tag), xyz.tolist()
+            for nid, xyz in fem.nodes.constraints.phantom_nodes():
+                ops.node(nid, *xyz)
 
-    def get_phantom_nodes(self):
-        """Return phantom node IDs and coordinates as a ``NodeResult``.
+        Or pull the arrays out::
+
+            pn = fem.nodes.constraints.phantom_nodes()
+            pn.ids       # ndarray(N,) object dtype
+            pn.coords    # ndarray(N, 3) float64
 
         Returns
         -------
         NodeResult
-            ``(ids, coords)`` — destructurable as
-            ``ids, coords = constraints.get_phantom_nodes()``.
-            Empty arrays if no phantom nodes exist.
+            Empty NodeResult if no phantom nodes exist.
         """
         from .FEMData import NodeResult
-        ids_list, coords_list = [], []
-        for nid, xyz in self.extra_nodes():
-            ids_list.append(nid)
-            coords_list.append(xyz)
+        from apeGmsh.solvers.Constraints import NodeToSurfaceRecord
+
+        ids_list: list[int] = []
+        coords_list: list = []
+        for rec in self._records:
+            if not isinstance(rec, NodeToSurfaceRecord):
+                continue
+            coords = rec.phantom_coords
+            if coords is None:
+                continue
+            for tag, xyz in zip(rec.phantom_nodes, coords):
+                ids_list.append(int(tag))
+                coords_list.append(xyz)
         if not ids_list:
             return NodeResult(
-                np.array([], dtype=np.int64),
+                np.array([], dtype=object),
                 np.empty((0, 3), dtype=np.float64))
         return NodeResult(
-            np.array(ids_list, dtype=np.int64),
+            np.array(ids_list, dtype=object),
             np.array(coords_list, dtype=np.float64))
 
     def summary(self) -> "pd.DataFrame":
@@ -477,29 +555,45 @@ class NodalLoadSet(_RecordSetBase["NodalLoadRecord"]):
 
     Each record is a ``NodalLoadRecord`` with:
 
-    - ``node_id``  : int — mesh node ID
-    - ``forces``   : tuple(Fx, Fy, Fz, Mx, My, Mz) — 6-DOF vector
-    - ``pattern``  : str — load pattern name (e.g. ``"default"``)
-    - ``name``     : str | None — optional human label
+    - ``node_id``     : int — mesh node ID
+    - ``force_xyz``   : (Fx, Fy, Fz) tuple or ``None``
+    - ``moment_xyz``  : (Mx, My, Mz) tuple or ``None``
+    - ``pattern``     : str — load pattern name (e.g. ``"default"``)
+    - ``name``        : str | None — optional human label
+
+    The record is DOF-agnostic: both vectors are pure 3D spatial
+    quantities.  Mapping onto the solver's DOF space is the caller's
+    responsibility.
 
     Examples
     --------
     ::
 
-        # Apply all loads in one shot
+        # 3D frame (ndf=6)
         for load in fem.nodes.loads:
-            ops.load(load.node_id, *load.forces)
+            fx, fy, fz = load.force_xyz  or (0.0, 0.0, 0.0)
+            mx, my, mz = load.moment_xyz or (0.0, 0.0, 0.0)
+            ops.load(load.node_id, fx, fy, fz, mx, my, mz)
+
+        # 2D planar frame (ndf=3: ux, uy, rz)
+        for load in fem.nodes.loads:
+            fx, fy, _  = load.force_xyz  or (0.0, 0.0, 0.0)
+            _, _, mz   = load.moment_xyz or (0.0, 0.0, 0.0)
+            ops.load(load.node_id, fx, fy, mz)
+
+        # 3D solid (ndf=3: ux, uy, uz)
+        for load in fem.nodes.loads:
+            fx, fy, fz = load.force_xyz or (0.0, 0.0, 0.0)
+            ops.load(load.node_id, fx, fy, fz)
 
         # Group by pattern (OpenSees timeSeries + pattern)
         for pat in fem.nodes.loads.patterns():
             ops.timeSeries('Linear', tag)
             ops.pattern('Plain', tag, tag)
             for load in fem.nodes.loads.by_pattern(pat):
-                ops.load(load.node_id, *load.forces)
-
-        # Inspect a single record
-        load = fem.nodes.loads[0]
-        print(load.node_id, load.forces)
+                fx, fy, fz = load.force_xyz  or (0.0, 0.0, 0.0)
+                mx, my, mz = load.moment_xyz or (0.0, 0.0, 0.0)
+                ops.load(load.node_id, fx, fy, fz, mx, my, mz)
     """
 
     Kind = LoadKind
@@ -632,6 +726,32 @@ class SurfaceConstraintSet(_RecordSetBase["ConstraintRecord"]):
     ``InterpolationRecord``     ``tie``, ``distributing``, ``embedded``
     ``SurfaceCouplingRecord``   ``tied_contact``, ``mortar``
     ==========================  ======================================
+
+    Record tiers: atomic vs compound
+    --------------------------------
+    Same two-tier convention as ``NodeConstraintSet``:
+
+    * **Atomic** — ``InterpolationRecord`` (one slave ↔ N weighted
+      masters; emission-ready).
+    * **Compound** — ``SurfaceCouplingRecord`` wraps a list of
+      ``InterpolationRecord`` in ``slave_records`` and additionally
+      holds ``mortar_operator`` for the mortar method — that matrix
+      is lost if you flatten the wrapper.
+
+    Iterator convention:
+
+    ==================================  =========  =================
+    Iterator                            Returns    Expands compound?
+    ==================================  =========  =================
+    ``interpolations()``                atomic     yes
+    ``couplings()``                     compound   no
+    direct iter (``for rec in …``)      mixed      no
+    ``by_kind(kind)``                   mixed      no
+    ==================================  =========  =================
+
+    **Rule of thumb.** If you need ``mortar_operator`` or any other
+    compound-only field, iterate ``couplings()``.  Otherwise use
+    ``interpolations()`` — coupling records are walked for you.
 
     Common fields
     -------------

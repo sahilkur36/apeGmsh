@@ -106,12 +106,16 @@ def _remap_connectivity(
 def _build_vtk_cells_from_fem(
     fem: "FEMData",
     primary_dim: int = 2,
+    include_pgs: list | None = None,
 ) -> tuple[ndarray, ndarray, int, dict[int, int]]:
     """Build mixed-type VTK cell arrays from FEMData.
 
     Collects:
     1. Primary-dim elements from ``fem.elements.connectivity``
-    2. Elements from physical groups of *other* dimensions
+    2. Elements from physical groups of *higher* dimension
+    3. Any explicitly-named physical groups in ``include_pgs``
+       (regardless of dimension — used to force lower-dim PGs like
+       standalone frame lines into the viewer mesh).
 
     Parameters
     ----------
@@ -119,6 +123,12 @@ def _build_vtk_cells_from_fem(
     primary_dim : int
         The dimension of the primary connectivity (passed to
         ``get_fem_data(dim=...)``).
+    include_pgs : list, optional
+        Physical groups to include regardless of dimension. Each
+        entry may be a name string or a ``(dim, tag)`` tuple. Use
+        this to add standalone lower-dim element groups (e.g. frame
+        beams inside a solid model) that would otherwise be filtered
+        out to avoid boundary-face z-fighting.
 
     Returns
     -------
@@ -140,8 +150,14 @@ def _build_vtk_cells_from_fem(
     cell_blocks: list[tuple[ndarray, int]] = []   # (conn_0based, vtk_type)
 
     # ── 1.  Primary connectivity (per element-type group) ────────
+    # Only include groups at the primary dim — lower-dim groups would
+    # duplicate the boundary geometry of higher-dim cells and produce
+    # z-fighting in the viewer.
+    n_primary = 0
     for group in fem.elements:
         if group.connectivity.size == 0:
+            continue
+        if group.dim != primary_dim:
             continue
         vtk_type = _DIM_NPE_TO_VTK.get(
             (group.dim, group.npe),
@@ -149,13 +165,16 @@ def _build_vtk_cells_from_fem(
         )
         conn_0 = _remap_connectivity(group.connectivity, tag_to_idx)
         cell_blocks.append((conn_0, vtk_type))
+        n_primary += len(group)
 
-    n_primary = len(fem.elements.ids)
-
-    # ── 2.  Extra elements from physical groups of other dims ────
+    # ── 2.  Extra elements from physical groups of higher dim ────
+    # Lower-dim PGs (e.g. surface PGs in a 3D model) would duplicate
+    # boundary geometry already implied by the primary cells and cause
+    # z-fighting in the viewer — so they are skipped. Add them explicitly
+    # via synthetic cells if you need to visualize them.
     if fem.nodes.physical is not None:
         for pg_dim, pg_tag in fem.nodes.physical.get_all():
-            if pg_dim < 1 or pg_dim == primary_dim:
+            if pg_dim <= primary_dim:
                 continue
             try:
                 pg_elem_ids = fem.nodes.physical.element_ids((pg_dim, pg_tag))
@@ -163,7 +182,6 @@ def _build_vtk_cells_from_fem(
             except (ValueError, KeyError):
                 continue
 
-            # Filter out elements already counted in primary or earlier
             mask = np.array(
                 [int(eid) not in primary_elem_ids for eid in pg_elem_ids],
                 dtype=bool,
@@ -182,6 +200,47 @@ def _build_vtk_cells_from_fem(
             conn_0 = _remap_connectivity(new_conn, tag_to_idx)
             cell_blocks.append((conn_0, vtk_type))
             primary_elem_ids.update(int(e) for e in new_ids)
+
+    # ── 2b. Explicitly requested physical groups (any dim) ───────
+    # Used to add standalone lower-dim element groups — e.g. a frame
+    # line embedded next to a tet4 solid. Unlike step 2 we do NOT
+    # deduplicate against existing elements: the user explicitly
+    # asked for these cells, so we honour the request. Duplicates
+    # here would be the user's responsibility.
+    if include_pgs and fem.nodes.physical is not None:
+        for target in include_pgs:
+            try:
+                pg_elem_ids = fem.nodes.physical.element_ids(target)
+                pg_conn = fem.nodes.physical.connectivity(target)
+            except (ValueError, KeyError):
+                continue
+            if pg_elem_ids is None or pg_conn is None:
+                continue
+            if pg_conn.size == 0:
+                continue
+
+            # Look up (dim, tag) for the VTK type table.
+            pg_dim = None
+            if isinstance(target, tuple) and len(target) == 2:
+                pg_dim = int(target[0])
+            else:
+                # Resolve by name via get_all()
+                for (d, t) in fem.nodes.physical.get_all():
+                    try:
+                        if fem.nodes.physical.get_name(d, t) == target:
+                            pg_dim = d
+                            break
+                    except Exception:
+                        continue
+
+            new_npe = pg_conn.shape[1]
+            vtk_type = _DIM_NPE_TO_VTK.get(
+                (pg_dim, new_npe),
+                _NPE_TO_VTK.get(new_npe, VTK_LINE),
+            )
+
+            conn_0 = _remap_connectivity(pg_conn, tag_to_idx)
+            cell_blocks.append((conn_0, vtk_type))
 
     # ── 3.  Assemble flat VTK cell array ─────────────────────────
     flat_parts: list[ndarray] = []
@@ -367,13 +426,16 @@ class Results:
         cell_data: dict[str, ndarray] | None = None,
         steps: list[dict] | None = None,
         name: str = "results",
+        include_pgs: list | None = None,
     ) -> "Results":
         """Create from a :class:`FEMData` + numpy result arrays.
 
-        Automatically includes elements from **all** physical groups
-        (e.g., 1-D column lines + 2-D slab triangles) to produce a
-        mixed-type VTK grid.  Node-tag connectivity is remapped to
-        0-based indices internally.
+        Automatically includes elements at the primary (highest)
+        dimension and any higher-dim physical groups. Lower-dim PGs
+        are skipped by default to avoid z-fighting with boundary
+        faces of higher-dim cells; pass ``include_pgs`` to force
+        specific lower-dim PGs (e.g. a standalone frame line) into
+        the viewer mesh.
 
         Parameters
         ----------
@@ -391,6 +453,13 @@ class Results:
             Mutually exclusive with ``point_data`` / ``cell_data``.
         name : str
             Display name.
+        include_pgs : list, optional
+            Physical groups to force into the viewer mesh regardless
+            of their dimension. Each entry may be a name string or a
+            ``(dim, tag)`` tuple. Useful for mixed solid+frame models
+            where 1-D beam elements sit disjoint from a 3-D solid and
+            would otherwise be filtered out by the z-fighting guard.
+            Example: ``include_pgs=['pg_frame']``.
         """
         if steps is not None and (point_data or cell_data):
             raise ValueError(
@@ -403,7 +472,11 @@ class Results:
         primary_dim = _guess_primary_dim(fem)
 
         cells_flat, cell_types, n_primary, tag_to_idx = \
-            _build_vtk_cells_from_fem(fem, primary_dim=primary_dim)
+            _build_vtk_cells_from_fem(
+                fem,
+                primary_dim=primary_dim,
+                include_pgs=include_pgs,
+            )
 
         n_total = len(cell_types)
 

@@ -167,7 +167,7 @@ fem
   |-- .nodes              NodeComposite
   |     |-- .ids          All node IDs (ndarray)
   |     |-- .coords       All coordinates (ndarray)
-  |     |-- .get(pg=, label=)  Selection API → NodeResult(ids, coords)
+  |     |-- .get(pg=, label=)  Selection API → NodeResult (iter yields (id, xyz) pairs)
   |     |-- .constraints  Node-pair constraints (equal_dof, rigid, etc.)
   |     |-- .loads        Nodal loads (point forces)
   |     +-- .masses       Lumped nodal masses

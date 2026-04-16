@@ -259,11 +259,11 @@ strings:
 K = fem.nodes.constraints.Kind
 
 # 1. Create phantom nodes first
-for nid, xyz in fem.nodes.constraints.extra_nodes():
+for nid, xyz in fem.nodes.constraints.phantom_nodes():
     ops.node(nid, *xyz)
 
-# 2. Emit node-pair constraints
-for c in fem.nodes.constraints.node_pairs():
+# 2. Emit node-pair constraints (compound records expanded automatically)
+for c in fem.nodes.constraints.pairs():
     if c.kind == K.RIGID_BEAM:
         ops.rigidLink("beam", c.master_node, c.slave_node)
     elif c.kind == K.RIGID_ROD:
@@ -309,7 +309,7 @@ fem.elements.constraints.summary()    # kind, count, n_interpolations
   mismatch automatically.
 - **Prefer `tied_contact` over `mortar`** for practical work — mortar is
   more accurate but harder to debug.
-- **Check `extra_nodes()`** — if you have `node_to_surface` constraints,
+- **Check `phantom_nodes()`** — if you have `node_to_surface` constraints,
   phantom nodes must be created in the solver before emitting constraints.
 - **Set `tolerance` carefully** — too tight and no pairs are found; too
   loose and you couple nodes that shouldn't be coupled.
