@@ -12,6 +12,12 @@ Execution decisions:
   sees the number on every run. No ``assert`` statements (keeps
   notebooks from failing for cosmetic mesh-refinement mismatches).
 * Going all-in on the full 19-slot curriculum.
+* **OpenSees is exercised natively** — notebooks call ``openseespy``
+  directly (``ops.node``, ``ops.element``, ``ops.fix``,
+  ``ops.analyze``, …). apeGmsh is used only for geometry, meshing,
+  physical-group tagging, and the ``FEMData`` broker. The
+  ``g.opensees.*`` composite is intentionally skipped so learners
+  see the solver calls explicitly.
 
 This document is the planning spec for a structured learning path
 through apeGmsh, OpenSees-first. Every example ends with
@@ -67,7 +73,7 @@ closed-form answer.
 
 | # | Title | File | Learns | Features | Analysis | Verify | Prereq |
 |---|---|---|---|---|---|---|---|
-| 01 | Hello Plate | ADAPT `examples/EOS Examples/example_plate_basic.ipynb` | The full apeGmsh pipeline: `g.model` → `g.mesh` → `FEMData` → OpenSees → displacement. | geometry primitives, physical groups, `fix`, nodal load, `g.opensees.ingest`, `ops.analyze("Static")` | static linear | Max displacement within 1% of Timoshenko plate theory or analytical beam strip. | — |
+| 01 | Hello Plate | ADAPT `examples/EOS Examples/example_plate_basic.ipynb` | The full apeGmsh pipeline: `g.model` → `g.mesh` → `FEMData` → OpenSees → displacement. | geometry primitives, physical groups, `fix`, nodal load, direct `ops.*` ingest, `ops.analyze("Static")` | static linear | Max displacement within 1% of Timoshenko plate theory or analytical beam strip. | — |
 | 02 | 2D Cantilever Beam | **NEW** `examples/EOS Examples/02_cantilever_beam_2D.ipynb` | Simplest 1D model with analytical check. | beam geometry, `elasticBeamColumn`, point load at free end, tip displacement | static linear | `δ = PL³/(3EI)` within 0.1%. | 01 |
 | 03 | Simply-Supported Beam | **NEW** `examples/EOS Examples/03_simply_supported_beam.ipynb` | Distributed load + two supports; midspan displacement + moment. | line load, two pin supports, reaction extraction | static linear | `δ_mid = 5wL⁴/(384EI)` and `M_mid = wL²/8`. | 02 |
 | 04 | 2D Portal Frame | **NEW** `examples/EOS Examples/04_portal_frame_2D.ipynb` | First multi-element model; joint moment distribution. | multiple beams, rigid connections, combined loads, reaction + drift | static linear | Hand-calculation via stiffness method; drift within 1%. | 03 |
@@ -85,7 +91,7 @@ know where each concept lives.
 | # | Title | File | Learns | Features | Analysis | Verify | Prereq |
 |---|---|---|---|---|---|---|---|
 | 05 | Labels and Physical Groups | **NEW** `examples/EOS Examples/05_labels_and_pgs.ipynb` | When to use labels (Tier 1) vs PGs (Tier 2); how both feed load/BC targeting. | `g.model.labels.*`, `g.physical.*`, auto-resolution precedence in `g.loads.point(target=)` | static linear | Identical result whether the target is given as a label, a PG, or a raw DimTag list. | 02 |
-| 06 | Section Catalog | ADAPT `examples/moment_curvature_fiber_section.ipynb` + short section-catalog prelude | Fiber sections (concrete + rebar), elastic sections, shell sections; moment-curvature response. | `g.opensees.sections.fiber`, `g.opensees.sections.elastic`, moment-curvature driver | static nonlinear (section only) | Cracked/uncracked stiffness ratio matches hand calc; yield moment within 2%. | 02 |
+| 06 | Section Catalog | ADAPT `examples/moment_curvature_fiber_section.ipynb` + short section-catalog prelude | Fiber sections (concrete + rebar), elastic sections, shell sections; moment-curvature response. | `ops.section`, `ops.patch`, `ops.layer`, `ops.uniaxialMaterial`, moment-curvature driver | static nonlinear (section only) | Cracked/uncracked stiffness ratio matches hand calc; yield moment within 2%. | 02 |
 | 07 | Load Patterns and Combinations | **NEW** `examples/EOS Examples/07_load_patterns.ipynb` | Multiple named patterns (`dead`, `live`, `seismic`), `g.loads.pattern()` context manager, combination at analysis time. | `g.loads.pattern()`, multiple `timeSeries`, `LoadPattern` separation in OpenSees | static linear (superposed) | Pattern-wise displacements sum to the combined result within 1e-10. | 01 |
 | 08 | Boundary Conditions Walkthrough | **NEW** `examples/EOS Examples/08_boundary_conditions.ipynb` | `fix`, `face_sp`, prescribed displacement; homogeneous vs non-homogeneous SPs; when each is correct. | `g.loads.face_sp`, `g.loads.face_load`, `SPRecord`, `fem.nodes.sp` | static linear with prescribed disp | Reaction equals applied prescribed force via FEM work balance. | 03 |
 | 09 | Mesh Sizing and Refinement | ADAPT `examples/example_mesh_selection.ipynb` + **NEW** prepend mesh-refinement section | Sizing fields, boundary layers, transfinite, recombine; convergence study. | `g.mesh.sizing.*`, `g.mesh.field.*`, `g.mesh.structured.*` | static linear | Displacement converges under mesh refinement toward a known reference. | 01 |
@@ -191,8 +197,12 @@ what to expect:
 4. **Mesh** — one or two parameter sweeps, not a convergence study
    (that lives in 09).
 5. **FEM build** — sections, loads, constraints, masses.
-6. **OpenSees ingest + analysis** — `g.opensees.ingest.*` calls,
-   explicit `ops.analyze(...)`.
+6. **OpenSees ingest + analysis** — **native** ``openseespy`` calls
+   (``ops.node``, ``ops.element``, ``ops.fix``, ``ops.load``), driven
+   by ``fem.nodes.get(...)`` / ``fem.elements.get(...)`` iteration
+   over the ``FEMData`` broker. The apeGmsh OpenSees composite
+   (``g.opensees.*``) is **not** used in the curriculum — every
+   notebook shows what the underlying openseespy calls look like.
 7. **Result extraction** — pull the specific number the problem
    statement named, compute error vs the analytical/benchmark
    reference.
