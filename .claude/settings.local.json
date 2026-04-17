@@ -109,7 +109,13 @@
       "Bash(xargs -I {} sh -c 'echo \"=== {} ===\"; head -5 {}')",
       "Bash(grep -c \"^[[:space:]]*def \" /c/Users/nmora/Github/apeGmsh/src/apeGmsh/core/*.py)",
       "Bash(grep -c \"^[[:space:]]*def \" /c/Users/nmora/Github/apeGmsh/src/apeGmsh/mesh/*.py)",
-      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_constraint_resolver.py tests/test_opensees_tie_ingest.py tests/test_partitioning.py -q)"
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_constraint_resolver.py tests/test_opensees_tie_ingest.py tests/test_partitioning.py -q)",
+      "Bash(grep -rn 'rec\\\\.kind\\\\b\\\\|\\\\.kind\\\\b' src/apeGmsh/mesh/_record_set.py src/apeGmsh/solvers/_opensees_*.py src/apeGmsh/viewers/overlays/constraint_overlay.py)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/ -q)",
+      "Bash(git stash *)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -m pytest tests/test_part_anchors.py tests/test_part_autopersist.py -q)",
+      "Bash(/c/Users/nmora/venv/opensees_venv/Scripts/python.exe -c ' *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }

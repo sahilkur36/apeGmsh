@@ -45,6 +45,7 @@ from ._constraint_records import (
     NodeToSurfaceRecord,
     SurfaceCouplingRecord,
 )
+from ._kinds import ConstraintKind
 
 
 class ConstraintResolver:
@@ -207,7 +208,7 @@ class ConstraintResolver:
         dofs = defn.dofs or [1, 2, 3, 4, 5, 6]
         return [
             NodePairRecord(
-                kind="equal_dof",
+                kind=ConstraintKind.EQUAL_DOF,
                 name=defn.name,
                 master_node=mt,
                 slave_node=st,
@@ -243,7 +244,7 @@ class ConstraintResolver:
         master_xyz = self._coords_of(master_tag)
         kind = f"rigid_{defn.link_type}"
 
-        if kind == "rigid_beam":
+        if kind == ConstraintKind.RIGID_BEAM:
             dofs = [1, 2, 3, 4, 5, 6]
         else:
             dofs = [1, 2, 3]
@@ -277,7 +278,7 @@ class ConstraintResolver:
         dofs = defn.dofs or [1, 2, 3, 4, 5, 6]
         return [
             NodePairRecord(
-                kind="penalty",
+                kind=ConstraintKind.PENALTY,
                 name=defn.name,
                 master_node=mt,
                 slave_node=st,
@@ -313,7 +314,7 @@ class ConstraintResolver:
 
         if not plane_nodes:
             return NodeGroupRecord(
-                kind="rigid_diaphragm",
+                kind=ConstraintKind.RIGID_DIAPHRAGM,
                 name=defn.name,
                 dofs=list(defn.constrained_dofs),
             )
@@ -333,7 +334,7 @@ class ConstraintResolver:
         ]) if slave_tags else None
 
         return NodeGroupRecord(
-            kind="rigid_diaphragm",
+            kind=ConstraintKind.RIGID_DIAPHRAGM,
             name=defn.name,
             master_node=master_tag,
             slave_nodes=slave_tags,
@@ -447,7 +448,7 @@ class ConstraintResolver:
                     weights = shape_fn(xi_eta[0], xi_eta[1])
 
                     best_record = InterpolationRecord(
-                        kind="tie",
+                        kind=ConstraintKind.TIE,
                         name=defn.name,
                         slave_node=st,
                         master_nodes=[int(n) for n in fn],
@@ -492,7 +493,7 @@ class ConstraintResolver:
             weights = w / w.sum()
 
         return InterpolationRecord(
-            kind="distributing",
+            kind=ConstraintKind.DISTRIBUTING,
             name=defn.name,
             slave_node=master_tag,        # "slave" is the ref point here
             master_nodes=slave_list,       # "masters" are the surface nodes
@@ -541,7 +542,7 @@ class ConstraintResolver:
 
         all_records = fwd_records + bwd_records
         return SurfaceCouplingRecord(
-            kind="tied_contact",
+            kind=ConstraintKind.TIED_CONTACT,
             name=defn.name,
             slave_records=all_records,
             master_nodes=sorted(master_nodes),
@@ -606,7 +607,7 @@ class ConstraintResolver:
                             B[si * nd + d, mi * nd + d] = w[j]
 
         return SurfaceCouplingRecord(
-            kind="mortar",
+            kind=ConstraintKind.MORTAR,
             name=defn.name,
             slave_records=tied_result.slave_records,
             mortar_operator=B,
@@ -669,7 +670,7 @@ class ConstraintResolver:
             slave_xyz = self._coords_of(slave_tag)
             offset = slave_xyz - master_xyz
             rigid_records.append(NodePairRecord(
-                kind="rigid_beam",
+                kind=ConstraintKind.RIGID_BEAM,
                 name=defn.name,
                 master_node=master_tag,
                 slave_node=phantom_tag,
@@ -680,7 +681,7 @@ class ConstraintResolver:
         edof_records = []
         for phantom_tag, slave_tag in zip(phantom_tags, slave_list):
             edof_records.append(NodePairRecord(
-                kind="equal_dof",
+                kind=ConstraintKind.EQUAL_DOF,
                 name=defn.name,
                 master_node=phantom_tag,
                 slave_node=slave_tag,
@@ -688,7 +689,7 @@ class ConstraintResolver:
             ))
 
         return NodeToSurfaceRecord(
-            kind="node_to_surface",
+            kind=ConstraintKind.NODE_TO_SURFACE,
             name=defn.name,
             master_node=master_tag,
             slave_nodes=slave_list,
@@ -740,7 +741,7 @@ class ConstraintResolver:
             slave_xyz = self._coords_of(slave_tag)
             offset = slave_xyz - master_xyz
             stiff_records.append(NodePairRecord(
-                kind="rigid_beam_stiff",
+                kind=ConstraintKind.RIGID_BEAM_STIFF,
                 name=defn.name,
                 master_node=master_tag,
                 slave_node=phantom_tag,
@@ -750,7 +751,7 @@ class ConstraintResolver:
         edof_records = []
         for phantom_tag, slave_tag in zip(phantom_tags, slave_list):
             edof_records.append(NodePairRecord(
-                kind="equal_dof",
+                kind=ConstraintKind.EQUAL_DOF,
                 name=defn.name,
                 master_node=phantom_tag,
                 slave_node=slave_tag,
@@ -758,7 +759,7 @@ class ConstraintResolver:
             ))
 
         return NodeToSurfaceRecord(
-            kind="node_to_surface_spring",
+            kind=ConstraintKind.NODE_TO_SURFACE_SPRING,
             name=defn.name,
             master_node=master_tag,
             slave_nodes=slave_list,

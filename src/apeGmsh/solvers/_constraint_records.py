@@ -18,6 +18,8 @@ from dataclasses import dataclass, field
 import numpy as np
 from numpy import ndarray
 
+from ._kinds import ConstraintKind
+
 
 @dataclass
 class ConstraintRecord:
@@ -78,12 +80,12 @@ class NodePairRecord(ConstraintRecord):
         n = len(self.dofs)
         C = np.zeros((n, ndof))
 
-        if self.kind == "equal_dof" or self.kind == "penalty":
+        if self.kind in (ConstraintKind.EQUAL_DOF, ConstraintKind.PENALTY):
             # u_slave_i = u_master_i
             for row, dof in enumerate(self.dofs):
                 C[row, dof - 1] = 1.0
 
-        elif self.kind in ("rigid_beam", "rigid_rod"):
+        elif self.kind in (ConstraintKind.RIGID_BEAM, ConstraintKind.RIGID_ROD):
             # u_s = u_m + θ_m × r
             #
             # In matrix form for translations (DOFs 1-3):
@@ -110,7 +112,7 @@ class NodePairRecord(ConstraintRecord):
                     # Translation: u_s_i = u_m_i + (skew · θ_m)_i
                     C[row, idx] = 1.0                   # I term
                     C[row, 3:6] = -skew[idx, :]         # -[r×] · θ_m
-                elif idx < 6 and self.kind == "rigid_beam":
+                elif idx < 6 and self.kind == ConstraintKind.RIGID_BEAM:
                     # Rotation (beam only): θ_s = θ_m
                     C[row, idx] = 1.0
 
@@ -154,12 +156,12 @@ class NodeGroupRecord(ConstraintRecord):
         pairs = []
         for i, sn in enumerate(self.slave_nodes):
             offset = self.offsets[i] if self.offsets is not None else None
-            if self.kind == "rigid_diaphragm":
-                pair_kind = "rigid_beam"
-            elif self.kind == "rigid_body":
-                pair_kind = "rigid_beam"
+            if self.kind == ConstraintKind.RIGID_DIAPHRAGM:
+                pair_kind = ConstraintKind.RIGID_BEAM
+            elif self.kind == ConstraintKind.RIGID_BODY:
+                pair_kind = ConstraintKind.RIGID_BEAM
             else:
-                pair_kind = "kinematic_coupling"
+                pair_kind = ConstraintKind.KINEMATIC_COUPLING
 
             pairs.append(NodePairRecord(
                 kind=pair_kind,

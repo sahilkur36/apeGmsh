@@ -20,9 +20,13 @@ for linter-friendly kind comparisons (no magic strings).
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, ClassVar, Generic, Iterator, TypeVar
+from typing import TYPE_CHECKING, Generic, Iterator, TypeVar
 
 import numpy as np
+
+# Re-exported so callers that historically imported ConstraintKind/LoadKind
+# from this module keep working; canonical home is apeGmsh.solvers._kinds.
+from apeGmsh.solvers._kinds import ConstraintKind, LoadKind  # noqa: F401
 
 _R = TypeVar('_R')
 
@@ -34,61 +38,6 @@ if TYPE_CHECKING:
     )
     from apeGmsh.solvers.Loads import NodalLoadRecord, ElementLoadRecord, SPRecord  # noqa: F401
     from apeGmsh.solvers.Masses import MassRecord  # noqa: F401
-
-
-# =====================================================================
-# Kind constants — linter-friendly, autocomplete-friendly
-# =====================================================================
-
-class ConstraintKind:
-    """String constants for constraint record ``kind`` values.
-
-    Exposed as ``Kind`` on each constraint sub-composite so the user
-    gets autocomplete right where they need it::
-
-        K = fem.nodes.constraints.Kind
-        for c in fem.nodes.constraints.pairs():
-            if c.kind == K.RIGID_BEAM:
-                ops.rigidLink("beam", c.master_node, c.slave_node)
-
-    The constants are typed as ``ClassVar[str]`` so Pylance/mypy
-    recognise them as static attributes (not instance fields).
-    """
-    EQUAL_DOF:          ClassVar[str] = "equal_dof"
-    RIGID_BEAM:         ClassVar[str] = "rigid_beam"
-    RIGID_BEAM_STIFF:   ClassVar[str] = "rigid_beam_stiff"
-    RIGID_ROD:          ClassVar[str] = "rigid_rod"
-    RIGID_DIAPHRAGM:    ClassVar[str] = "rigid_diaphragm"
-    RIGID_BODY:         ClassVar[str] = "rigid_body"
-    KINEMATIC_COUPLING: ClassVar[str] = "kinematic_coupling"
-    PENALTY:            ClassVar[str] = "penalty"
-    NODE_TO_SURFACE:    ClassVar[str] = "node_to_surface"
-    TIE:                ClassVar[str] = "tie"
-    DISTRIBUTING:       ClassVar[str] = "distributing"
-    EMBEDDED:           ClassVar[str] = "embedded"
-    TIED_CONTACT:       ClassVar[str] = "tied_contact"
-    MORTAR:             ClassVar[str] = "mortar"
-
-    # Classification for rendering / routing.
-    NODE_PAIR_KINDS: ClassVar[frozenset[str]] = frozenset({
-        "equal_dof", "rigid_beam", "rigid_beam_stiff", "rigid_rod",
-        "rigid_diaphragm", "rigid_body", "kinematic_coupling",
-        "penalty", "node_to_surface",
-    })
-    SURFACE_KINDS: ClassVar[frozenset[str]] = frozenset({
-        "tie", "distributing", "embedded", "tied_contact", "mortar",
-    })
-
-
-class LoadKind:
-    """String constants for load record ``kind`` values.
-
-    Exposed as ``Kind`` on each load sub-composite::
-
-        K = fem.nodes.loads.Kind
-    """
-    NODAL:   ClassVar[str] = "nodal"
-    ELEMENT: ClassVar[str] = "element"
 
 
 # =====================================================================
@@ -335,7 +284,7 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
         def _add(master: int, slave: int) -> None:
             groups.setdefault(int(master), []).append(int(slave))
 
-        _RIGID_KINDS = {"rigid_beam", "rigid_rod"}
+        _RIGID_KINDS = {ConstraintKind.RIGID_BEAM, ConstraintKind.RIGID_ROD}
 
         for rec in self._records:
             if isinstance(rec, NodePairRecord):
@@ -396,11 +345,11 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
 
         for rec in self._records:
             if isinstance(rec, NodePairRecord):
-                if rec.kind == "rigid_beam_stiff":
+                if rec.kind == ConstraintKind.RIGID_BEAM_STIFF:
                     _add(rec.master_node, rec.slave_node)
             elif isinstance(rec, NodeToSurfaceRecord):
                 for pair in rec.rigid_link_records:
-                    if pair.kind == "rigid_beam_stiff":
+                    if pair.kind == ConstraintKind.RIGID_BEAM_STIFF:
                         _add(pair.master_node, pair.slave_node)
 
         for master, slaves in groups.items():
@@ -425,7 +374,7 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
 
         for rec in self._records:
             if (isinstance(rec, NodeGroupRecord)
-                    and rec.kind == "rigid_diaphragm"):
+                    and rec.kind == ConstraintKind.RIGID_DIAPHRAGM):
                 yield int(rec.master_node), [
                     int(s) for s in rec.slave_nodes]
 
@@ -454,7 +403,7 @@ class NodeConstraintSet(_RecordSetBase["ConstraintRecord"]):
 
         for rec in self._records:
             if (isinstance(rec, NodePairRecord)
-                    and rec.kind == "equal_dof"):
+                    and rec.kind == ConstraintKind.EQUAL_DOF):
                 yield rec
             elif isinstance(rec, NodeToSurfaceRecord):
                 yield from rec.equal_dof_records
