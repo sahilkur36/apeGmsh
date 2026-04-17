@@ -48,6 +48,7 @@
 # ## 1. Imports and parameters
 
 # %%
+import gmsh
 import numpy as np
 import openseespy.opensees as ops
 
@@ -148,7 +149,6 @@ for nid, xyz in fem.nodes.get():
 ops.geomTransf("Linear", 1, 0.0, 1.0, 0.0)
 
 # Elements per part (pattern reused from slot 10)
-import gmsh
 def line_elements_of(inst):
     out = []
     for tag in inst.entities.get(1, []):

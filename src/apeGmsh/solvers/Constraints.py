@@ -103,7 +103,7 @@ from ._constraint_defs import (
     TieDef,
     TiedContactDef,
 )
-from ._constraint_geom import (
+from ._constraint_geom import (  # noqa: F401  (intentional re-exports of private helpers that callers used to import from this module pre-split)
     SHAPE_FUNCTIONS,
     _SpatialIndex,
     _is_inside_parametric,

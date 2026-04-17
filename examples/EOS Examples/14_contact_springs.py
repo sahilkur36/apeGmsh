@@ -54,7 +54,6 @@
 # ## 1. Imports and parameters
 
 # %%
-import numpy as np
 import gmsh
 import openseespy.opensees as ops
 

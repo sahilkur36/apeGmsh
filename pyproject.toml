@@ -58,3 +58,13 @@ ignore_missing_imports = true
 module = "apeGmshViewer.*"
 follow_imports = "skip"
 ignore_errors = true
+
+# ─────────────────────────────────────────────────────────────────────
+# ruff: the curriculum notebooks under ``examples/EOS Examples/`` use
+# compact single-line OpenSees analysis recipes (``ops.system(...);
+# ops.numberer(...); ops.constraints(...)``) as a pedagogical pattern
+# borrowed from the OpenSees community's tutorials. Silence E702 for
+# those files only — library code stays strict.
+# ─────────────────────────────────────────────────────────────────────
+[tool.ruff.lint.per-file-ignores]
+"examples/EOS Examples/*.py" = ["E702"]

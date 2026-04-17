@@ -64,8 +64,8 @@ E  = 2.0e11     # Pa
 nu = 0.3
 
 # --- Analytical reference (Euler-Bernoulli) ---
-I = t * h**3 / 12.0
-delta_EB = -V * L**3 / (3.0 * E * I)
+I_strip = t * h**3 / 12.0
+delta_EB = -V * L**3 / (3.0 * E * I_strip)
 
 
 # %% [markdown]

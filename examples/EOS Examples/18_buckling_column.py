@@ -55,11 +55,11 @@ E = 2.1e11
 nu = 0.3
 G = E / (2 * (1 + nu))
 A  = 1.0e-3
-I  = 1.0e-5                 # same for both bending axes
+Isec = 1.0e-5                 # same for both bending axes
 J  = 2.0e-5
 
 # Analytical Euler
-P_cr_analytical = np.pi**2 * E * I / L**2
+P_cr_analytical = np.pi**2 * E * Isec / L**2
 
 # Imperfection — a small lateral offset at mid-height (sinusoidal)
 # so we activate the first bending mode. delta_0 / L ~ 1/500 is
@@ -126,7 +126,7 @@ for group in fem.elements.get(target="column"):
     for eid, nodes in zip(group.ids, group.connectivity):
         ops.element("elasticBeamColumn", int(eid),
                     int(nodes[0]), int(nodes[1]),
-                    A, E, G, J, I, I, 1)
+                    A, E, G, J, Isec, Isec, 1)
 
 # Pin at bottom (fix ux, uy, uz; allow all rotations),
 # roller at top (fix ux, uy; allow uz, rotations).

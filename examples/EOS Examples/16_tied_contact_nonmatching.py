@@ -163,7 +163,7 @@ interp_records = list(fem.elements.constraints.interpolations())
 print(f"InterpolationRecords resolved: {len(interp_records)}")
 if interp_records:
     r = interp_records[0]
-    print(f"first record:")
+    print("first record:")
     print(f"  slave_node     : {r.slave_node}")
     print(f"  master_nodes   : {list(r.master_nodes)}")
     print(f"  weights        : {list(np.round(r.weights, 4)) if r.weights is not None else None}")

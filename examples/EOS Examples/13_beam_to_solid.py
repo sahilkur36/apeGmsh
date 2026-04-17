@@ -54,7 +54,6 @@
 # ## 1. Imports and parameters
 
 # %%
-import numpy as np
 import gmsh
 import openseespy.opensees as ops
 
@@ -167,7 +166,7 @@ print(f"mesh: {fem.info.n_nodes} nodes, {fem.info.n_elems} elements")
 
 # %%
 for rec in fem.nodes.constraints.node_to_surfaces():
-    print(f"node_to_surface record:")
+    print("node_to_surface record:")
     print(f"  master         : {rec.master_node}")
     print(f"  slave_nodes    : {len(rec.slave_nodes)}  (top-face mesh nodes)")
     print(f"  phantom_nodes  : {len(rec.phantom_nodes)}")
