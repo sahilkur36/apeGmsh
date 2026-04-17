@@ -1,6 +1,17 @@
 # apeGmsh Learning Curriculum
 
-**Status: DRAFT — awaiting user review before execution.**
+**Status: APPROVED — in execution.**
+
+Execution decisions:
+
+* Notebooks live alongside the existing EOS examples in
+  `examples/EOS Examples/`, numbered with a `NN_` prefix so they sort
+  together at the top of the directory listing.
+* Verification is **printed inline** — each notebook ends with a cell
+  that shows ``FEM result  | Analytical  | Error %`` so the learner
+  sees the number on every run. No ``assert`` statements (keeps
+  notebooks from failing for cosmetic mesh-refinement mismatches).
+* Going all-in on the full 19-slot curriculum.
 
 This document is the planning spec for a structured learning path
 through apeGmsh, OpenSees-first. Every example ends with
@@ -36,7 +47,7 @@ Each row in a tier table has:
 |---|---|
 | **#** | Curriculum ordinal (01..19). |
 | **Title** | Short descriptive name (what the learner sees in the README). |
-| **File** | Notebook path. Prefix: `NEW` = to be written from scratch. `ADAPT` = existing notebook is a starting point; verify + fix stale APIs + save under `examples/curriculum/`. `REVIEW` = existing file likely fits but I need to read it before confirming the classification. No "reuse as-is" column — every existing notebook is treated as a draft. |
+| **File** | Notebook path. Prefix: `NEW` = to be written from scratch. `ADAPT` = existing notebook is a starting point; verify + fix stale APIs + save under `examples/EOS Examples/`. `REVIEW` = existing file likely fits but I need to read it before confirming the classification. No "reuse as-is" column — every existing notebook is treated as a draft. |
 | **Learns** | Single-sentence learning objective. |
 | **Features** | apeGmsh features introduced (comma-separated). |
 | **Analysis** | OpenSees analysis type (static / eigen / static_nonlinear / transient). |
@@ -57,9 +68,9 @@ closed-form answer.
 | # | Title | File | Learns | Features | Analysis | Verify | Prereq |
 |---|---|---|---|---|---|---|---|
 | 01 | Hello Plate | ADAPT `examples/EOS Examples/example_plate_basic.ipynb` | The full apeGmsh pipeline: `g.model` → `g.mesh` → `FEMData` → OpenSees → displacement. | geometry primitives, physical groups, `fix`, nodal load, `g.opensees.ingest`, `ops.analyze("Static")` | static linear | Max displacement within 1% of Timoshenko plate theory or analytical beam strip. | — |
-| 02 | 2D Cantilever Beam | **NEW** `examples/curriculum/02_cantilever_beam_2D.ipynb` | Simplest 1D model with analytical check. | beam geometry, `elasticBeamColumn`, point load at free end, tip displacement | static linear | `δ = PL³/(3EI)` within 0.1%. | 01 |
-| 03 | Simply-Supported Beam | **NEW** `examples/curriculum/03_simply_supported_beam.ipynb` | Distributed load + two supports; midspan displacement + moment. | line load, two pin supports, reaction extraction | static linear | `δ_mid = 5wL⁴/(384EI)` and `M_mid = wL²/8`. | 02 |
-| 04 | 2D Portal Frame | **NEW** `examples/curriculum/04_portal_frame_2D.ipynb` | First multi-element model; joint moment distribution. | multiple beams, rigid connections, combined loads, reaction + drift | static linear | Hand-calculation via stiffness method; drift within 1%. | 03 |
+| 02 | 2D Cantilever Beam | **NEW** `examples/EOS Examples/02_cantilever_beam_2D.ipynb` | Simplest 1D model with analytical check. | beam geometry, `elasticBeamColumn`, point load at free end, tip displacement | static linear | `δ = PL³/(3EI)` within 0.1%. | 01 |
+| 03 | Simply-Supported Beam | **NEW** `examples/EOS Examples/03_simply_supported_beam.ipynb` | Distributed load + two supports; midspan displacement + moment. | line load, two pin supports, reaction extraction | static linear | `δ_mid = 5wL⁴/(384EI)` and `M_mid = wL²/8`. | 02 |
+| 04 | 2D Portal Frame | **NEW** `examples/EOS Examples/04_portal_frame_2D.ipynb` | First multi-element model; joint moment distribution. | multiple beams, rigid connections, combined loads, reaction + drift | static linear | Hand-calculation via stiffness method; drift within 1%. | 03 |
 
 **Tier 1 gaps to write:** 3 notebooks (02, 03, 04).
 
@@ -73,10 +84,10 @@ know where each concept lives.
 
 | # | Title | File | Learns | Features | Analysis | Verify | Prereq |
 |---|---|---|---|---|---|---|---|
-| 05 | Labels and Physical Groups | **NEW** `examples/curriculum/05_labels_and_pgs.ipynb` | When to use labels (Tier 1) vs PGs (Tier 2); how both feed load/BC targeting. | `g.model.labels.*`, `g.physical.*`, auto-resolution precedence in `g.loads.point(target=)` | static linear | Identical result whether the target is given as a label, a PG, or a raw DimTag list. | 02 |
+| 05 | Labels and Physical Groups | **NEW** `examples/EOS Examples/05_labels_and_pgs.ipynb` | When to use labels (Tier 1) vs PGs (Tier 2); how both feed load/BC targeting. | `g.model.labels.*`, `g.physical.*`, auto-resolution precedence in `g.loads.point(target=)` | static linear | Identical result whether the target is given as a label, a PG, or a raw DimTag list. | 02 |
 | 06 | Section Catalog | ADAPT `examples/moment_curvature_fiber_section.ipynb` + short section-catalog prelude | Fiber sections (concrete + rebar), elastic sections, shell sections; moment-curvature response. | `g.opensees.sections.fiber`, `g.opensees.sections.elastic`, moment-curvature driver | static nonlinear (section only) | Cracked/uncracked stiffness ratio matches hand calc; yield moment within 2%. | 02 |
-| 07 | Load Patterns and Combinations | **NEW** `examples/curriculum/07_load_patterns.ipynb` | Multiple named patterns (`dead`, `live`, `seismic`), `g.loads.pattern()` context manager, combination at analysis time. | `g.loads.pattern()`, multiple `timeSeries`, `LoadPattern` separation in OpenSees | static linear (superposed) | Pattern-wise displacements sum to the combined result within 1e-10. | 01 |
-| 08 | Boundary Conditions Walkthrough | **NEW** `examples/curriculum/08_boundary_conditions.ipynb` | `fix`, `face_sp`, prescribed displacement; homogeneous vs non-homogeneous SPs; when each is correct. | `g.loads.face_sp`, `g.loads.face_load`, `SPRecord`, `fem.nodes.sp` | static linear with prescribed disp | Reaction equals applied prescribed force via FEM work balance. | 03 |
+| 07 | Load Patterns and Combinations | **NEW** `examples/EOS Examples/07_load_patterns.ipynb` | Multiple named patterns (`dead`, `live`, `seismic`), `g.loads.pattern()` context manager, combination at analysis time. | `g.loads.pattern()`, multiple `timeSeries`, `LoadPattern` separation in OpenSees | static linear (superposed) | Pattern-wise displacements sum to the combined result within 1e-10. | 01 |
+| 08 | Boundary Conditions Walkthrough | **NEW** `examples/EOS Examples/08_boundary_conditions.ipynb` | `fix`, `face_sp`, prescribed displacement; homogeneous vs non-homogeneous SPs; when each is correct. | `g.loads.face_sp`, `g.loads.face_load`, `SPRecord`, `fem.nodes.sp` | static linear with prescribed disp | Reaction equals applied prescribed force via FEM work balance. | 03 |
 | 09 | Mesh Sizing and Refinement | ADAPT `examples/example_mesh_selection.ipynb` + **NEW** prepend mesh-refinement section | Sizing fields, boundary layers, transfinite, recombine; convergence study. | `g.mesh.sizing.*`, `g.mesh.field.*`, `g.mesh.structured.*` | static linear | Displacement converges under mesh refinement toward a known reference. | 01 |
 
 **Tier 2 gaps to write:** 3 fully new (05, 07, 08) + 2 partially new (06 prelude, 09 prepend).
@@ -90,9 +101,9 @@ boolean operations safely, and tie conformal interfaces.
 
 | # | Title | File | Learns | Features | Analysis | Verify | Prereq |
 |---|---|---|---|---|---|---|---|
-| 10 | Parts Basics | **NEW** `examples/curriculum/10_parts_basics.ipynb` | Register parts with `g.parts.register()`, place multiple instances, identify entities by `(part, dim, tag)`. | `g.parts.register`, instances, `g.parts.from_model`, part labels as load/BC targets | static linear | Reactions equal to sum over instance contributions. | 04 |
+| 10 | Parts Basics | **NEW** `examples/EOS Examples/10_parts_basics.ipynb` | Register parts with `g.parts.register()`, place multiple instances, identify entities by `(part, dim, tag)`. | `g.parts.register`, instances, `g.parts.from_model`, part labels as load/BC targets | static linear | Reactions equal to sum over instance contributions. | 04 |
 | 11 | Boolean Operations in Assemblies | REVIEW `examples/example_gusset.ipynb` — does it use `g.model.boolean` with parts? If not, **NEW**. | `fuse`, `cut`, `fragment` applied to imported CAD, staying part-aware. | `g.model.io.load_step`, `g.model.boolean.*`, `g.parts.fragment_all` | static linear | Assembled geometry passes `make_conformal` without orphans. | 10 |
-| 12 | Interfaces via Tie | **NEW** `examples/curriculum/12_interfaces_via_tie.ipynb` | Two parts meshed separately, tied at a shared surface; the `tie` constraint resolver in action. | `g.constraints.tie`, `InterpolationRecord`, shape-function weights | static linear | Displacement continuity across the interface within mesh-size tolerance. | 10 |
+| 12 | Interfaces via Tie | **NEW** `examples/EOS Examples/12_interfaces_via_tie.ipynb` | Two parts meshed separately, tied at a shared surface; the `tie` constraint resolver in action. | `g.constraints.tie`, `InterpolationRecord`, shape-function weights | static linear | Displacement continuity across the interface within mesh-size tolerance. | 10 |
 
 **Tier 3 gaps to write:** 2 fully new (10, 12) + 1 review (11).
 
@@ -109,7 +120,7 @@ real-world interface problems.
 | 13 | Beam-to-Solid Coupling | ADAPT `examples/EOS Examples/example_column_nodeToSurface_v6.ipynb` | 6-DOF master node coupled to 3-DOF surface via phantom nodes + rigid beams. | `g.constraints.node_to_surface`, `NodeToSurfaceRecord`, phantom node tag space | static linear | Reduces to an equivalent beam-theory cantilever stiffness. | 04, 12 |
 | 14 | Contact Springs Under a Footing | ADAPT `examples/EOS Examples/example_footing_contact_springs_v2_flexure.ipynb` | Soil-structure contact via springs; separation allowed under tension. | `g.constraints.node_to_surface_spring`, `RIGID_BEAM_STIFF` routing, `stiff_beam_groups()` | static nonlinear | Contact pressure redistributes under eccentric load; matches rigid-footing limit analysis. | 13 |
 | 15 | Embedded Rebar in Concrete | ADAPT `examples/01_embedded_rebars.ipynb` | 1D reinforcement embedded in a 3D concrete host via `ASDEmbeddedNodeElement`. | embedded constraint, host vs embedded entities, kinematic coupling | static nonlinear | Cracked flexural capacity matches hand-calculated Mn. | 06, 13 |
-| 16 | Tied Contact with Non-Matching Meshes | **NEW** `examples/curriculum/16_tied_contact_nonmatching.ipynb` | Two solids meshed with different element sizes, tied via `tied_contact`. | `g.constraints.tied_contact`, bidirectional projection, `SurfaceCouplingRecord` | static linear | Homogenous stress through the interface within ε · ℎ_max. | 12 |
+| 16 | Tied Contact with Non-Matching Meshes | **NEW** `examples/EOS Examples/16_tied_contact_nonmatching.ipynb` | Two solids meshed with different element sizes, tied via `tied_contact`. | `g.constraints.tied_contact`, bidirectional projection, `SurfaceCouplingRecord` | static linear | Homogenous stress through the interface within ε · ℎ_max. | 12 |
 
 **Tier 4 gaps to write:** 1 fully new (16).
 
@@ -125,7 +136,7 @@ modal, buckling, pushover, and time-history.
 | 17 | Modal Analysis | ADAPT `examples/example_ibeam_modal.ipynb` | Eigenvalue analysis, mass assembly, mode shape extraction and animation. | `g.masses.lumped`, `ops.analysis("Eigen")`, results viewer mode playback | eigen | First 3 natural frequencies within 2% of closed-form for a cantilever. | 06 |
 | 18 | Lateral-Torsional Buckling | ADAPT `examples/EOS Examples/example_LTB_shell.ipynb` | Linearized buckling (`EigenAnalysis` with load stiffness), critical-load extraction, mode visualization. | shell elements, geometric stiffness, `ASDShellQ4` corotational | eigen (buckling) | Critical moment within 5% of the standard LTB formula. | 17 |
 | 19 | Nonlinear Static Pushover | ADAPT `examples/frame_pushover_from_cad.ipynb` | Displacement-controlled pushover of a moment frame; plastic hinge formation. | displacement control, fiber sections, capacity-curve extraction | static nonlinear | Matches published pushover for the same benchmark frame. | 06, 04 |
-| 20 | Time-History Dynamic Analysis | **NEW** `examples/curriculum/20_time_history_beam.ipynb` | Transient analysis with ground acceleration; Newmark integration; damping. | `MultiSupport` ground motion pattern, Rayleigh damping, `transient` analyze, response history extraction | transient | Peak displacement within 3% of Newmark-integrated closed-form for a SDOF with equivalent mass/stiffness/damping. | 17 |
+| 20 | Time-History Dynamic Analysis | **NEW** `examples/EOS Examples/20_time_history_beam.ipynb` | Transient analysis with ground acceleration; Newmark integration; damping. | `MultiSupport` ground motion pattern, Rayleigh damping, `transient` analyze, response history extraction | transient | Peak displacement within 3% of Newmark-integrated closed-form for a SDOF with equivalent mass/stiffness/damping. | 17 |
 
 **Tier 5 gaps to write:** 1 fully new (20).
 
@@ -187,3 +198,10 @@ what to expect:
    reference.
 8. **Viewer check (optional)** — `g.mesh.results_viewer(...)` with a
    one-line "here's what you should see".
+
+The verification cell (section 7) follows this exact format so a
+reader can compare across notebooks::
+
+    print(f"FEM result :  {fem_value:.6e}  {units}")
+    print(f"Analytical :  {analytical_value:.6e}  {units}")
+    print(f"Error      :  {err_pct:.4f} %")
