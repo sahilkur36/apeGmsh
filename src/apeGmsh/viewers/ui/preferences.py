@@ -128,10 +128,25 @@ class PreferencesTab:
 
         from .theme import THEME
         self._theme_combo = QtWidgets.QComboBox()
-        self._theme_combo.addItems(["Dark", "Light"])
-        self._theme_combo.setCurrentText(THEME.current.name.capitalize())
+        # (display, stable id). id is persisted via QSettings.
+        _THEME_CHOICES = [
+            ("Neutral Studio",   "neutral_studio"),
+            ("Catppuccin Mocha", "catppuccin_mocha"),
+            ("Paper",            "paper"),
+        ]
+        for display, key in _THEME_CHOICES:
+            self._theme_combo.addItem(display, key)
+        # Select current by stable id
+        for i, (_display, key) in enumerate(_THEME_CHOICES):
+            if key == THEME.current.name:
+                self._theme_combo.setCurrentIndex(i)
+                break
         if on_theme:
-            self._theme_combo.currentTextChanged.connect(on_theme)
+            def _on_theme_idx(idx: int) -> None:
+                key = self._theme_combo.itemData(idx)
+                if key:
+                    on_theme(key)
+            self._theme_combo.currentIndexChanged.connect(_on_theme_idx)
         theme_form.addRow("Theme", self._theme_combo)
 
         # ── Pick color ──────────────────────────────────────────────

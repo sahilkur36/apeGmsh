@@ -26,11 +26,38 @@ def fresh_manager(tmp_path, monkeypatch):
     return theme.ThemeManager()
 
 
-def test_both_palettes_defined():
-    assert "dark" in theme.PALETTES
-    assert "light" in theme.PALETTES
-    assert theme.PALETTES["dark"].name == "dark"
-    assert theme.PALETTES["light"].name == "light"
+def test_all_three_palettes_defined():
+    # Canonical ids (see apeGmsh_aesthetic.md §4)
+    assert set(theme.PALETTES) == {
+        "catppuccin_mocha", "neutral_studio", "paper",
+    }
+    for key, pal in theme.PALETTES.items():
+        assert pal.name == key
+
+
+def test_legacy_aliases_resolve(fresh_manager):
+    # QSettings from before the rename may carry "dark" / "light".
+    fresh_manager.set_theme("light")
+    assert fresh_manager.current is theme.PALETTE_PAPER
+    fresh_manager.set_theme("dark")
+    assert fresh_manager.current is theme.PALETTE_CATPPUCCIN_MOCHA
+
+
+def test_every_palette_has_aesthetic_fields():
+    # Smoke-test that all aesthetic fields were populated for every theme.
+    required = (
+        "background_mode", "body_palette",
+        "outline_color", "outline_silhouette_px", "outline_feature_px",
+        "mesh_line_mode", "mesh_line_opacity", "mesh_line_shift_pct",
+        "node_accent", "grid_major", "grid_minor",
+        "bbox_color", "bbox_line_px",
+        "cmap_seq", "cmap_div", "ao_intensity", "corner_triad_default",
+    )
+    for pal in theme.PALETTES.values():
+        for field in required:
+            assert getattr(pal, field) is not None, (
+                f"{pal.name}.{field} is missing"
+            )
 
 
 def test_palettes_are_frozen():
@@ -75,7 +102,7 @@ def test_set_theme_fires_observers(fresh_manager):
 def test_set_theme_idempotent(fresh_manager):
     received: list[theme.Palette] = []
     fresh_manager.subscribe(lambda p: received.append(p))
-    fresh_manager.set_theme("dark")  # already dark
+    fresh_manager.set_theme("catppuccin_mocha")  # already default
     assert received == []
 
 

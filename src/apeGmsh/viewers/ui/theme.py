@@ -1,10 +1,14 @@
 """
 Viewer theme — palette dataclass + stylesheet factory.
 
-Two palettes ship today (dark = Catppuccin Mocha, light = white +
-greyscale). ``ThemeManager`` is a singleton observable that the viewer
-window subscribes to; swapping the current palette re-renders the
-stylesheet and fires observers so VTK content can re-push too.
+Three palettes ship: ``catppuccin_mocha`` (dark), ``neutral_studio``
+(dark grey radial vignette), and ``paper`` (near-white for figures).
+``ThemeManager`` is a singleton observable that the viewer window
+subscribes to; swapping the current palette re-renders the stylesheet
+and fires observers so VTK content can re-push too.
+
+The Palette unifies Qt chrome + viewport rendering in one dataclass,
+per the `apeGmsh_aesthetic.md` spec — themes switch both together.
 
 Usage::
 
@@ -12,12 +16,12 @@ Usage::
     window.setStyleSheet(build_stylesheet(THEME.current))
     unsubscribe = THEME.subscribe(lambda p: refresh(p))
     # later...
-    THEME.set_theme("light")
+    THEME.set_theme("paper")
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Literal
 
 
 # ======================================================================
@@ -26,86 +30,249 @@ from typing import Callable
 
 @dataclass(frozen=True)
 class Palette:
-    """Chrome + semantic roles for a viewer theme."""
+    """Chrome + viewport roles for a viewer theme.
 
-    name: str                               # "dark" | "light"
-    # Surfaces
+    Names (``catppuccin_mocha``, ``neutral_studio``, ``paper``) are
+    stable IDs referenced by ``PALETTES`` and persisted via QSettings.
+    Hex codes are v1 starting values per ``apeGmsh_aesthetic.md`` §4;
+    the aesthetic *rules* are non-negotiable, the specific values are
+    expected to be tuned against screenshots.
+    """
+
+    name: str                               # stable theme id
+    # ── Qt chrome — surfaces ────────────────────────────────────────
     base: str                               # main window background
     mantle: str                             # bars, headers
     surface0: str                           # borders, input bg
     surface1: str                           # hover
     surface2: str                           # pressed
-    # Text
+    # ── Qt chrome — text ────────────────────────────────────────────
     text: str                               # primary text
     subtext: str                            # secondary text (labels)
     overlay: str                            # muted text (empty-label)
-    # Accent
+    # ── Qt chrome — accent / semantic ───────────────────────────────
     accent: str                             # slider handles, focus borders
-    # Viewport gradient
-    bg_top: str
-    bg_bottom: str
-    # Icon color (viewer_window toolbar)
-    icon: str
-    # Semantic (contrast-adjusted per theme)
+    icon: str                               # viewer_window toolbar icons
     success: str                            # active group
     warning: str                            # staged items, warning banner
     error: str                              # errors, picked nodes
     info: str                               # inactive group, cell data
-    # VTK content colors (RGB 0..255 tuples)
+    # ── Viewport — background ───────────────────────────────────────
+    background_mode: Literal["radial", "linear", "flat_corner"]
+    bg_top: str                             # linear=top · radial=center · flat=base
+    bg_bottom: str                          # linear=bottom · radial=edge · flat=corner-falloff
+    # ── Viewport — per-dimension idle colors (RGB 0..255) ───────────
     dim_pt: tuple[int, int, int]
     dim_crv: tuple[int, int, int]
     dim_srf: tuple[int, int, int]
     dim_vol: tuple[int, int, int]
+    # ── Viewport — body palette (for multi-body coloring; v2 consumer) ──
+    body_palette: tuple[str, ...]
+    # ── Viewport — model-viewer outlines (BRep silhouette + feature) ─
+    outline_color: str
+    outline_silhouette_px: float
+    outline_feature_px: float
+    # ── Viewport — mesh-viewer lines ────────────────────────────────
+    mesh_line_mode: Literal["body_relative", "fixed"]
+    mesh_line_fixed_color: str              # used only when mode="fixed"
+    mesh_line_opacity: float                # 0.0-1.0
+    mesh_line_shift_pct: float              # body_relative shift toward opposite luminance
+    # ── Viewport — nodes (0D glyphs) ────────────────────────────────
+    node_accent: str
+    # ── Viewport — axis scene / grid / bbox ─────────────────────────
+    grid_major: str
+    grid_minor: str
+    bbox_color: str
+    bbox_line_px: float
+    # ── Viewport — results colormap defaults ────────────────────────
+    cmap_seq: str                           # sequential (unsigned fields)
+    cmap_div: str                           # diverging (signed fields)
+    # ── Viewport — rendering intensity ──────────────────────────────
+    ao_intensity: Literal["none", "light", "moderate"]
+    corner_triad_default: bool              # default visibility of corner gizmo
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Dark (Catppuccin Mocha, existing)
+# Catppuccin Mocha (dark — chrome preserved from v1.0)
 # ──────────────────────────────────────────────────────────────────────
 
-PALETTE_DARK = Palette(
-    name="dark",
+PALETTE_CATPPUCCIN_MOCHA = Palette(
+    name="catppuccin_mocha",
+    # Chrome (unchanged from original Mocha stylesheet)
     base="#1e1e2e", mantle="#181825",
     surface0="#313244", surface1="#45475a", surface2="#585b70",
     text="#cdd6f4", subtext="#bac2de", overlay="#a6adc8",
-    accent="#89b4fa",
-    bg_top="#1a1a2e", bg_bottom="#16213e",
-    icon="#cdd6f4",
+    accent="#89b4fa", icon="#cdd6f4",
     success="#a6e3a1", warning="#f9e2af",
     error="#f38ba8", info="#89b4fa",
-    dim_pt=(232, 213, 183),     # warm white
-    dim_crv=(170, 170, 170),
-    dim_srf=(91, 141, 184),
-    dim_vol=(90, 110, 130),
+    # Background: linear Mantle→Crust (optically similar to vignette)
+    background_mode="linear",
+    bg_top="#181825", bg_bottom="#11111b",
+    # Idle per-dim (Mocha accents)
+    dim_pt=(245, 224, 220),     # Rosewater — node accent
+    dim_crv=(250, 179, 135),    # Peach — curves
+    dim_srf=(116, 199, 236),    # Sapphire — surfaces
+    dim_vol=(203, 166, 247),    # Mauve — volumes
+    # Body palette (multi-body coloring — reserved for v2 consumer)
+    body_palette=(
+        "#74c7ec",  # Sapphire
+        "#fab387",  # Peach
+        "#a6e3a1",  # Green
+        "#cba6f7",  # Mauve
+        "#f5e0dc",  # Rosewater
+    ),
+    # Model-viewer outlines — Crust near-black with warm tint
+    outline_color="#11111b",
+    outline_silhouette_px=1.5,
+    outline_feature_px=1.0,
+    # Mesh-viewer lines — body-relative 30% shift, 70% opacity
+    mesh_line_mode="body_relative",
+    mesh_line_fixed_color="",
+    mesh_line_opacity=0.70,
+    mesh_line_shift_pct=0.30,
+    # Nodes — Rosewater
+    node_accent="#f5e0dc",
+    # Axis scene
+    grid_major="#45475a",       # Surface1
+    grid_minor="#313244",       # Surface0
+    bbox_color="#7f849c",       # Overlay1
+    bbox_line_px=1.0,
+    # Results colormaps
+    cmap_seq="viridis",
+    cmap_div="coolwarm",
+    # Rendering
+    ao_intensity="moderate",
+    corner_triad_default=True,
 )
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Light (white + greyscale, user-requested)
+# Neutral Studio (dark grey radial — product-photography aesthetic)
 # ──────────────────────────────────────────────────────────────────────
 
-PALETTE_LIGHT = Palette(
-    name="light",
-    base="#ffffff", mantle="#f4f4f4",
-    surface0="#e0e0e0", surface1="#d0d0d0", surface2="#b8b8b8",
-    text="#1a1a1a", subtext="#3a3a3a", overlay="#666666",
-    accent="#333333",                       # neutral dark grey
-    bg_top="#fafafa", bg_bottom="#e8e8e8",
-    icon="#1a1a1a",
-    success="#2d8659",                      # darker green
-    warning="#b8860b",                      # dark goldenrod
-    error="#c1272d",                        # darker red
-    info="#1f5fa8",                         # darker blue
-    dim_pt=(30, 30, 30),
-    dim_crv=(80, 80, 80),
-    dim_srf=(70, 110, 150),
-    dim_vol=(50, 70, 90),
+PALETTE_NEUTRAL_STUDIO = Palette(
+    name="neutral_studio",
+    # Chrome: dark neutral with steel-blue accent (matches body color)
+    base="#141414", mantle="#1f1f1f",
+    surface0="#2a2a2a", surface1="#3a3a3a", surface2="#4a4a4a",
+    text="#d0d0d0", subtext="#a0a0a0", overlay="#707070",
+    accent="#7aa2d7", icon="#d0d0d0",
+    success="#6ca872", warning="#d4a44a",
+    error="#d47272", info="#7aa2d7",
+    # Background: radial #2a2a2a center → #0f0f0f edge
+    background_mode="radial",
+    bg_top="#2a2a2a", bg_bottom="#0f0f0f",
+    # Idle per-dim (industrial muted palette)
+    dim_pt=(234, 230, 222),     # warm off-white — node accent
+    dim_crv=(169, 168, 120),    # olive — curves
+    dim_srf=(91, 141, 184),     # steel blue — surfaces
+    dim_vol=(74, 74, 74),       # graphite — volumes
+    body_palette=(
+        "#5B8DB8",  # steel blue
+        "#A9A878",  # olive
+        "#4A4A4A",  # graphite
+        "#A8C8B5",  # mint
+        "#EAE6DE",  # warm off-white
+    ),
+    # Model-viewer outlines — pure black
+    outline_color="#000000",
+    outline_silhouette_px=1.5,
+    outline_feature_px=1.0,
+    # Mesh-viewer lines
+    mesh_line_mode="body_relative",
+    mesh_line_fixed_color="",
+    mesh_line_opacity=0.70,
+    mesh_line_shift_pct=0.30,
+    # Nodes — warm off-white
+    node_accent="#EAE6DE",
+    # Axis scene
+    grid_major="#3a3a3a",
+    grid_minor="#2a2a2a",
+    bbox_color="#9a9a9a",
+    bbox_line_px=1.0,
+    cmap_seq="viridis",
+    cmap_div="coolwarm",
+    ao_intensity="moderate",
+    corner_triad_default=True,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Paper (near-white — figure / EOS-slides aesthetic)
+# ──────────────────────────────────────────────────────────────────────
+
+PALETTE_PAPER = Palette(
+    name="paper",
+    # Chrome: light with deep-blue accent
+    base="#FAFAFA", mantle="#F5F5F5",
+    surface0="#E8E8E8", surface1="#D8D8D8", surface2="#C0C0C0",
+    text="#202020", subtext="#3a3a3a", overlay="#666666",
+    accent="#2E5C8A", icon="#202020",
+    success="#2d8659", warning="#b8860b",
+    error="#c1272d", info="#2E5C8A",
+    # Background: flat #FAFAFA with soft corner falloff
+    background_mode="flat_corner",
+    bg_top="#FAFAFA", bg_bottom="#EFEFEF",
+    # Idle per-dim (more saturated on white so colors don't turn to mud)
+    dim_pt=(0, 0, 0),           # pure black — node accent
+    dim_crv=(47, 47, 48),       # rubber black — curves
+    dim_srf=(139, 168, 196),    # steel blue — surfaces
+    dim_vol=(185, 182, 129),    # olive-tan — volumes
+    body_palette=(
+        "#8BA8C4",  # steel blue
+        "#B9B681",  # olive-tan
+        "#A0C893",  # spring green
+        "#2F2F30",  # rubber black
+        "#E8E0C8",  # cream
+    ),
+    # Model-viewer outlines — heavier on white
+    outline_color="#000000",
+    outline_silhouette_px=2.0,
+    outline_feature_px=1.2,
+    # Mesh-viewer lines — neutral gray, low opacity
+    mesh_line_mode="fixed",
+    mesh_line_fixed_color="#303030",
+    mesh_line_opacity=0.40,
+    mesh_line_shift_pct=0.0,
+    # Nodes — pure black
+    node_accent="#000000",
+    # Axis scene
+    grid_major="#d0d0d0",
+    grid_minor="#e8e8e8",
+    bbox_color="#000000",
+    bbox_line_px=1.0,
+    # Results colormaps — cividis is colorblind-safe on light bg
+    cmap_seq="cividis",
+    cmap_div="BrBG",
+    # AO lighter on white (too much feels dirty)
+    ao_intensity="light",
+    corner_triad_default=False,
 )
 
 
 PALETTES: dict[str, Palette] = {
-    "dark": PALETTE_DARK,
-    "light": PALETTE_LIGHT,
+    "catppuccin_mocha": PALETTE_CATPPUCCIN_MOCHA,
+    "neutral_studio":   PALETTE_NEUTRAL_STUDIO,
+    "paper":            PALETTE_PAPER,
 }
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Legacy aliases — map prior names from v1.0 → current canonical ids.
+# Kept so saved QSettings from before the rename still resolve. Not for
+# new code.
+# ──────────────────────────────────────────────────────────────────────
+
+_THEME_ALIASES: dict[str, str] = {
+    "dark":  "catppuccin_mocha",
+    "light": "paper",
+}
+
+
+# Legacy module-level symbols (back-compat for call sites importing
+# PALETTE_DARK / PALETTE_LIGHT directly).
+PALETTE_DARK = PALETTE_CATPPUCCIN_MOCHA
+PALETTE_LIGHT = PALETTE_PAPER
 
 
 # ======================================================================
@@ -372,6 +539,7 @@ class ThemeManager:
 
     def set_theme(self, name: str) -> None:
         key = name.lower()
+        key = _THEME_ALIASES.get(key, key)
         if key not in PALETTES:
             raise ValueError(f"Unknown theme: {name!r}")
         new = PALETTES[key]
@@ -412,8 +580,10 @@ class ThemeManager:
             return None
         try:
             s = QSettings(cls._settings_org, cls._settings_app)
-            name = s.value("theme", "dark")
-            return PALETTES.get(str(name).lower())
+            name = s.value("theme", "catppuccin_mocha")
+            key = str(name).lower()
+            key = _THEME_ALIASES.get(key, key)
+            return PALETTES.get(key)
         except Exception:
             return None
 
