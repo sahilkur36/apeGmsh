@@ -51,6 +51,35 @@ def _lazy_qt():
     return QtWidgets, QtCore, QtGui, QtInteractor
 
 
+def _make_horizontal_tab_style():
+    """QProxyStyle that renders West/East tabs with horizontal labels.
+
+    Qt's default ``TabPosition.West`` / ``East`` rotates the label 90°.
+    This proxy transposes the tab-cell size hint (so tabs stack vertically
+    but each cell is wide enough for its label) and forces the label to
+    be drawn in the North (horizontal) shape.
+    """
+    from qtpy import QtWidgets
+
+    class _HTabStyle(QtWidgets.QProxyStyle):
+        def sizeFromContents(self, type_, opt, size, widget):
+            s = super().sizeFromContents(type_, opt, size, widget)
+            if type_ == QtWidgets.QStyle.ContentsType.CT_TabBarTab:
+                s.transpose()
+            return s
+
+        def drawControl(self, element, opt, painter, widget):
+            if element == QtWidgets.QStyle.ControlElement.CE_TabBarTabLabel:
+                if isinstance(opt, QtWidgets.QStyleOptionTab):
+                    new_opt = QtWidgets.QStyleOptionTab(opt)
+                    new_opt.shape = QtWidgets.QTabBar.Shape.RoundedNorth
+                    super().drawControl(element, new_opt, painter, widget)
+                    return
+            super().drawControl(element, opt, painter, widget)
+
+    return _HTabStyle()
+
+
 class ViewerWindow:
     """Qt window hosting a PyVista VTK plotter.
 
@@ -145,8 +174,12 @@ class ViewerWindow:
             xlabel="X", ylabel="Y", zlabel="Z",
         )
 
-        # ── Right dock: tabs ────────────────────────────────────────
+        # ── Right dock: tabs (vertical labels, horizontal text) ─────
         self._tab_widget = QtWidgets.QTabWidget()
+        self._tab_widget.setTabPosition(
+            QtWidgets.QTabWidget.TabPosition.West
+        )
+        self._tab_widget.tabBar().setStyle(_make_horizontal_tab_style())
         for name, widget in (tabs or []):
             self._tab_widget.addTab(widget, name)
 
