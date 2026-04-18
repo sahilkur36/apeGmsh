@@ -173,6 +173,18 @@ class MassesComposite:
         self.mass_defs.append(defn)
         return defn
 
+    def validate_pre_mesh(self) -> None:
+        """Validate every registered mass's target can be resolved.
+
+        Called by :meth:`Mesh.generate` before meshing so typos fail
+        fast.  Raw ``(dim, tag)`` lists are skipped.
+        """
+        for defn in self.mass_defs:
+            target = defn.target
+            if not isinstance(target, str):
+                continue
+            self._resolve_target(target, source=defn.target_source)
+
     # ------------------------------------------------------------------
     # Target resolution (same lookup order as LoadsComposite)
     # ------------------------------------------------------------------

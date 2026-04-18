@@ -335,19 +335,16 @@ class PhysicalGroups(_HasLogging):
         """
         Resolve a physical group to its entity tags — by **name** or by tag.
 
-        This is the convenience entry point used by mesh commands that want
-        to act on "everything in the 'Concrete' PG" without the caller
-        having to chain ``get_tag`` + ``get_entities`` manually.
-
         Parameters
         ----------
         name_or_tag : str | int
-            Physical group name, or the raw PG tag (in which case ``dim``
-            is required).
+            Physical group name, or the raw PG tag (``dim`` required).
         dim : int | None, optional
-            Dimension to search.  If omitted and ``name_or_tag`` is a
-            string, all dimensions are searched from 0 to 3 and the first
-            match wins.  Required when ``name_or_tag`` is an int.
+            Dimension to search.  If omitted and *name_or_tag* is a string,
+            all dimensions are searched.  **Raises if the name exists at
+            multiple dims** — pass ``dim=`` to disambiguate, or call
+            :meth:`dim_tags` to get all entities across dims as
+            ``(dim, tag)`` pairs.
 
         Returns
         -------
@@ -358,34 +355,35 @@ class PhysicalGroups(_HasLogging):
         ------
         KeyError
             If no physical group with that name exists.
+        ValueError
+            If *name_or_tag* is a string, ``dim`` is omitted, and the
+            name matches physical groups at more than one dimension.
         TypeError
             If ``name_or_tag`` is an int but ``dim`` is not provided.
-
-        Examples
-        --------
-        ::
-
-            # Fan a per-surface algorithm out over every surface in a PG
-            for s in g.physical.entities("Concrete", dim=2):
-                g.mesh.generation.set_algorithm(s, "frontal_delaunay_quads")
-                g.mesh.structured.set_recombine(s)
-
-            # Feed a distance field directly from a PG
-            joint = g.physical.entities("BeamColumnJoint", dim=2)
-            d = g.mesh.field.distance(surfaces=joint)
         """
         if isinstance(name_or_tag, str):
             if dim is None:
-                for d in (0, 1, 2, 3):
-                    pg_tag = self.get_tag(d, name_or_tag)
-                    if pg_tag is not None:
-                        return list(gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag))
-                raise KeyError(
-                    f"No physical group named {name_or_tag!r} at any "
-                    f"dimension.  If this is a label, use "
-                    f"g.labels.entities({name_or_tag!r}) or promote it "
-                    f"with g.labels.promote_to_physical({name_or_tag!r})."
-                )
+                matches = [
+                    d for d in (0, 1, 2, 3)
+                    if self.get_tag(d, name_or_tag) is not None
+                ]
+                if not matches:
+                    raise KeyError(
+                        f"No physical group named {name_or_tag!r} at any "
+                        f"dimension.  If this is a label, use "
+                        f"g.labels.entities({name_or_tag!r}) or promote it "
+                        f"with g.labels.promote_to_physical({name_or_tag!r})."
+                    )
+                if len(matches) > 1:
+                    raise ValueError(
+                        f"Physical group {name_or_tag!r} spans multiple "
+                        f"dimensions {matches}. Pass `dim=` to pick one, "
+                        f"or call g.physical.dim_tags({name_or_tag!r}) for "
+                        f"all entities across dims as (dim, tag) pairs."
+                    )
+                d = matches[0]
+                pg_tag = self.get_tag(d, name_or_tag)
+                return list(gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag))
             pg_tag = self.get_tag(dim, name_or_tag)
             if pg_tag is None:
                 raise KeyError(
@@ -401,6 +399,32 @@ class PhysicalGroups(_HasLogging):
                 "entities(): when passing a raw PG tag, `dim` must be given"
             )
         return list(gmsh.model.getEntitiesForPhysicalGroup(dim, int(name_or_tag)))
+
+    def dim_tags(self, name: str) -> list[DimTag]:
+        """Return every model entity in PG *name* as ``(dim, tag)`` pairs.
+
+        Unlike :meth:`entities`, handles PGs that span multiple
+        dimensions — returns the union across all dims the name exists
+        at.  Use this when a single PG name covers a mixed-dim
+        selection (e.g. a volume + its bounding faces).
+
+        Raises
+        ------
+        KeyError
+            If no physical group with *name* exists at any dimension.
+        """
+        out: list[DimTag] = []
+        for d in (0, 1, 2, 3):
+            pg_tag = self.get_tag(d, name)
+            if pg_tag is None:
+                continue
+            for t in gmsh.model.getEntitiesForPhysicalGroup(d, pg_tag):
+                out.append((d, int(t)))
+        if not out:
+            raise KeyError(
+                f"No physical group named {name!r} at any dimension."
+            )
+        return out
 
     def get_groups_for_entity(self, dim: int, tag: Tag) -> list[Tag]:
         """

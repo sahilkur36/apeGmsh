@@ -440,6 +440,23 @@ class ModelViewer:
         _pref_opacity = make_opacity_cb(registry, plotter)
         _pref_edges = make_edges_cb(registry, plotter)
 
+        def _pref_pick_color(hex_str: str):
+            h = hex_str.lstrip("#")
+            try:
+                rgb = np.array(
+                    [int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)],
+                    dtype=np.uint8,
+                )
+            except ValueError:
+                return
+            color_mgr.set_pick_color(rgb)
+            color_mgr.recolor_all(
+                picks=set(sel._picks),
+                hidden=vis_mgr.hidden,
+                hover=pick_engine.hover_entity,
+            )
+            plotter.render()
+
         from .ui.theme import THEME
         prefs = PreferencesTab(
             point_size=self._point_size,
@@ -450,6 +467,7 @@ class ModelViewer:
             on_line_width=_pref_line_width,
             on_opacity=_pref_opacity,
             on_edges=_pref_edges,
+            on_pick_color=_pref_pick_color,
             on_theme=lambda name: THEME.set_theme(name),
         )
         win.add_tab("Preferences", prefs.widget)

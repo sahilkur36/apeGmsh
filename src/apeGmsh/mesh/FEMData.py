@@ -305,6 +305,7 @@ class NodeComposite:
         label=None,
         tag=None,
         partition: int | None = None,
+        dim: int | None = None,
     ) -> NodeResult:
         """Bundled ``(ids, coords)`` for a selection.
 
@@ -321,13 +322,18 @@ class NodeComposite:
             Direct Gmsh physical-group tag lookup(s).
         partition : int, optional
             Partition ID (intersection filter).
+        dim : int, optional
+            Restrict *pg* / *label* / *target* lookup to a single
+            dimension. Useful when a name spans multiple dims
+            (e.g. a volume + its bounding faces) and you want only
+            one slice.
 
         Returns
         -------
         NodeResult
         """
         ids, coords = self._resolve_nodes(target, pg=pg,
-                                           label=label, tag=tag)
+                                           label=label, tag=tag, dim=dim)
 
         if partition is not None:
             ids, coords = self._intersect_partition(
@@ -335,7 +341,7 @@ class NodeComposite:
 
         return NodeResult(ids, coords)
 
-    def _resolve_nodes(self, target, *, pg, label, tag):
+    def _resolve_nodes(self, target, *, pg, label, tag, dim=None):
         """Resolve single or list selectors to (ids, coords).
 
         Explicit keyword modes (``label=``, ``pg=``, ``tag=``) do a
@@ -348,20 +354,20 @@ class NodeComposite:
         if tag is not None:
             return self._union_nodes(
                 tag, self.physical.node_ids,
-                self.physical.node_coords)
+                self.physical.node_coords, dim=dim)
         if pg is not None:
             return self._union_nodes(
                 pg, self.physical.node_ids,
-                self.physical.node_coords)
+                self.physical.node_coords, dim=dim)
         if label is not None:
             return self._union_nodes(
                 label, self.labels.node_ids,
-                self.labels.node_coords)
+                self.labels.node_coords, dim=dim)
         if target is not None:
             items = self._normalise_target(target)
             id_parts, coord_parts = [], []
             for t in items:
-                ids, coords = self._resolve_one_target(t)
+                ids, coords = self._resolve_one_target(t, dim=dim)
                 id_parts.append(ids)
                 coord_parts.append(coords)
             return self._dedupe_node_parts(id_parts, coord_parts)
@@ -385,11 +391,16 @@ class NodeComposite:
             return [target]
         return list(target)
 
-    def _resolve_one_target(self, t):
+    def _resolve_one_target(self, t, *, dim=None):
         """Resolve one item (string name or ``(dim, tag)``) to (ids, coords)."""
         # Raw DimTag — query the live Gmsh session for the mesh nodes
         # on that geometry entity. Matches ``LoadsComposite`` semantics.
         if self._is_dimtag_tuple(t):
+            if dim is not None and int(t[0]) != int(dim):
+                raise ValueError(
+                    f"tuple target {t} has dim={t[0]} but dim={dim} was "
+                    f"passed — remove `dim=` or pass a string name."
+                )
             return self._nodes_on_dimtag(int(t[0]), int(t[1]))
         if not isinstance(t, str):
             raise TypeError(
@@ -399,17 +410,22 @@ class NodeComposite:
         # String — try label, then PG, then part label (matches the
         # LoadsComposite._resolve_target precedence chain).
         try:
-            return self.labels.node_ids(t), self.labels.node_coords(t)
+            return (self.labels.node_ids(t, dim=dim),
+                    self.labels.node_coords(t, dim=dim))
         except (KeyError, ValueError):
             pass
         try:
-            return self.physical.node_ids(t), self.physical.node_coords(t)
+            return (self.physical.node_ids(t, dim=dim),
+                    self.physical.node_coords(t, dim=dim))
         except (KeyError, ValueError):
             pass
-        if t in self._part_node_map:
+        # Part labels are not dim-scoped; only honour this branch when
+        # the caller did not restrict by dim.
+        if dim is None and t in self._part_node_map:
             return self._nodes_from_ids(self._part_node_map[t])
+        where = f" at dim={dim}" if dim is not None else ""
         raise KeyError(
-            f"No label, physical group, or part named {t!r}. "
+            f"No label, physical group, or part named {t!r}{where}. "
             f"Labels: {list(self.labels._groups) if hasattr(self.labels, '_groups') else '?'}; "
             f"parts: {list(self._part_node_map)}"
         )
@@ -444,14 +460,15 @@ class NodeComposite:
         return kept_ids, self._coords[idx_arr]
 
     @staticmethod
-    def _union_nodes(selector, id_fn, coord_fn):
+    def _union_nodes(selector, id_fn, coord_fn, *, dim=None):
         """Call id_fn/coord_fn for each item in selector, union results."""
         items = ([selector] if isinstance(selector, (str, int, tuple))
                  else list(selector))
+        kw = {'dim': dim} if dim is not None else {}
         if len(items) == 1:
-            return id_fn(items[0]), coord_fn(items[0])
-        id_parts = [id_fn(s) for s in items]
-        coord_parts = [coord_fn(s) for s in items]
+            return id_fn(items[0], **kw), coord_fn(items[0], **kw)
+        id_parts = [id_fn(s, **kw) for s in items]
+        coord_parts = [coord_fn(s, **kw) for s in items]
         return NodeComposite._dedupe_node_parts(id_parts, coord_parts)
 
     @staticmethod
@@ -480,16 +497,16 @@ class NodeComposite:
         return ids[mask], coords[mask]
 
     def get_ids(self, target=None, *, pg=None, label=None,
-                tag=None, partition=None) -> ndarray:
+                tag=None, partition=None, dim=None) -> ndarray:
         """Node IDs only."""
         return self.get(target, pg=pg, label=label, tag=tag,
-                        partition=partition).ids
+                        partition=partition, dim=dim).ids
 
     def get_coords(self, target=None, *, pg=None, label=None,
-                   tag=None, partition=None) -> ndarray:
+                   tag=None, partition=None, dim=None) -> ndarray:
         """Coordinates only."""
         return self.get(target, pg=pg, label=label, tag=tag,
-                        partition=partition).coords
+                        partition=partition, dim=dim).coords
 
     # ── Lookups ─────────────────────────────────────────────
 

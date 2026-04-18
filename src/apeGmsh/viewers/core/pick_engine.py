@@ -26,6 +26,36 @@ if TYPE_CHECKING:
     from .entity_registry import EntityRegistry
 
 
+def _entity_in_box(
+    sx: np.ndarray,
+    sy: np.ndarray,
+    bx0: float,
+    bx1: float,
+    by0: float,
+    by1: float,
+    crossing: bool,
+) -> bool:
+    """Box-select containment predicate for one entity's projected points.
+
+    Window mode:   entity's projected 2D AABB is fully inside the box.
+    Crossing mode: any sampled point is inside the box (classic).
+
+    Crossing uses sample-point-inside rather than AABB overlap because
+    ``bbox()`` for curves/surfaces returns the 3D AABB's 8 corners,
+    whose projected 2D AABB can be much larger than the visible
+    silhouette at angled views — pure AABB overlap over-selected.
+    The sample-density workaround (64 points per volume) makes the
+    classic test tight enough in practice.
+    """
+    if crossing:
+        inside = (bx0 <= sx) & (sx <= bx1) & (by0 <= sy) & (sy <= by1)
+        return bool(np.any(inside))
+    return bool(
+        bx0 <= sx.min() and sx.max() <= bx1
+        and by0 <= sy.min() and sy.max() <= by1
+    )
+
+
 class PickEngine:
     """Pixel-precise picking via VTK cell pickers."""
 
@@ -295,44 +325,60 @@ class PickEngine:
     def _do_box(self, x0: int, y0: int, x1: int, y1: int, ctrl: bool) -> None:
         """Box-select with proper window vs crossing modes.
 
-        Uses the VTK composite projection matrix to batch-project all
-        entity bounding-box corners in one numpy operation (no per-entity
-        VTK calls).
-        """
+        Event coordinates from VTK on this build live in the same
+        display space as ``renderer.WorldToDisplay`` output and as
+        ``vtkActor2D`` (which is what the rubber-band uses — and the
+        rubber-band draws correctly). No DPI scaling is applied here;
+        if a future build diverges these spaces, the fix is to scale
+        click + hover + rubber-band consistently, not to re-introduce
+        scaling only in this method.
 
-        # DPI scaling
-        try:
-            rw = self._plotter.render_window
-            vw, vh = rw.GetSize()
-            aw, ah = rw.GetActualSize()
-            sx_ratio = aw / vw if vw else 1.0
-            sy_ratio = ah / vh if vh else 1.0
-        except Exception:
-            sx_ratio = sy_ratio = 1.0
+        Set env var ``APEGMSH_DEBUG_BOX=1`` to log per-entity projection
+        and hit results for diagnosing crossing-mode misses.
+        """
+        import os
+        _debug = bool(os.environ.get("APEGMSH_DEBUG_BOX"))
 
         crossing = x1 < x0
-        bx0 = min(x0, x1) * sx_ratio
-        bx1 = max(x0, x1) * sx_ratio
-        by0 = min(y0, y1) * sy_ratio
-        by1 = max(y0, y1) * sy_ratio
+        bx0 = min(x0, x1)
+        bx1 = max(x0, x1)
+        by0 = min(y0, y1)
+        by1 = max(y0, y1)
 
         renderer = self._plotter.renderer
+
+        if _debug:
+            try:
+                rw = self._plotter.render_window
+                sz = rw.GetSize()
+                asz = rw.GetActualSize()
+            except Exception:
+                sz = asz = "?"
+            print(
+                f"[box] mode={'crossing' if crossing else 'window'} "
+                f"event=({x0},{y0})->({x1},{y1}) "
+                f"box=[{bx0}..{bx1}]x[{by0}..{by1}] "
+                f"win_size={sz} actual={asz}",
+                flush=True,
+            )
 
         hits: list["DimTag"] = []
 
         # Collect all pickable entities and their representative points
-        entities = []
-        all_corners = []
-        corner_counts = []
+        entities: list["DimTag"] = []
+        all_corners: list[np.ndarray] = []
+        corner_counts: list[int] = []
 
         for dt in self._registry.all_entities():
             if dt[0] not in self._pickable_dims:
                 continue
             if self._hidden_check(dt):
                 continue
-            # For volumes (dim=3), use actual mesh boundary points
-            # instead of AABB corners for accurate concave selection
-            if dt[0] == 3:
+            # Prefer actual mesh vertices (tight to silhouette) over
+            # 3D AABB corners (loose — projects to a rectangle much
+            # wider than curves/surfaces at angled views, causing
+            # phantom hits on nearby boxes).
+            if dt[0] >= 1:
                 pts = self._registry.entity_points(dt)
                 if pts is not None and len(pts) > 0:
                     entities.append(dt)
@@ -351,38 +397,41 @@ class PickEngine:
                     all_corners.append(c.reshape(1, 3))
                     corner_counts.append(1)
 
-        if not entities:
-            return
+        if entities:
+            # Project all corners via VTK WorldToDisplay
+            pts_all = np.vstack(all_corners)
+            screen_x = np.empty(len(pts_all))
+            screen_y = np.empty(len(pts_all))
+            for i, p in enumerate(pts_all):
+                renderer.SetWorldPoint(p[0], p[1], p[2], 1.0)
+                renderer.WorldToDisplay()
+                dp = renderer.GetDisplayPoint()
+                screen_x[i] = dp[0]
+                screen_y[i] = dp[1]
 
-        # Project all corners via VTK WorldToDisplay
-        pts_all = np.vstack(all_corners)
-        screen_x = np.empty(len(pts_all))
-        screen_y = np.empty(len(pts_all))
-        for i, p in enumerate(pts_all):
-            renderer.SetWorldPoint(p[0], p[1], p[2], 1.0)
-            renderer.WorldToDisplay()
-            dp = renderer.GetDisplayPoint()
-            screen_x[i] = dp[0]
-            screen_y[i] = dp[1]
+            # Check each entity's points against the box
+            offset = 0
+            for i, dt in enumerate(entities):
+                n = corner_counts[i]
+                sx = screen_x[offset:offset + n]
+                sy = screen_y[offset:offset + n]
+                hit = _entity_in_box(sx, sy, bx0, bx1, by0, by1, crossing)
+                if _debug:
+                    print(
+                        f"[box]   dt={dt} n={n} "
+                        f"sx=[{sx.min():.1f}..{sx.max():.1f}] "
+                        f"sy=[{sy.min():.1f}..{sy.max():.1f}] "
+                        f"-> {'HIT' if hit else 'miss'}",
+                        flush=True,
+                    )
+                if hit:
+                    hits.append(dt)
+                offset += n
 
-        # Check each entity's points against the box
-        offset = 0
-        for i, dt in enumerate(entities):
-            n = corner_counts[i]
-            sx = screen_x[offset:offset + n]
-            sy = screen_y[offset:offset + n]
-            inside = (bx0 <= sx) & (sx <= bx1) & (by0 <= sy) & (sy <= by1)
+        if _debug:
+            print(f"[box] total hits={len(hits)}: {hits}", flush=True)
 
-            if crossing:
-                hit = np.any(inside)
-            else:
-                hit = np.all(inside)
-
-            if hit:
-                hits.append(dt)
-            offset += n
-
-        if hits and self.on_box_select is not None:
+        if self.on_box_select is not None:
             self.on_box_select(hits, ctrl)
 
     @property

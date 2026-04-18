@@ -345,6 +345,14 @@ class ConstraintsComposite:
             master_entities=master_entities, slave_entities=slave_entities,
             dofs=dofs, integration_order=integration_order, name=name))
 
+    def validate_pre_mesh(self) -> None:
+        """No-op: constraints validate targets eagerly at ``_add_def``.
+
+        Present so :meth:`Mesh.generate` can invoke ``validate_pre_mesh``
+        on all three composites uniformly.
+        """
+        return None
+
     # ------------------------------------------------------------------
     # Resolution
     # ------------------------------------------------------------------
@@ -353,8 +361,11 @@ class ConstraintsComposite:
         has_face_constraints = any(
             isinstance(d, _FACE_TYPES) for d in self.constraint_defs)
         if has_face_constraints and face_map is None:
-            warnings.warn(
-                "Surface constraints defined but face_map=None.", stacklevel=2)
+            raise TypeError(
+                "Surface constraints are defined but face_map=None. "
+                "Call resolve(..., face_map=parts.build_face_map(node_map)) "
+                "or use Mesh.get_fem_data() which builds face_map automatically."
+            )
 
         resolver = ConstraintResolver(
             node_tags=node_tags, node_coords=node_coords,

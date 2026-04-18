@@ -326,6 +326,19 @@ class LoadsComposite:
         self.load_defs.append(defn)
         return defn
 
+    def validate_pre_mesh(self) -> None:
+        """Validate every registered load's target can be resolved.
+
+        Called by :meth:`Mesh.generate` before meshing so typos fail
+        fast instead of after minutes of meshing.  Raw ``(dim, tag)``
+        lists are skipped — only string targets are looked up.
+        """
+        for defn in self.load_defs:
+            target = defn.target
+            if not isinstance(target, str):
+                continue
+            self._resolve_target(target, source=defn.target_source)
+
     # ------------------------------------------------------------------
     # Target resolution: convert flexible target -> DimTag list
     # ------------------------------------------------------------------
@@ -495,6 +508,64 @@ class LoadsComposite:
                     faces.append([int(n) for n in row[:corners_per]])
         return faces
 
+    def _target_edges_full(self, target, source: str = "auto") -> list[list[int]]:
+        """Like :meth:`_target_edges` but preserves higher-order connectivity.
+
+        Returns a list of node-id sequences; each sequence has length 2
+        (line2) or 3 (line3) depending on the mesh order.  Used for the
+        consistent-reduction path where midside nodes participate.
+        """
+        dts = self._resolve_target(target, source=source)
+        if dts and dts[0][0] == "__ms__":
+            return []
+        import gmsh
+        edges: list[list[int]] = []
+        for d, t in dts:
+            if d != 1:
+                continue
+            try:
+                etypes, _, enodes_list = gmsh.model.mesh.getElements(d, t)
+            except Exception:
+                continue
+            for etype, enodes in zip(etypes, enodes_list):
+                # gmsh elem types: 1 = line2, 8 = line3
+                npe = {1: 2, 8: 3}.get(int(etype))
+                if npe is None:
+                    continue
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                for row in arr:
+                    edges.append([int(n) for n in row])
+        return edges
+
+    def _target_faces_full(self, target, source: str = "auto") -> list[list[int]]:
+        """Like :meth:`_target_faces` but preserves higher-order connectivity.
+
+        Returns a list of node-id sequences; each has length 3/4/6/8/9
+        for tri3/quad4/tri6/quad8/quad9.  Used for the
+        consistent-reduction path.
+        """
+        dts = self._resolve_target(target, source=source)
+        if dts and dts[0][0] == "__ms__":
+            return []
+        import gmsh
+        faces: list[list[int]] = []
+        for d, t in dts:
+            if d != 2:
+                continue
+            try:
+                etypes, _, enodes_list = gmsh.model.mesh.getElements(d, t)
+            except Exception:
+                continue
+            for etype, enodes in zip(etypes, enodes_list):
+                # 2 = tri3, 3 = quad4, 9 = tri6, 16 = quad8, 10 = quad9
+                npe = {2: 3, 3: 4, 9: 6, 16: 8, 10: 9}.get(int(etype))
+                if npe is None:
+                    continue
+                arr = np.asarray(enodes, dtype=np.int64).reshape(-1, npe)
+                for row in arr:
+                    faces.append([int(n) for n in row])
+        return faces
+
     def _target_elements(self, target, source: str = "auto"):
         """Resolve target to (element_ids, connectivity_rows) for volume elements."""
         dts = self._resolve_target(target, source=source)
@@ -574,7 +645,7 @@ class LoadsComposite:
 
     def _resolve_line_consistent(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
-        edges = self._target_edges(defn.target, source=src)
+        edges = self._target_edges_full(defn.target, source=src)
         return resolver.resolve_line_consistent(defn, edges)
 
     def _resolve_line_element(self, resolver, defn, node_map, all_nodes):
@@ -600,7 +671,7 @@ class LoadsComposite:
 
     def _resolve_surface_consistent(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
-        faces = self._target_faces(defn.target, source=src)
+        faces = self._target_faces_full(defn.target, source=src)
         return resolver.resolve_surface_consistent(defn, faces)
 
     def _resolve_surface_element(self, resolver, defn, node_map, all_nodes):

@@ -15,6 +15,7 @@ Usage::
 """
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, Callable
 
 import gmsh
@@ -23,6 +24,8 @@ import numpy as np
 if TYPE_CHECKING:
     from apeGmsh._types import DimTag
     from .entity_registry import EntityRegistry
+
+_log = logging.getLogger("apeGmsh.viewer.selection")
 
 
 # ======================================================================
@@ -36,6 +39,7 @@ def _load_group_members(name: str) -> list["DimTag"]:
         try:
             pg_name = gmsh.model.getPhysicalName(pg_dim, pg_tag)
         except Exception:
+            _log.debug("getPhysicalName failed for (%d, %d)", pg_dim, pg_tag)
             continue
         if pg_name == name:
             for etag in gmsh.model.getEntitiesForPhysicalGroup(pg_dim, pg_tag):
@@ -50,7 +54,10 @@ def _delete_group_by_name(name: str) -> None:
             if gmsh.model.getPhysicalName(pg_dim, pg_tag) == name:
                 gmsh.model.removePhysicalGroups([(pg_dim, pg_tag)])
         except Exception:
-            pass
+            _log.debug(
+                "removePhysicalGroups failed for %r (%d, %d)",
+                name, pg_dim, pg_tag,
+            )
 
 
 def _write_group(name: str, members: list["DimTag"]) -> None:
@@ -236,6 +243,8 @@ class SelectionState:
             self._staged_groups[self._active_group] = members
             if members:
                 _write_group(self._active_group, members)
+            else:
+                _delete_group_by_name(self._active_group)
 
         self._active_group = name
         if name is not None and name not in self._group_order:
@@ -250,22 +259,49 @@ class SelectionState:
         self._fire()
 
     def commit_active_group(self) -> None:
-        """Write the current active group to Gmsh now."""
-        if self._active_group is not None and self._picks:
-            self._staged_groups[self._active_group] = list(self._picks)
+        """Write the current active group to Gmsh, or delete it if empty."""
+        if self._active_group is None:
+            return
+        self._staged_groups[self._active_group] = list(self._picks)
+        if self._picks:
             _write_group(self._active_group, self._picks)
+        else:
+            _delete_group_by_name(self._active_group)
 
     def apply_group(self, name: str) -> None:
         """Stage current picks as group *name* and write to Gmsh."""
         self._staged_groups[name] = list(self._picks)
+        if name not in self._group_order:
+            self._group_order.append(name)
         if self._picks:
             _write_group(name, self._picks)
+        else:
+            _delete_group_by_name(name)
 
     def rename_group(self, old: str, new: str) -> None:
+        """Rename a staged group and propagate to Gmsh atomically."""
+        if old == new:
+            return
+
+        members: list["DimTag"] = []
         if old in self._staged_groups:
-            self._staged_groups[new] = self._staged_groups.pop(old)
+            members = self._staged_groups.pop(old)
+            self._staged_groups[new] = members
+
         if self._active_group == old:
             self._active_group = new
+
+        try:
+            idx = self._group_order.index(old)
+            self._group_order[idx] = new
+        except ValueError:
+            if new not in self._group_order:
+                self._group_order.append(new)
+
+        # Atomic gmsh rewrite: delete old, write new (if non-empty)
+        _delete_group_by_name(old)
+        if members:
+            _write_group(new, members)
 
     def delete_group(self, name: str) -> None:
         self._staged_groups.pop(name, None)
@@ -287,7 +323,10 @@ class SelectionState:
         return False
 
     def flush_to_gmsh(self) -> int:
-        """Write all staged groups to Gmsh. Returns count written."""
+        """Write all staged groups to Gmsh. Empty groups are deleted.
+
+        Returns the count of groups *written* (deletions not counted).
+        """
         # Stage current active group
         if self._active_group is not None:
             self._staged_groups[self._active_group] = list(self._picks)
@@ -296,6 +335,8 @@ class SelectionState:
             if members:
                 _write_group(name, members)
                 n += 1
+            else:
+                _delete_group_by_name(name)
         return n
 
     # ------------------------------------------------------------------
@@ -325,7 +366,7 @@ class SelectionState:
             try:
                 cb()
             except Exception:
-                pass
+                _log.exception("on_changed callback failed: %r", cb)
 
     def __repr__(self) -> str:
         return (

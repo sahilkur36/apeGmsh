@@ -522,41 +522,72 @@ class LoadResolver:
     def resolve_line_consistent(
         self,
         defn: LineLoadDef,
-        edges: list[tuple[int, int]],
-        edge_orders: list[int] | None = None,
+        edges: list,
     ) -> list[NodalLoadRecord]:
-        """Consistent line-load reduction.
+        """Consistent line-load reduction via shape-function integration.
 
-        For linear (2-node) edges this is identical to tributary
-        (``f_i = q·L/2``).  For quadratic (3-node) edges:
-        ``f_end = q·L/6``, ``f_mid = 4q·L/6``.
+        *edges* is a list of node-id sequences; each sequence's length
+        determines element order:
 
-        *edge_orders* (optional) — list of node counts per edge
-        (2 = linear, 3 = quadratic).  When None, all edges are
-        treated as linear.
+            2 nodes  -> line2 (linear), 2-pt Gauss
+            3 nodes  -> line3 (quadratic), 3-pt Gauss
+
+        Any other node count raises :class:`NotImplementedError` rather
+        than silently producing wrong numbers.
         """
-        # NOTE: For now, the composite always passes 2-node edges
-        # because we don't have higher-order edge connectivity in
-        # general.  For linear edges the consistent reduction matches
-        # the tributary one, so we delegate directly.  When quadratic
-        # edges land here, re-introduce the per-edge shape-function
-        # integration using ``q = defn.q_xyz`` (or
-        # ``defn.magnitude * _direction_vec(defn.direction)``).
-        return self.resolve_line_tributary(defn, edges)
+        from ._consistent_quadrature import integrate_edge
+
+        if defn.q_xyz is not None:
+            q = np.asarray(defn.q_xyz, dtype=float)
+        else:
+            q = defn.magnitude * _direction_vec(defn.direction)
+        accum: dict[int, ndarray] = {}
+        for edge in edges:
+            edge = list(edge)
+            coords = np.array([self.coords_of(n) for n in edge])
+            weights = integrate_edge(coords, len(edge))
+            for i, nid in enumerate(edge):
+                f3 = q * float(weights[i])
+                f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
+                _accumulate_nodal(accum, int(nid), f6)
+        return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
 
     def resolve_surface_consistent(
         self,
         defn: SurfaceLoadDef,
         faces: list[list[int]],
     ) -> list[NodalLoadRecord]:
-        """Consistent surface load using element shape functions.
+        """Consistent surface load via shape-function integration.
 
-        Tri3 / Quad4: equal split (matches tributary).
-        Higher-order types fall back to tributary with a warning.
+        Each *face* is a node-id sequence whose length determines the
+        face type:
+
+            3 -> tri3, 4 -> quad4, 6 -> tri6, 8 -> quad8, 9 -> quad9
+
+        For ``defn.normal=True`` the pressure follows the curved face
+        normal evaluated at each Gauss point.  Any other node count
+        raises :class:`NotImplementedError`.
         """
-        # Tri3 and Quad4 give the same result as tributary because
-        # their shape functions integrate to A/n.
-        return self.resolve_surface_tributary(defn, faces)
+        from ._consistent_quadrature import integrate_face
+
+        d = None
+        if not defn.normal:
+            d = np.asarray(defn.direction, dtype=float)
+            d = d / (np.linalg.norm(d) + 1e-30)
+        accum: dict[int, ndarray] = {}
+        for face in faces:
+            face = list(face)
+            coords = np.array([self.coords_of(n) for n in face])
+            weights, normals = integrate_face(coords, len(face))
+            for i, nid in enumerate(face):
+                if defn.normal:
+                    # Positive magnitude = pressure pushing into face.
+                    f3 = -defn.magnitude * normals[i]
+                else:
+                    f3 = defn.magnitude * float(weights[i]) * d
+                f6 = np.array([f3[0], f3[1], f3[2], 0.0, 0.0, 0.0])
+                _accumulate_nodal(accum, int(nid), f6)
+        return _accum_to_records(accum, pattern=defn.pattern, name=defn.name)
 
     def resolve_gravity_consistent(
         self,

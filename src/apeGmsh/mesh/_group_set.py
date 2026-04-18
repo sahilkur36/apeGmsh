@@ -71,43 +71,118 @@ class NamedGroupSet:
                 coerced['connectivity'] = _to_object(info['connectivity'])
             self._groups[key] = coerced
 
-        self._name_index: dict[str, tuple[int, int]] | None = None
+        self._name_index: dict[str, list[tuple[int, int]]] | None = None
+        # Cache for merged multi-dim info dicts
+        self._merged_cache: dict[str, dict] = {}
 
     # ── Internal resolution ──────────────────────────────────
 
-    def _build_name_index(self) -> dict[str, tuple[int, int]]:
+    def _build_name_index(self) -> dict[str, list[tuple[int, int]]]:
+        """Map each group name to the list of ``(dim, tag)`` keys that
+        carry it (sorted by dim, then tag).  A PG that spans multiple
+        dimensions — e.g. a named selection covering both a volume and
+        its bounding faces — yields multiple keys under one name.
+        """
         if self._name_index is None:
-            import logging
-            _log = logging.getLogger(__name__)
-            idx: dict[str, tuple[int, int]] = {}
+            idx: dict[str, list[tuple[int, int]]] = {}
             for (d, t) in sorted(self._groups.keys()):
                 name = self._groups[(d, t)].get('name', '')
                 if not name:
                     continue
-                if name in idx:
-                    existing = idx[name]
-                    _log.warning(
-                        "Duplicate group name %r: (dim=%d, tag=%d) "
-                        "shadows (dim=%d, tag=%d). Use (dim, tag) "
-                        "tuple for explicit access.",
-                        name, d, t, existing[0], existing[1])
-                    continue
-                idx[name] = (d, t)
+                idx.setdefault(name, []).append((d, t))
             self._name_index = idx
         return self._name_index
 
-    def _resolve(self, target) -> dict:
+    @staticmethod
+    def _merge_infos(name: str, infos: list[dict]) -> dict:
+        """Union node/element data from multiple same-name PGs.
+
+        Mesh nodes and elements have a global ID space (independent of
+        geometric dimension), so it is meaningful to take the union.
+        Duplicates are kept only once.  Coordinates are reindexed to
+        match the deduplicated node IDs.
+        """
+        node_ids_concat = np.concatenate(
+            [np.asarray(i['node_ids'], dtype=np.int64) for i in infos])
+        coords_concat = np.concatenate(
+            [i['node_coords'] for i in infos], axis=0)
+        unique_ids, first_idx = np.unique(node_ids_concat, return_index=True)
+        merged: dict = {
+            'name':        name,
+            'node_ids':    _to_object(unique_ids),
+            'node_coords': coords_concat[first_idx],
+        }
+
+        elem_lists = [
+            np.asarray(i['element_ids'], dtype=np.int64)
+            for i in infos if 'element_ids' in i
+        ]
+        if elem_lists:
+            merged['element_ids'] = _to_object(np.unique(np.concatenate(elem_lists)))
+
+        # Per-type element groups: merge same type codes, concat ids + conn.
+        type_groups: dict[int, dict] = {}
+        for info in infos:
+            for etype, g in info.get('groups', {}).items():
+                ids = np.asarray(g['ids'])
+                conn = np.asarray(g['conn'])
+                if etype not in type_groups:
+                    type_groups[etype] = {'ids': ids.copy(), 'conn': conn.copy()}
+                else:
+                    # Dedup by element id (element IDs are globally unique).
+                    combined_ids = np.concatenate([type_groups[etype]['ids'], ids])
+                    combined_conn = np.vstack([type_groups[etype]['conn'], conn])
+                    _, uniq_idx = np.unique(combined_ids, return_index=True)
+                    type_groups[etype]['ids'] = combined_ids[uniq_idx]
+                    type_groups[etype]['conn'] = combined_conn[uniq_idx]
+        if type_groups:
+            merged['groups'] = type_groups
+
+        return merged
+
+    def _resolve(self, target, *, dim: int | None = None) -> dict:
         """Resolve *target* (str name, int tag, or (dim, tag) tuple)
-        to the internal info dict.  Raises KeyError on miss."""
+        to an info dict.
+
+        For a string matching multiple dims, returns a merged view
+        (union of node/element data). Pass ``dim=N`` to restrict the
+        lookup to a single dimension — useful when the same name
+        exists at more than one dim and you want just one.
+
+        Raises KeyError on miss.
+        """
         if isinstance(target, str):
             idx = self._build_name_index()
-            key = idx.get(target)
-            if key is None:
+            keys = idx.get(target)
+            if not keys:
                 raise KeyError(
                     f"No group named {target!r}. "
                     f"Available: {self.names()}")
-            return self._groups[key]
+            if dim is not None:
+                keys = [k for k in keys if k[0] == dim]
+                if not keys:
+                    raise KeyError(
+                        f"No group named {target!r} at dim={dim}. "
+                        f"Available dims for {target!r}: "
+                        f"{[k[0] for k in idx[target]]}"
+                    )
+            if len(keys) == 1:
+                return self._groups[keys[0]]
+            # Multi-dim: build merged view once, cache it.
+            cache_key = (target, dim)
+            cached = self._merged_cache.get(cache_key)
+            if cached is None:
+                cached = self._merge_infos(
+                    target, [self._groups[k] for k in keys])
+                self._merged_cache[cache_key] = cached
+            return cached
         if isinstance(target, tuple):
+            if dim is not None and int(target[0]) != int(dim):
+                raise ValueError(
+                    f"tuple target {target} has dim={target[0]} but "
+                    f"dim={dim} was passed — remove `dim=` or pass a "
+                    f"string name."
+                )
             info = self._groups.get(target)
             if info is None:
                 raise KeyError(
@@ -115,37 +190,43 @@ class NamedGroupSet:
             return info
         # int tag — search across dims (lowest first)
         for (d, t) in sorted(self._groups.keys()):
+            if dim is not None and d != dim:
+                continue
             if t == int(target):
                 return self._groups[(d, t)]
+        where = f" at dim={dim}" if dim is not None else ""
         raise KeyError(
-            f"No group with tag {target}. Available: {self.get_all()}")
+            f"No group with tag {target}{where}. Available: {self.get_all()}")
 
     # ── Name-first, direct-array access ──────────────────────
 
-    def node_ids(self, target) -> ndarray:
+    def node_ids(self, target, *, dim: int | None = None) -> ndarray:
         """Node IDs for a group.
 
         Parameters
         ----------
         target : str, int, or (dim, tag)
             Group name, tag, or ``(dim, tag)`` tuple.
+        dim : int, optional
+            Restrict the lookup to a single dimension when *target*
+            is a string matching multiple dims.
 
         Returns
         -------
         ndarray(N,) — object dtype (yields Python ``int``).
         """
-        return self._resolve(target)['node_ids']
+        return self._resolve(target, dim=dim)['node_ids']
 
-    def node_coords(self, target) -> ndarray:
+    def node_coords(self, target, *, dim: int | None = None) -> ndarray:
         """Node coordinates for a group.
 
         Returns
         -------
         ndarray(N, 3) — float64.
         """
-        return self._resolve(target)['node_coords']
+        return self._resolve(target, dim=dim)['node_coords']
 
-    def element_ids(self, target) -> ndarray:
+    def element_ids(self, target, *, dim: int | None = None) -> ndarray:
         """Element IDs for a group (dim >= 1 only).
 
         Returns
@@ -157,7 +238,7 @@ class NamedGroupSet:
         ValueError
             If the group has no element data (dim=0 groups).
         """
-        info = self._resolve(target)
+        info = self._resolve(target, dim=dim)
         eids = info.get('element_ids')
         if eids is None:
             name = info.get('name', str(target))
@@ -166,7 +247,7 @@ class NamedGroupSet:
                 f"(element data is only available for dim >= 1).")
         return eids
 
-    def connectivity(self, target) -> ndarray:
+    def connectivity(self, target, *, dim: int | None = None) -> ndarray:
         """Element connectivity for a group (dim >= 1 only).
 
         Returns
@@ -176,7 +257,7 @@ class NamedGroupSet:
         If the group has mixed element types, rows with fewer nodes
         are padded with ``-1``.
         """
-        info = self._resolve(target)
+        info = self._resolve(target, dim=dim)
         conn = info.get('connectivity')
         if conn is not None:
             return conn

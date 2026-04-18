@@ -36,9 +36,21 @@ class _Generation:
         ----------
         dim : 1 = edges only, 2 = surface mesh, 3 = volume mesh (default)
         """
+        self._validate_pre_mesh()
         gmsh.model.mesh.generate(dim)
         self._mesh._log(f"generate(dim={dim})")
         return self
+
+    def _validate_pre_mesh(self) -> None:
+        """Invoke ``validate_pre_mesh`` on every subsystem that has it.
+
+        Catches typo'd target names before the (slow) mesher runs.
+        """
+        session = self._mesh._parent
+        for attr in ("loads", "constraints", "masses"):
+            comp = getattr(session, attr, None)
+            if comp is not None and hasattr(comp, "validate_pre_mesh"):
+                comp.validate_pre_mesh()
 
     def set_order(self, order: int) -> "_Generation":
         """
