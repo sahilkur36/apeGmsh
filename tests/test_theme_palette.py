@@ -129,9 +129,13 @@ def test_observer_exception_is_logged_not_raised(fresh_manager, caplog):
     assert any("boom" in str(r.exc_info) for r in caplog.records if r.exc_info)
 
 
-def test_light_palette_has_contrast_adjusted_vtk_colors():
-    # Dark palette's warm white would be invisible on white bg —
-    # light palette must pick dark-ink content colors instead.
-    dark_pt = theme.PALETTE_DARK.dim_pt
-    light_pt = theme.PALETTE_LIGHT.dim_pt
-    assert sum(dark_pt) > sum(light_pt)
+def test_cad_neutral_palettes_have_black_wire_and_gray_fills():
+    # CAD-look: dim=0 (pt) and dim=1 (crv) are pure black across all themes;
+    # surface/volume fills are gray, with Paper slightly darker than the dark
+    # themes so the fill reads against near-white background.
+    dark_srf = theme.PALETTE_DARK.dim_srf
+    light_srf = theme.PALETTE_LIGHT.dim_srf
+    for pal in (theme.PALETTE_DARK, theme.PALETTE_LIGHT):
+        assert pal.dim_pt == (0, 0, 0)
+        assert pal.dim_crv == (0, 0, 0)
+    assert sum(dark_srf) > sum(light_srf)

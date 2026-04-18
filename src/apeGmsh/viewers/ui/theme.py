@@ -66,6 +66,10 @@ class Palette:
     dim_crv: tuple[int, int, int]
     dim_srf: tuple[int, int, int]
     dim_vol: tuple[int, int, int]
+    # ── Viewport — interaction state colors (RGB 0..255) ────────────
+    hover_rgb: tuple[int, int, int]             # hovered entity
+    pick_rgb: tuple[int, int, int]              # picked entity
+    hidden_rgb: tuple[int, int, int]            # hidden entity (usually bg-matched)
     # ── Viewport — body palette (for multi-body coloring; v2 consumer) ──
     body_palette: tuple[str, ...]
     # ── Viewport — model-viewer outlines (BRep silhouette + feature) ─
@@ -108,11 +112,15 @@ PALETTE_CATPPUCCIN_MOCHA = Palette(
     # Background: radial Base→Crust vignette (lighter center, deeper corners)
     background_mode="radial",
     bg_top="#313244", bg_bottom="#11111b",
-    # Idle per-dim (Mocha accents)
-    dim_pt=(245, 224, 220),     # Rosewater — node accent
-    dim_crv=(250, 179, 135),    # Peach — curves
-    dim_srf=(116, 199, 236),    # Sapphire — surfaces
-    dim_vol=(203, 166, 247),    # Mauve — volumes
+    # Idle per-dim (CAD-neutral — gray fills, black wire/points)
+    dim_pt=(0, 0, 0),           # black — nodes
+    dim_crv=(0, 0, 0),           # black — curves
+    dim_srf=(210, 210, 210),    # light gray — surfaces
+    dim_vol=(210, 210, 210),    # light gray — volumes
+    # Interaction — gold hover, red pick, black hidden (bg-matched)
+    hover_rgb=(255, 215, 0),
+    pick_rgb=(231, 76, 60),
+    hidden_rgb=(0, 0, 0),
     # Body palette (multi-body coloring — reserved for v2 consumer)
     body_palette=(
         "#74c7ec",  # Sapphire
@@ -121,17 +129,17 @@ PALETTE_CATPPUCCIN_MOCHA = Palette(
         "#cba6f7",  # Mauve
         "#f5e0dc",  # Rosewater
     ),
-    # Model-viewer outlines — Crust near-black with warm tint
-    outline_color="#11111b",
-    outline_silhouette_px=1.5,
-    outline_feature_px=1.0,
+    # Model-viewer outlines — pure black, heavier for CAD emphasis
+    outline_color="#000000",
+    outline_silhouette_px=2.5,
+    outline_feature_px=1.5,
     # Mesh-viewer lines — body-relative 30% shift, 70% opacity
     mesh_line_mode="body_relative",
     mesh_line_fixed_color="",
     mesh_line_opacity=0.70,
     mesh_line_shift_pct=0.30,
-    # Nodes — Rosewater
-    node_accent="#f5e0dc",
+    # Nodes — pure black
+    node_accent="#000000",
     # Axis scene
     grid_major="#45475a",       # Surface1
     grid_minor="#313244",       # Surface0
@@ -162,11 +170,15 @@ PALETTE_NEUTRAL_STUDIO = Palette(
     # Background: radial #4a4a4a center → #0f0f0f edge (lighter center for pronounced vignette)
     background_mode="radial",
     bg_top="#4a4a4a", bg_bottom="#0f0f0f",
-    # Idle per-dim (industrial muted palette)
-    dim_pt=(234, 230, 222),     # warm off-white — node accent
-    dim_crv=(169, 168, 120),    # olive — curves
-    dim_srf=(91, 141, 184),     # steel blue — surfaces
-    dim_vol=(74, 74, 74),       # graphite — volumes
+    # Idle per-dim (CAD-neutral — gray fills, black wire/points)
+    dim_pt=(0, 0, 0),           # black — nodes
+    dim_crv=(0, 0, 0),           # black — curves
+    dim_srf=(210, 210, 210),    # light gray — surfaces
+    dim_vol=(210, 210, 210),    # light gray — volumes
+    # Interaction — gold hover, red pick, black hidden (bg-matched)
+    hover_rgb=(255, 215, 0),
+    pick_rgb=(231, 76, 60),
+    hidden_rgb=(0, 0, 0),
     body_palette=(
         "#5B8DB8",  # steel blue
         "#A9A878",  # olive
@@ -174,17 +186,17 @@ PALETTE_NEUTRAL_STUDIO = Palette(
         "#A8C8B5",  # mint
         "#EAE6DE",  # warm off-white
     ),
-    # Model-viewer outlines — pure black
+    # Model-viewer outlines — pure black, heavier for CAD emphasis
     outline_color="#000000",
-    outline_silhouette_px=1.5,
-    outline_feature_px=1.0,
+    outline_silhouette_px=2.5,
+    outline_feature_px=1.5,
     # Mesh-viewer lines
     mesh_line_mode="body_relative",
     mesh_line_fixed_color="",
     mesh_line_opacity=0.70,
     mesh_line_shift_pct=0.30,
-    # Nodes — warm off-white
-    node_accent="#EAE6DE",
+    # Nodes — pure black
+    node_accent="#000000",
     # Axis scene
     grid_major="#3a3a3a",
     grid_minor="#2a2a2a",
@@ -213,11 +225,15 @@ PALETTE_PAPER = Palette(
     # Background: flat #FAFAFA with soft corner falloff
     background_mode="flat_corner",
     bg_top="#FAFAFA", bg_bottom="#EFEFEF",
-    # Idle per-dim (more saturated on white so colors don't turn to mud)
-    dim_pt=(0, 0, 0),           # pure black — node accent
-    dim_crv=(47, 47, 48),       # rubber black — curves
-    dim_srf=(139, 168, 196),    # steel blue — surfaces
-    dim_vol=(185, 182, 129),    # olive-tan — volumes
+    # Idle per-dim (CAD-neutral — slightly darker gray on white)
+    dim_pt=(0, 0, 0),           # black — nodes
+    dim_crv=(0, 0, 0),           # black — curves
+    dim_srf=(192, 192, 192),    # medium gray — surfaces
+    dim_vol=(192, 192, 192),    # medium gray — volumes
+    # Interaction — amber hover (tuned for light bg), red pick, white hidden
+    hover_rgb=(224, 168, 0),
+    pick_rgb=(193, 39, 45),
+    hidden_rgb=(250, 250, 250),
     body_palette=(
         "#8BA8C4",  # steel blue
         "#B9B681",  # olive-tan
@@ -225,10 +241,10 @@ PALETTE_PAPER = Palette(
         "#2F2F30",  # rubber black
         "#E8E0C8",  # cream
     ),
-    # Model-viewer outlines — heavier on white
+    # Model-viewer outlines — heavier on white, CAD emphasis
     outline_color="#000000",
-    outline_silhouette_px=2.0,
-    outline_feature_px=1.2,
+    outline_silhouette_px=3.0,
+    outline_feature_px=1.8,
     # Mesh-viewer lines — neutral gray, low opacity
     mesh_line_mode="fixed",
     mesh_line_fixed_color="#303030",

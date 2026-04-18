@@ -22,7 +22,7 @@ import pyvista as pv
 
 from apeGmsh._types import DimTag
 from ..core.entity_registry import EntityRegistry
-from ..core.color_manager import IDLE_COLORS
+from ..ui.theme import THEME
 from .glyph_points import build_point_glyphs
 
 
@@ -272,11 +272,12 @@ def build_brep_scene(
             except Exception:
                 pass
         if centers:
+            _pt_rgb = np.array(THEME.current.dim_pt, dtype=np.uint8)
             mesh, actor, cell_to_dt, centroids = build_point_glyphs(
                 plotter, np.array(centers), tags_d0,
                 model_diagonal=diag,
                 point_size=point_size,
-                idle_color=IDLE_COLORS[0],
+                idle_color=_pt_rgb,
             )
             d0_bboxes = {dt: all_bboxes[dt] for dt in centroids if dt in all_bboxes}
             d0_kwargs = {
@@ -338,7 +339,8 @@ def build_brep_scene(
             poly = pv.PolyData()
             poly.points = merged_pts
             poly.lines = merged_lines
-            colors = np.tile(IDLE_COLORS[1], (len(etags), 1))
+            _d1_rgb = np.array(THEME.current.dim_crv, dtype=np.uint8)
+            colors = np.tile(_d1_rgb, (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
             d1_kwargs: dict[str, Any] = dict(
@@ -400,18 +402,18 @@ def build_brep_scene(
             merged_pts = np.vstack(pts_parts)
             merged_faces = np.concatenate(faces_parts)
             poly = pv.PolyData(merged_pts, faces=merged_faces)
-            colors = np.tile(IDLE_COLORS[2], (len(etags), 1))
-            poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
-            poly.cell_data["colors"] = colors
             # Flat matte per aesthetic §2.1 — model viewer mimics
             # pedagogical CAD (SolidWorks / Fusion "shaded with edges").
-            from ..ui.theme import THEME as _THEME
-            _pal = _THEME.current
+            _pal = THEME.current
+            _d2_rgb = np.array(_pal.dim_srf, dtype=np.uint8)
+            colors = np.tile(_d2_rgb, (len(etags), 1))
+            poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
+            poly.cell_data["colors"] = colors
             d2_kwargs: dict[str, Any] = dict(
                 scalars="colors", rgb=True,
                 opacity=surface_opacity,
                 show_edges=show_surface_edges,
-                edge_color="#2C4A6E",
+                edge_color="#000000",
                 line_width=0.5,
                 smooth_shading=False,
                 diffuse=0.9, specular=0.0,
@@ -501,12 +503,12 @@ def build_brep_scene(
             merged_pts = np.vstack(pts_parts)
             merged_faces = np.concatenate(faces_parts)
             poly = pv.PolyData(merged_pts, faces=merged_faces)
-            colors = np.tile(IDLE_COLORS[3], (len(etags), 1))
+            # Flat matte + silhouette for volumes (CAD-like presentation)
+            _pal = THEME.current
+            _d3_rgb = np.array(_pal.dim_vol, dtype=np.uint8)
+            colors = np.tile(_d3_rgb, (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
-            # Flat matte + silhouette for volumes (CAD-like presentation)
-            from ..ui.theme import THEME as _THEME
-            _pal = _THEME.current
             d3_kwargs: dict[str, Any] = dict(
                 scalars="colors", rgb=True,
                 opacity=vol_alpha,

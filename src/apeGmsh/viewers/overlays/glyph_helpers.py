@@ -31,7 +31,7 @@ def rebuild_brep_point_glyphs(
     updating ``point_size`` in the stored kwargs.
     """
     from ..scene.glyph_points import build_point_glyphs
-    from ..core.color_manager import IDLE_COLORS
+    from ..ui.theme import THEME
 
     if 0 not in registry.dim_actors:
         return
@@ -57,7 +57,7 @@ def rebuild_brep_point_glyphs(
         plotter, centers, tags,
         model_diagonal=diag,
         point_size=size,
-        idle_color=np.array(IDLE_COLORS[0], dtype=np.uint8),
+        idle_color=np.array(THEME.current.dim_pt, dtype=np.uint8),
     )
     registry.swap_dim(0, new_mesh, new_actor)
 

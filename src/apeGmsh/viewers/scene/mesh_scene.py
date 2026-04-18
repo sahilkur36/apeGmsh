@@ -24,6 +24,7 @@ import pyvista as pv
 
 from apeGmsh._types import DimTag
 from ..core.entity_registry import EntityRegistry
+from ..ui.theme import THEME
 from .glyph_points import build_node_cloud
 
 
@@ -63,9 +64,6 @@ PARTITION_COLORS = [
     "#dcbeff", "#9A6324", "#fffac8", "#800000", "#aaffc3",
     "#808000", "#ffd8b1", "#000075", "#a9a9a9",
 ]
-
-DEFAULT_MESH_RGB = np.array([91, 141, 184], dtype=np.uint8)  # #5B8DB8
-
 
 def elem_type_category(name: str) -> str:
     """Map a Gmsh element type name to a colour-palette key."""
@@ -245,14 +243,22 @@ def build_mesh_scene(
     surface_opacity: float = 1.0,
     show_surface_edges: bool = True,
     node_marker_size: float = 6.0,
-    node_color: str = "#FF6600",
-    edge_color: str = "#2C4A6E",
+    node_color: str | None = None,
+    edge_color: str | None = None,
     verbose: bool = False,
 ) -> MeshSceneData:
     """Build batched mesh actors and return a :class:`MeshSceneData`.
 
     Always uses the batched path (one actor per dim).
+    ``node_color`` / ``edge_color`` default to the active palette's
+    ``node_accent`` / black at render time when left as ``None``.
     """
+    _pal = THEME.current
+    if node_color is None:
+        node_color = _pal.node_accent
+    if edge_color is None:
+        edge_color = "#000000"
+
     t0 = time.perf_counter()
     registry = EntityRegistry()
 
@@ -352,7 +358,14 @@ def build_mesh_scene(
         cells_flat = np.concatenate(all_cells_parts)
         cell_types_flat = np.concatenate(all_types_parts)
         grid = pv.UnstructuredGrid(cells_flat, cell_types_flat, node_coords)
-        colors = np.tile(DEFAULT_MESH_RGB, (grid.n_cells, 1))
+        _idle_rgb = np.array(
+            _pal.dim_pt if dim == 0 else
+            _pal.dim_crv if dim == 1 else
+            _pal.dim_srf if dim == 2 else
+            _pal.dim_vol,
+            dtype=np.uint8,
+        )
+        colors = np.tile(_idle_rgb, (grid.n_cells, 1))
         grid["colors"] = colors
         grid.cell_data["entity_tag"] = np.array(all_entity_tags, dtype=np.int64)
 
@@ -367,6 +380,20 @@ def build_mesh_scene(
             render_lines_as_tubes=(dim == 1),
             smooth_shading=False, pickable=True,
         )
+        # Flat matte + silhouette on dim=2/3 — mirrors brep_scene so the
+        # two viewers present the same CAD-style outline.
+        if dim >= 2:
+            dim_kwargs.update(
+                diffuse=0.9, specular=0.0,
+                silhouette=dict(
+                    color=_pal.outline_color,
+                    line_width=(
+                        _pal.outline_silhouette_px if dim == 3
+                        else _pal.outline_feature_px
+                    ),
+                    feature_angle=25,
+                ),
+            )
         actor = plotter.add_mesh(grid, reset_camera=False, **dim_kwargs)
 
         registry.register_dim(

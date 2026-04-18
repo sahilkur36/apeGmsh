@@ -108,12 +108,16 @@ def build_node_cloud(
     *,
     model_diagonal: float,
     marker_size: float = 6.0,
-    color: str = "#FF6600",
+    color: str | None = None,
 ) -> tuple[pv.PolyData, Any]:
     """Build a node-cloud glyph overlay (not pickable).
 
+    ``color`` defaults to the active palette's ``node_accent`` when None.
     Returns (cloud_polydata, actor).
     """
+    if color is None:
+        from ..ui.theme import THEME
+        color = THEME.current.node_accent
     cloud = pv.PolyData(node_coords)
     glyph_r = 0.003 * model_diagonal * max(0.1, marker_size / 10.0)
     sphere_src = pv.Sphere(

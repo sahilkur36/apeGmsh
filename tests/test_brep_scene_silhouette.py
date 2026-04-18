@@ -48,8 +48,8 @@ def test_outline_matches_active_theme(gmsh_box):
             kw = registry._add_mesh_kwargs.get(3, {})
             sil = kw.get("silhouette", {})
             assert sil.get("color") == "#000000"
-            # Paper silhouette is heavier (2.0 px) than dark themes (1.5)
-            assert sil.get("line_width") == pytest.approx(2.0)
+            # Paper silhouette is heavier (3.0 px) than dark themes (2.5)
+            assert sil.get("line_width") == pytest.approx(3.0)
         finally:
             p.close()
     finally:

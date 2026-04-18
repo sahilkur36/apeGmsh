@@ -25,12 +25,12 @@ if TYPE_CHECKING:
 
 
 # ======================================================================
-# Default color palette (Catppuccin-inspired, protanopia-safe)
+# Palette-sourced colors
+#
+# Every RGB value flows from the active ``Palette`` at the moment it is
+# needed — no module-level snapshots, no hardcoded hex fallbacks. This
+# makes theme switches coherent: one source of truth.
 # ======================================================================
-
-PICK_RGB   = np.array([231, 76, 60],  dtype=np.uint8)   # #E74C3C red
-HOVER_RGB  = np.array([255, 215, 0],  dtype=np.uint8)   # #FFD700 gold
-HIDDEN_RGB = np.array([0, 0, 0],      dtype=np.uint8)   # invisible on dark bg
 
 
 def _theme_idle_colors() -> dict[int, np.ndarray]:
@@ -45,15 +45,19 @@ def _theme_idle_colors() -> dict[int, np.ndarray]:
     }
 
 
-# Back-compat: a snapshot of the dark-theme idle palette. Prefer
-# ``_theme_idle_colors()`` for anything that should respect the active
-# theme; this constant exists for call sites that imported it directly.
-IDLE_COLORS: dict[int, np.ndarray] = {
-    0: np.array([232, 213, 183], dtype=np.uint8),  # #E8D5B7 warm white
-    1: np.array([170, 170, 170], dtype=np.uint8),  # #AAAAAA mid grey
-    2: np.array([91, 141, 184],  dtype=np.uint8),  # #5B8DB8 steel blue
-    3: np.array([90, 110, 130],  dtype=np.uint8),  # #5A6E82 slate
-}
+def _theme_hover_rgb() -> np.ndarray:
+    from apeGmsh.viewers.ui.theme import THEME
+    return np.array(THEME.current.hover_rgb, dtype=np.uint8)
+
+
+def _theme_pick_rgb() -> np.ndarray:
+    from apeGmsh.viewers.ui.theme import THEME
+    return np.array(THEME.current.pick_rgb, dtype=np.uint8)
+
+
+def _theme_hidden_rgb() -> np.ndarray:
+    from apeGmsh.viewers.ui.theme import THEME
+    return np.array(THEME.current.hidden_rgb, dtype=np.uint8)
 
 
 class ColorManager:
@@ -64,9 +68,7 @@ class ColorManager:
 
     __slots__ = (
         "_registry",
-        "_pick_rgb",
-        "_hover_rgb",
-        "_hidden_rgb",
+        "_pick_override",
         "_idle_fn",
     )
 
@@ -77,10 +79,22 @@ class ColorManager:
         pick_color: np.ndarray | None = None,
     ) -> None:
         self._registry = registry
-        self._pick_rgb = pick_color if pick_color is not None else PICK_RGB
-        self._hover_rgb = HOVER_RGB
-        self._hidden_rgb = HIDDEN_RGB
+        # ``_pick_override`` lets callers pin a pick colour (e.g. user pref).
+        # When ``None``, the active palette's ``pick_rgb`` is used.
+        self._pick_override: np.ndarray | None = pick_color
         self._idle_fn: Callable[["DimTag"], np.ndarray] = self._default_idle
+
+    @property
+    def _pick_rgb(self) -> np.ndarray:
+        return self._pick_override if self._pick_override is not None else _theme_pick_rgb()
+
+    @property
+    def _hover_rgb(self) -> np.ndarray:
+        return _theme_hover_rgb()
+
+    @property
+    def _hidden_rgb(self) -> np.ndarray:
+        return _theme_hidden_rgb()
 
     # ------------------------------------------------------------------
     # Idle color strategy
@@ -195,8 +209,8 @@ class ColorManager:
             mesh.cell_data["colors"] = colors
 
     def set_pick_color(self, rgb: np.ndarray) -> None:
-        """Change the pick highlight color."""
-        self._pick_rgb = np.asarray(rgb, dtype=np.uint8)
+        """Override the palette's pick highlight color (user preference)."""
+        self._pick_override = np.asarray(rgb, dtype=np.uint8)
 
     # ------------------------------------------------------------------
     # Internals

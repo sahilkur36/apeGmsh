@@ -624,15 +624,9 @@ class MeshViewer:
 
         # ── Core modules ────────────────────────────────────────────
         color_mgr = ColorManager(registry)
-        # Mesh scene uses a single uniform color for all dims — override
-        # the default per-dim idle palette so hover→unhover restores the
-        # correct colour instead of a different shade.
-        import numpy as _np
-
-        def _mesh_idle(_dt):
-            return _np.array(THEME.current.dim_srf, dtype=_np.uint8)
-
-        color_mgr.set_idle_fn(_mesh_idle)
+        # With the CAD-neutral palette (dim_pt/crv black, dim_srf/vol gray)
+        # the default per-dim idle function already gives a uniform look
+        # while keeping nodes black — no override needed.
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
         pick_engine = PickEngine(plotter, registry)
 
