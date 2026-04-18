@@ -403,13 +403,23 @@ def build_brep_scene(
             colors = np.tile(IDLE_COLORS[2], (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
+            # Flat matte per aesthetic §2.1 — model viewer mimics
+            # pedagogical CAD (SolidWorks / Fusion "shaded with edges").
+            from ..ui.theme import THEME as _THEME
+            _pal = _THEME.current
             d2_kwargs: dict[str, Any] = dict(
                 scalars="colors", rgb=True,
                 opacity=surface_opacity,
                 show_edges=show_surface_edges,
                 edge_color="#2C4A6E",
                 line_width=0.5,
-                smooth_shading=True,
+                smooth_shading=False,
+                diffuse=0.9, specular=0.0,
+                silhouette=dict(
+                    color=_pal.outline_color,
+                    line_width=_pal.outline_feature_px,
+                    feature_angle=25,
+                ),
                 pickable=True,
             )
             actor = plotter.add_mesh(poly, reset_camera=False, **d2_kwargs)
@@ -494,10 +504,19 @@ def build_brep_scene(
             colors = np.tile(IDLE_COLORS[3], (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
+            # Flat matte + silhouette for volumes (CAD-like presentation)
+            from ..ui.theme import THEME as _THEME
+            _pal = _THEME.current
             d3_kwargs: dict[str, Any] = dict(
                 scalars="colors", rgb=True,
                 opacity=vol_alpha,
-                smooth_shading=True,
+                smooth_shading=False,
+                diffuse=0.9, specular=0.0,
+                silhouette=dict(
+                    color=_pal.outline_color,
+                    line_width=_pal.outline_silhouette_px,
+                    feature_angle=25,
+                ),
                 pickable=True,
             )
             actor = plotter.add_mesh(poly, reset_camera=False, **d3_kwargs)
