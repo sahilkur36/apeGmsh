@@ -262,11 +262,295 @@ PALETTE_PAPER = Palette(
 )
 
 
+# ──────────────────────────────────────────────────────────────────────
+# Catppuccin Latte (light counterpart to Mocha — warm off-white)
+# ──────────────────────────────────────────────────────────────────────
+
+PALETTE_CATPPUCCIN_LATTE = Palette(
+    name="catppuccin_latte",
+    # Chrome — Latte spec
+    base="#eff1f5", mantle="#e6e9ef",
+    surface0="#ccd0da", surface1="#bcc0cc", surface2="#acb0be",
+    text="#4c4f69", subtext="#5c5f77", overlay="#6c6f85",
+    accent="#1e66f5", icon="#4c4f69",
+    success="#40a02b", warning="#df8e1d",
+    error="#d20f39", info="#1e66f5",
+    background_mode="flat_corner",
+    bg_top="#eff1f5", bg_bottom="#dce0e8",
+    dim_pt=(0, 0, 0), dim_crv=(0, 0, 0),
+    dim_srf=(192, 192, 192), dim_vol=(192, 192, 192),
+    hover_rgb=(223, 142, 29),       # Latte Yellow
+    pick_rgb=(210, 15, 57),         # Latte Red
+    hidden_rgb=(239, 241, 245),     # base
+    body_palette=(
+        "#1e66f5",  # Blue
+        "#fe640b",  # Peach
+        "#40a02b",  # Green
+        "#8839ef",  # Mauve
+        "#dc8a78",  # Rosewater
+    ),
+    outline_color="#000000",
+    outline_silhouette_px=3.0, outline_feature_px=1.8,
+    mesh_edge_color="#303030",
+    node_accent="#000000",
+    origin_marker_color="#fe640b",  # Peach
+    grid_major="#bcc0cc", grid_minor="#ccd0da",
+    bbox_color="#000000", bbox_line_px=1.0,
+    cmap_seq="cividis", cmap_div="BrBG",
+    ao_intensity="light",
+    corner_triad_default=False,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Solarized Dark
+# ──────────────────────────────────────────────────────────────────────
+
+PALETTE_SOLARIZED_DARK = Palette(
+    name="solarized_dark",
+    # Chrome — Solarized dark (base03..base3)
+    base="#002b36", mantle="#073642",
+    surface0="#0f4a58", surface1="#586e75", surface2="#657b83",
+    text="#eee8d5", subtext="#93a1a1", overlay="#839496",
+    accent="#268bd2", icon="#eee8d5",
+    success="#859900", warning="#b58900",
+    error="#dc322f", info="#268bd2",
+    background_mode="radial",
+    bg_top="#073642", bg_bottom="#00212b",
+    dim_pt=(0, 0, 0), dim_crv=(0, 0, 0),
+    dim_srf=(210, 210, 210), dim_vol=(210, 210, 210),
+    hover_rgb=(181, 137, 0),        # Solarized yellow
+    pick_rgb=(220, 50, 47),         # Solarized red
+    hidden_rgb=(0, 43, 54),         # base03
+    body_palette=(
+        "#268bd2",  # blue
+        "#cb4b16",  # orange
+        "#859900",  # green
+        "#6c71c4",  # violet
+        "#2aa198",  # cyan
+    ),
+    outline_color="#000000",
+    outline_silhouette_px=2.5, outline_feature_px=1.5,
+    mesh_edge_color="#000000",
+    node_accent="#000000",
+    origin_marker_color="#b58900",  # yellow
+    grid_major="#586e75", grid_minor="#073642",
+    bbox_color="#93a1a1", bbox_line_px=1.0,
+    cmap_seq="viridis", cmap_div="coolwarm",
+    ao_intensity="moderate",
+    corner_triad_default=True,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Solarized Light
+# ──────────────────────────────────────────────────────────────────────
+
+PALETTE_SOLARIZED_LIGHT = Palette(
+    name="solarized_light",
+    base="#fdf6e3", mantle="#eee8d5",
+    surface0="#e1dac0", surface1="#93a1a1", surface2="#839496",
+    text="#073642", subtext="#586e75", overlay="#657b83",
+    accent="#268bd2", icon="#073642",
+    success="#859900", warning="#b58900",
+    error="#dc322f", info="#268bd2",
+    background_mode="flat_corner",
+    bg_top="#fdf6e3", bg_bottom="#eee8d5",
+    dim_pt=(0, 0, 0), dim_crv=(0, 0, 0),
+    dim_srf=(192, 192, 192), dim_vol=(192, 192, 192),
+    hover_rgb=(181, 137, 0),
+    pick_rgb=(220, 50, 47),
+    hidden_rgb=(253, 246, 227),
+    body_palette=(
+        "#268bd2", "#cb4b16", "#859900", "#6c71c4", "#2aa198",
+    ),
+    outline_color="#000000",
+    outline_silhouette_px=3.0, outline_feature_px=1.8,
+    mesh_edge_color="#303030",
+    node_accent="#000000",
+    origin_marker_color="#cb4b16",  # orange
+    grid_major="#c9c3a8", grid_minor="#e1dac0",
+    bbox_color="#073642", bbox_line_px=1.0,
+    cmap_seq="cividis", cmap_div="BrBG",
+    ao_intensity="light",
+    corner_triad_default=False,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Nord (cool Nordic dark)
+# ──────────────────────────────────────────────────────────────────────
+
+PALETTE_NORD = Palette(
+    name="nord",
+    base="#2e3440", mantle="#242933",
+    surface0="#3b4252", surface1="#434c5e", surface2="#4c566a",
+    text="#eceff4", subtext="#d8dee9", overlay="#a3b1c2",
+    accent="#88c0d0", icon="#eceff4",
+    success="#a3be8c", warning="#ebcb8b",
+    error="#bf616a", info="#81a1c1",
+    background_mode="radial",
+    bg_top="#3b4252", bg_bottom="#1b1f27",
+    dim_pt=(0, 0, 0), dim_crv=(0, 0, 0),
+    dim_srf=(210, 210, 210), dim_vol=(210, 210, 210),
+    hover_rgb=(235, 203, 139),      # Nord13 yellow
+    pick_rgb=(191, 97, 106),        # Nord11 red
+    hidden_rgb=(46, 52, 64),        # base
+    body_palette=(
+        "#88c0d0",  # frost cyan
+        "#d08770",  # aurora orange
+        "#a3be8c",  # aurora green
+        "#b48ead",  # aurora purple
+        "#8fbcbb",  # frost teal
+    ),
+    outline_color="#000000",
+    outline_silhouette_px=2.5, outline_feature_px=1.5,
+    mesh_edge_color="#000000",
+    node_accent="#000000",
+    origin_marker_color="#ebcb8b",  # yellow
+    grid_major="#434c5e", grid_minor="#3b4252",
+    bbox_color="#a3b1c2", bbox_line_px=1.0,
+    cmap_seq="viridis", cmap_div="coolwarm",
+    ao_intensity="moderate",
+    corner_triad_default=True,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Tokyo Night (modern dark, purple/blue accents)
+# ──────────────────────────────────────────────────────────────────────
+
+PALETTE_TOKYO_NIGHT = Palette(
+    name="tokyo_night",
+    base="#1a1b26", mantle="#16161e",
+    surface0="#24283b", surface1="#414868", surface2="#565f89",
+    text="#c0caf5", subtext="#a9b1d6", overlay="#787c99",
+    accent="#7aa2f7", icon="#c0caf5",
+    success="#9ece6a", warning="#e0af68",
+    error="#f7768e", info="#7aa2f7",
+    background_mode="radial",
+    bg_top="#24283b", bg_bottom="#0d0e14",
+    dim_pt=(0, 0, 0), dim_crv=(0, 0, 0),
+    dim_srf=(210, 210, 210), dim_vol=(210, 210, 210),
+    hover_rgb=(224, 175, 104),      # Tokyo yellow
+    pick_rgb=(247, 118, 142),       # Tokyo red
+    hidden_rgb=(26, 27, 38),
+    body_palette=(
+        "#7aa2f7",  # blue
+        "#ff9e64",  # orange
+        "#9ece6a",  # green
+        "#bb9af7",  # purple
+        "#7dcfff",  # cyan
+    ),
+    outline_color="#000000",
+    outline_silhouette_px=2.5, outline_feature_px=1.5,
+    mesh_edge_color="#000000",
+    node_accent="#000000",
+    origin_marker_color="#ff9e64",  # orange
+    grid_major="#414868", grid_minor="#24283b",
+    bbox_color="#787c99", bbox_line_px=1.0,
+    cmap_seq="viridis", cmap_div="coolwarm",
+    ao_intensity="moderate",
+    corner_triad_default=True,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Gruvbox Dark (earthy retro)
+# ──────────────────────────────────────────────────────────────────────
+
+PALETTE_GRUVBOX_DARK = Palette(
+    name="gruvbox_dark",
+    base="#282828", mantle="#1d2021",
+    surface0="#3c3836", surface1="#504945", surface2="#665c54",
+    text="#ebdbb2", subtext="#d5c4a1", overlay="#bdae93",
+    accent="#83a598", icon="#ebdbb2",
+    success="#b8bb26", warning="#fabd2f",
+    error="#fb4934", info="#83a598",
+    background_mode="radial",
+    bg_top="#3c3836", bg_bottom="#1d2021",
+    dim_pt=(0, 0, 0), dim_crv=(0, 0, 0),
+    dim_srf=(210, 210, 210), dim_vol=(210, 210, 210),
+    hover_rgb=(250, 189, 47),       # Gruvbox yellow
+    pick_rgb=(251, 73, 52),         # Gruvbox red
+    hidden_rgb=(40, 40, 40),
+    body_palette=(
+        "#83a598",  # aqua/blue
+        "#fe8019",  # orange
+        "#b8bb26",  # green
+        "#d3869b",  # pink
+        "#8ec07c",  # teal
+    ),
+    outline_color="#000000",
+    outline_silhouette_px=2.5, outline_feature_px=1.5,
+    mesh_edge_color="#000000",
+    node_accent="#000000",
+    origin_marker_color="#fe8019",  # orange
+    grid_major="#504945", grid_minor="#3c3836",
+    bbox_color="#a89984", bbox_line_px=1.0,
+    cmap_seq="viridis", cmap_div="coolwarm",
+    ao_intensity="moderate",
+    corner_triad_default=True,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# High Contrast (accessibility — pure black/white/yellow)
+# ──────────────────────────────────────────────────────────────────────
+
+PALETTE_HIGH_CONTRAST = Palette(
+    name="high_contrast",
+    base="#000000", mantle="#000000",
+    surface0="#1a1a1a", surface1="#333333", surface2="#4d4d4d",
+    text="#ffffff", subtext="#e0e0e0", overlay="#b0b0b0",
+    accent="#ffff00", icon="#ffffff",
+    success="#00ff00", warning="#ffff00",
+    error="#ff0000", info="#00ffff",
+    background_mode="flat_corner",
+    bg_top="#000000", bg_bottom="#000000",
+    dim_pt=(255, 255, 255),         # white — max contrast on black
+    dim_crv=(255, 255, 255),        # white
+    dim_srf=(210, 210, 210),        # light gray
+    dim_vol=(210, 210, 210),
+    hover_rgb=(255, 255, 0),        # pure yellow
+    pick_rgb=(255, 0, 0),           # pure red
+    hidden_rgb=(0, 0, 0),
+    body_palette=(
+        "#ffff00", "#00ffff", "#ff00ff", "#00ff00", "#ff8800",
+    ),
+    outline_color="#ffffff",        # white outlines on black bg
+    outline_silhouette_px=3.0, outline_feature_px=2.0,
+    mesh_edge_color="#ffffff",
+    node_accent="#ffff00",          # yellow nodes — visible on black
+    origin_marker_color="#ff00ff",  # magenta — unmistakable
+    grid_major="#4d4d4d", grid_minor="#1a1a1a",
+    bbox_color="#ffffff", bbox_line_px=1.5,
+    cmap_seq="viridis", cmap_div="coolwarm",
+    ao_intensity="none",
+    corner_triad_default=True,
+)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Registry
+# ──────────────────────────────────────────────────────────────────────
+
 PALETTES: dict[str, Palette] = {
     "catppuccin_mocha": PALETTE_CATPPUCCIN_MOCHA,
+    "catppuccin_latte": PALETTE_CATPPUCCIN_LATTE,
     "neutral_studio":   PALETTE_NEUTRAL_STUDIO,
     "paper":            PALETTE_PAPER,
+    "solarized_dark":   PALETTE_SOLARIZED_DARK,
+    "solarized_light":  PALETTE_SOLARIZED_LIGHT,
+    "nord":             PALETTE_NORD,
+    "tokyo_night":      PALETTE_TOKYO_NIGHT,
+    "gruvbox_dark":     PALETTE_GRUVBOX_DARK,
+    "high_contrast":    PALETTE_HIGH_CONTRAST,
 }
+
+# Frozen snapshot of built-in theme ids — used to protect them from
+# custom-theme overrides / deletion.
+_BUILTIN_THEME_IDS: frozenset[str] = frozenset(PALETTES.keys())
 
 
 # ──────────────────────────────────────────────────────────────────────
@@ -382,6 +666,22 @@ def build_stylesheet(p: Palette) -> str:
         border-radius: 3px;
         padding: 2px 6px;
         font-size: 11px;
+    }}
+    /* Popup list (separate widget — inherits OS defaults without this) */
+    QComboBox QAbstractItemView {{
+        background-color: {p.base};
+        color: {p.text};
+        selection-background-color: {p.surface1};
+        selection-color: {p.text};
+        border: 1px solid {p.surface0};
+        outline: 0;
+    }}
+    QComboBox QAbstractItemView::item {{
+        padding: 4px 8px;
+        color: {p.text};
+    }}
+    QComboBox QAbstractItemView::item:hover {{
+        background-color: {p.surface1};
     }}
     QSpinBox, QDoubleSpinBox {{
         background-color: {p.surface0};
@@ -536,14 +836,119 @@ class ThemeManager:
     Observers are called with the new ``Palette`` whenever
     ``set_theme`` changes the current theme. Intended to be a singleton
     (``THEME``) but instantiable for tests.
+
+    Custom user-authored themes are loaded from the per-user theme
+    directory (``<config>/apeGmsh/themes/*.json``) at construction and
+    merged into ``PALETTES``. Built-ins always take precedence — a custom
+    theme with a built-in name is ignored with a warning.
     """
 
     _settings_org = "apeGmsh"
     _settings_app = "viewer"
 
     def __init__(self) -> None:
+        self._load_custom_themes()
         self._current: Palette = self._load_saved() or PALETTE_DARK
         self._observers: list[Callable[[Palette], None]] = []
+
+    # ── custom theme persistence ─────────────────────────────────────
+
+    @classmethod
+    def themes_dir(cls) -> "object":
+        """Platform-appropriate directory holding custom-theme JSON files."""
+        from pathlib import Path
+        try:
+            from qtpy.QtCore import QStandardPaths
+            root = QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.AppConfigLocation
+            )
+            if root:
+                return Path(root) / "apeGmsh" / "themes"
+        except Exception:
+            pass
+        return Path.home() / ".config" / "apeGmsh" / "themes"
+
+    @classmethod
+    def _load_custom_themes(cls) -> None:
+        """Scan the themes dir and merge any user palettes into ``PALETTES``."""
+        import json
+        import logging
+        from dataclasses import fields
+
+        directory = cls.themes_dir()
+        try:
+            if not directory.exists():  # type: ignore[union-attr]
+                return
+        except Exception:
+            return
+
+        log = logging.getLogger("apeGmsh.viewer.theme")
+        valid = {f.name for f in fields(Palette)}
+
+        for path in sorted(directory.glob("*.json")):  # type: ignore[union-attr]
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(data, dict):
+                    continue
+                # Coerce list-of-3 ints back to tuples (JSON has no tuple).
+                for k in ("dim_pt", "dim_crv", "dim_srf", "dim_vol",
+                          "hover_rgb", "pick_rgb", "hidden_rgb"):
+                    if k in data and isinstance(data[k], list):
+                        data[k] = tuple(data[k])
+                if "body_palette" in data and isinstance(data["body_palette"], list):
+                    data["body_palette"] = tuple(data["body_palette"])
+                kept = {k: v for k, v in data.items() if k in valid}
+                if "name" not in kept:
+                    log.warning("skipping theme %s: no 'name' field", path)
+                    continue
+                pal_name = str(kept["name"])
+                if pal_name in _BUILTIN_THEME_IDS:
+                    log.warning(
+                        "skipping custom theme %s: name %r collides with built-in",
+                        path, pal_name,
+                    )
+                    continue
+                PALETTES[pal_name] = Palette(**kept)
+            except Exception:
+                log.exception("failed to load custom theme %s", path)
+
+    @classmethod
+    def save_custom_theme(cls, palette: Palette) -> "object":
+        """Persist ``palette`` to the themes dir. Returns the file path."""
+        import json
+        from dataclasses import asdict
+        directory = cls.themes_dir()
+        directory.mkdir(parents=True, exist_ok=True)  # type: ignore[union-attr]
+        if palette.name in _BUILTIN_THEME_IDS:
+            raise ValueError(
+                f"{palette.name!r} is a built-in theme and cannot be overwritten",
+            )
+        path = directory / f"{palette.name}.json"  # type: ignore[union-attr, operator]
+        payload = json.dumps(asdict(palette), indent=2, sort_keys=True)
+        path.write_text(payload, encoding="utf-8")
+        PALETTES[palette.name] = palette
+        return path
+
+    @classmethod
+    def delete_custom_theme(cls, name: str) -> bool:
+        """Remove a custom theme from disk and ``PALETTES``. Returns True if deleted."""
+        if name in _BUILTIN_THEME_IDS:
+            raise ValueError(f"{name!r} is a built-in theme and cannot be deleted")
+        directory = cls.themes_dir()
+        path = directory / f"{name}.json"  # type: ignore[union-attr, operator]
+        removed = False
+        try:
+            path.unlink()
+            removed = True
+        except FileNotFoundError:
+            pass
+        except Exception:
+            import logging
+            logging.getLogger("apeGmsh.viewer.theme").exception(
+                "failed to delete custom theme %s", name,
+            )
+        PALETTES.pop(name, None)
+        return removed
 
     @property
     def current(self) -> Palette:

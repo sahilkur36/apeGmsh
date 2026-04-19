@@ -26,13 +26,17 @@ def fresh_manager(tmp_path, monkeypatch):
     return theme.ThemeManager()
 
 
-def test_all_three_palettes_defined():
-    # Canonical ids (see apeGmsh_aesthetic.md §4)
-    assert set(theme.PALETTES) == {
-        "catppuccin_mocha", "neutral_studio", "paper",
+def test_all_builtin_palettes_defined():
+    # Built-in theme ids ship with apeGmsh; custom themes may be added
+    # later via the theme editor and are not covered by this test.
+    builtin = {
+        "catppuccin_mocha", "catppuccin_latte", "neutral_studio", "paper",
+        "solarized_dark", "solarized_light", "nord", "tokyo_night",
+        "gruvbox_dark", "high_contrast",
     }
-    for key, pal in theme.PALETTES.items():
-        assert pal.name == key
+    assert builtin.issubset(set(theme.PALETTES))
+    for key in builtin:
+        assert theme.PALETTES[key].name == key
 
 
 def test_legacy_aliases_resolve(fresh_manager):

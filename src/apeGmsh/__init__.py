@@ -60,7 +60,7 @@ from apeGmsh.solvers.Numberer import Numberer, NumberedMesh
 from apeGmsh.mesh._mesh_partitioning import RenumberResult, PartitionInfo
 from apeGmsh.viewers.mesh_viewer import MeshViewer
 from apeGmsh.viewers.model_viewer import ModelViewer
-from apeGmsh.viewers import settings
+from apeGmsh.viewers import settings, theme_editor
 from apeGmsh.viz.Selection import Selection, SelectionComposite
 
 # Backward-compatible alias (SelectionPicker was the pre-v1 name)
@@ -97,4 +97,5 @@ __all__ = [
     "SelectionPicker",
     "Constraints",
     "settings",
+    "theme_editor",
 ]

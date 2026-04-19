@@ -532,11 +532,17 @@ class ModelViewer:
         # the persistent-prefs dialog.
         from qtpy import QtWidgets as _QtW
         from .ui.preferences_dialog import open_preferences_dialog
+        from .ui.theme_editor_dialog import open_theme_editor
         _btn_global = _QtW.QPushButton("Global preferences…")
         _btn_global.clicked.connect(
             lambda: open_preferences_dialog(win.window)
         )
         prefs.widget.layout().addWidget(_btn_global)
+        _btn_theme = _QtW.QPushButton("Theme editor…")
+        _btn_theme.clicked.connect(
+            lambda: open_theme_editor(win.window)
+        )
+        prefs.widget.layout().addWidget(_btn_theme)
         win.add_tab("Session", prefs.widget)
 
         # Set generous clipping range for shifted coords
