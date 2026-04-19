@@ -99,19 +99,34 @@ adjacency — those are real, and the library reflects them. See
 [[gmsh_basics]] and [[gmsh_interface]].
 
 **(viii) The viewer is core and environment-aware.**
-3D FEM is unreviewable without visualization. Model, mesh, and results
-viewers ship with the library and run in three environments without
-code change:
+3D FEM is unreviewable without visualization. apeGmsh ships **two**
+entry surfaces with distinct environment coverage:
 
-- **Desktop** — Qt window (PyQt6 + PyVista).
-- **Local Jupyter** — inline Qt or HTML, whichever the kernel supports.
-- **Colab / remote notebooks** — HTML only (PyVista + trame).
+- **Interactive Qt viewers** (`g.model.viewer()`, `g.mesh.viewer()`) —
+  full authoring and review, picking, physical-group editing,
+  overlays. Qt + PyVista. Works on **Desktop** and **local Jupyter
+  with a Qt backend**; requires a display.
+- **Inline WebGL preview** (`g.model.preview()`, `g.mesh.preview()`,
+  top-level `apeGmsh.preview()`) — review-only, hover tooltips for
+  `dim / tag / pg / label`, works anywhere plotly renders. This is the
+  **Colab / headless** path. No Qt, no display required. Plotly is an
+  optional dependency (pre-installed on Colab; `pip install plotly`
+  locally).
 
-The library detects the environment and picks a backend. The user calls
-`g.mesh.viewer()` and gets a working view wherever they are. PyVista is
-a hard dependency; PyQt6 is a soft dependency (installed on desktop
-wheels, skipped in headless environments). `gmsh.fltk.run()` is a
-desktop debugging aid — never part of a documented workflow.
+Environment coverage today:
+
+| Environment                      | Qt viewers | `preview()` |
+|----------------------------------|:-:|:-:|
+| Desktop                          | ✓ | ✓ |
+| Local Jupyter (Qt available)     | ✓ | ✓ |
+| **Colab / remote notebooks**     | ✗ | **✓** |
+| Headless CI (no display)         | ✗ | ✓ (`browser=False` only) |
+
+External results scale-up lives in `apeGmshViewer` (Rust/WebGL
+subprocess); see `results/Results.py`. PyVista is a hard dependency;
+PyQt6 and plotly are soft dependencies (installed per environment).
+`gmsh.fltk.run()` is a desktop debugging aid — never part of a
+documented workflow.
 
 ---
 
