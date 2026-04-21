@@ -24,6 +24,9 @@ opensees_venv/
 # Jupyter
 .ipynb_checkpoints/
 
+# Smoke-test output (regenerated on every run)
+tests_out/
+
 # Gmsh output
 *.msh
 *.step
