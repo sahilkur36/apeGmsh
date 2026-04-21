@@ -344,15 +344,57 @@ class Plot(_HasLogging):
         return self
 
     def _ensure_axes(self) -> tuple[plt.Figure, Axes3D]:
-        """Return ``(fig, ax)``, creating them on the first call."""
-        if self._fig is None or self._ax is None:
+        """Return ``(fig, ax)``, creating them on the first call.
+
+        A figure is considered stale — and a new one is created — when
+        the cached handle refers to a figure that matplotlib has already
+        closed (``plt.fignum_exists`` returns ``False``).  This is what
+        Jupyter's inline backend does at the end of each cell, so chained
+        calls within a cell share a figure while each new cell starts
+        fresh automatically.
+        """
+        stale = (
+            self._fig is None
+            or self._ax is None
+            or not plt.fignum_exists(self._fig.number)
+        )
+        if stale:
             self._fig = plt.figure(figsize=self._figsize)
             self._ax  = self._fig.add_subplot(111, projection='3d')
             self._ax.set_xlabel('X')
             self._ax.set_ylabel('Y')
             self._ax.set_zlabel('Z')
             self._ax.set_title(self._parent.name)
-        return self._fig, self._ax
+        return self._fig, self._ax  # type: ignore[return-value]
+
+    def use_axes(self, ax: Axes3D) -> Plot:
+        """Install an externally-owned 3D axes as the current drawing target.
+
+        Useful when you want to embed apeGmsh plots into a larger
+        matplotlib layout (e.g., side-by-side comparisons via
+        ``fig.add_subplot(121, projection='3d')``).  Subsequent drawing
+        methods draw onto ``ax`` instead of creating their own figure.
+
+        Parameters
+        ----------
+        ax : a 3D ``Axes3D`` instance
+
+        Example
+        -------
+        ::
+
+            fig = plt.figure(figsize=(12, 5))
+            ax1 = fig.add_subplot(121, projection='3d')
+            ax2 = fig.add_subplot(122, projection='3d')
+
+            g.plot.use_axes(ax1).geometry()
+            g.plot.use_axes(ax2).mesh()
+            plt.show()
+        """
+        _require_mpl()
+        self._fig = ax.figure  # type: ignore[assignment]
+        self._ax  = ax
+        return self
 
     def _autoscale(self, pts: ndarray) -> None:
         """
@@ -408,7 +450,7 @@ class Plot(_HasLogging):
         color_curves    : str   = COLOR_CURVES,
         color_surfaces  : str   = COLOR_SURFACES,
         surface_alpha   : float = 0.25,
-        show            : bool  = True,
+        show            : bool  = False,
     ) -> Plot:
         """
         Plot BRep geometry by parametric sampling.  No mesh required.
@@ -513,7 +555,7 @@ class Plot(_HasLogging):
         edge_color : str   = 'white',
         alpha      : float = 0.70,
         linewidth  : float = 0.30,
-        show       : bool  = True,
+        show       : bool  = False,
     ) -> Plot:
         """
         Plot the surface mesh as filled polygons.
@@ -637,7 +679,7 @@ class Plot(_HasLogging):
         alpha        : float      = 0.85,
         linewidth    : float      = 0.20,
         show_colorbar: bool       = True,
-        show         : bool       = True,
+        show         : bool       = False,
     ) -> Plot:
         """
         Plot surface mesh elements coloured by a quality metric.
@@ -747,7 +789,7 @@ class Plot(_HasLogging):
         dims    : list[int] | None = None,
         show_dim: bool = True,
         fontsize: int  = 7,
-        show    : bool = True,
+        show    : bool = False,
     ) -> Plot:
         """
         Annotate the current axes with entity tags positioned at each
@@ -821,7 +863,7 @@ class Plot(_HasLogging):
         color   : str  = 'black',
         prefix  : str  = 'n',
         offset  : tuple[float, float, float] | None = None,
-        show    : bool = True,
+        show    : bool = False,
     ) -> Plot:
         """
         Annotate mesh nodes with their tag ids.
@@ -877,7 +919,7 @@ class Plot(_HasLogging):
         fontsize: int  = 5,
         color   : str  = 'darkred',
         prefix  : str  = 'e',
-        show    : bool = True,
+        show    : bool = False,
     ) -> Plot:
         """
         Annotate mesh elements with their tag ids at element centroids.
@@ -945,11 +987,43 @@ class Plot(_HasLogging):
     # ------------------------------------------------------------------
 
     def show(self) -> Plot:
-        """Flush the current figure to the screen and reset handles."""
-        plt.tight_layout()
+        """Flush the current figure to the screen.
+
+        Handles are *not* reset — a subsequent ``savefig()`` or chained
+        drawing call still targets the same figure.  Use ``clear()`` to
+        explicitly discard the current figure.  In Jupyter, the inline
+        backend closes the figure after rendering, which
+        ``_ensure_axes()`` detects so the next cell starts fresh anyway.
+        """
+        _require_mpl()
+        if self._fig is not None:
+            self._fig.tight_layout()
         plt.show()
-        self._fig = None
-        self._ax  = None
+        return self
+
+    def savefig(self, path, **kwargs) -> Plot:
+        """Save the current figure to ``path``.
+
+        A drawing method must have been called first (otherwise there
+        is no figure to save).  All keyword arguments are forwarded to
+        ``matplotlib.figure.Figure.savefig`` — common ones are
+        ``dpi=110``, ``bbox_inches='tight'``, ``transparent=True``.
+
+        Example
+        -------
+        ::
+
+            g.plot.geometry().savefig('out.png', dpi=120)
+        """
+        _require_mpl()
+        if self._fig is None:
+            raise RuntimeError(
+                "Plot.savefig(): no active figure — call a drawing "
+                "method (geometry / mesh / quality / ...) first."
+            )
+        kwargs.setdefault('bbox_inches', 'tight')
+        self._fig.savefig(path, **kwargs)
+        self._log(f"savefig({str(path)!r})")
         return self
 
     def clear(self) -> Plot:
@@ -977,7 +1051,7 @@ class Plot(_HasLogging):
         surface_alpha   : float = 0.35,
         label_groups    : bool  = True,
         show_legend     : bool  = True,
-        show            : bool  = True,
+        show            : bool  = False,
     ) -> Plot:
         """
         Colour BRep entities by the physical group they belong to.
@@ -1134,7 +1208,7 @@ class Plot(_HasLogging):
         point_size   : int   = 50,
         seg_width    : float = 2.5,
         show_legend  : bool  = True,
-        show         : bool  = True,
+        show         : bool  = False,
     ) -> Plot:
         """
         Colour mesh entities by the physical group they belong to.

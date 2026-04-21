@@ -147,52 +147,49 @@ print(f"mesh: {g.mesh.queries.get_fem_data().info.n_nodes} nodes")
 # %%
 def _save(name: str) -> None:
     """Save the current Plot figure as a PNG, then clear handles."""
-    fig = g.plot._fig
-    assert fig is not None, f"[{name}] expected an open figure, got None"
-    plt.tight_layout()
-    fig.savefig(OUT / f"{name}.png", dpi=110)
+    g.plot.savefig(OUT / f"{name}.png", dpi=110)
     g.plot.clear()
     print(f"  wrote {name}.png")
 
 # %%
 # --- geometry ---
-g.plot.figsize((9, 7)).geometry(label_tags=True, show=False)
+g.plot.figsize((9, 7)).geometry(label_tags=True)
 _save("01_geometry")
 
 # --- mesh ---
-g.plot.mesh(show=False)
+g.plot.mesh()
 _save("02_mesh")
 
 # --- quality heatmap (dim=2 only in current impl) ---
-g.plot.quality(show=False)
+g.plot.quality()
 _save("03_quality")
 
 # --- label_entities ---
-g.plot.geometry(show=False).label_entities(dims=[0, 1, 2], show=False)
+g.plot.geometry().label_entities(dims=[0, 1, 2])
 _save("04_label_entities")
 
 # --- label_nodes (strided so the plot stays readable) ---
-g.plot.mesh(show=False).label_nodes(stride=10, show=False)
+g.plot.mesh().label_nodes(stride=10)
 _save("05_label_nodes")
 
 # --- label_elements ---
-g.plot.mesh(show=False).label_elements(dim=2, stride=5, show=False)
+g.plot.mesh().label_elements(dim=2, stride=5)
 _save("06_label_elements")
 
 # --- physical_groups (BRep overlay) ---
-g.plot.physical_groups(show=False)
+g.plot.physical_groups()
 _save("07_physical_groups")
 
 # --- physical_groups_mesh (mesh overlay) ---
-g.plot.physical_groups_mesh(show=False)
+g.plot.physical_groups_mesh()
 _save("08_physical_groups_mesh")
 
 # --- Chained layered plot ---
 (g.plot
    .figsize((10, 8))
-   .geometry(show_surfaces=False, show=False)
-   .mesh(alpha=0.4, show=False)
-   .label_entities(dims=[2], show=False))
+   .geometry(show_surfaces=False)
+   .mesh(alpha=0.4)
+   .label_entities(dims=[2]))
 _save("09_chained_geom_mesh_labels")
 
 # %% [markdown]
