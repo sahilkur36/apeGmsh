@@ -11,12 +11,24 @@ on a per-physical-group basis before ``build()``:
 """
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from ._element_specs import _ELEM_REGISTRY
 
 if TYPE_CHECKING:
     from .OpenSees import OpenSees
+
+
+Vec3 = tuple[float, float, float]
+
+
+def _normalize3(v) -> Vec3:
+    x, y, z = float(v[0]), float(v[1]), float(v[2])
+    n = math.sqrt(x * x + y * y + z * z)
+    if n < 1e-12:
+        raise ValueError(f"zero-length vector: {(x, y, z)}")
+    return (x / n, y / n, z / n)
 
 
 class _Elements:
@@ -28,6 +40,80 @@ class _Elements:
     # ------------------------------------------------------------------
     # Geometric transformations (beam elements)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def vecxz(
+        axis    : Vec3 | list[float],
+        local_z : Vec3 | list[float] = (0.0, 0.0, 1.0),
+        roll_deg: float = 0.0,
+    ) -> Vec3:
+        """
+        Compute a valid ``vecxz`` for :meth:`add_geom_transf` given the
+        beam axis and a reference local-z direction, with optional
+        section rotation about the beam axis.
+
+        Convention
+        ----------
+        At ``roll_deg = 0`` the returned vecxz equals ``local_z``.
+        ``roll_deg`` rotates the section about ``axis`` via the
+        right-hand rule (positive angle → right-handed rotation).
+        The user is responsible for supplying section properties
+        (``Iy``, ``Iz``, ``J``) consistent with this frame.
+
+        Parameters
+        ----------
+        axis     : beam direction (local-x); need not be unit length.
+        local_z  : reference direction for local-z when ``roll_deg=0``.
+                   Defaults to global +Z.
+        roll_deg : section rotation about ``axis`` in degrees.
+
+        Returns
+        -------
+        tuple[float, float, float] : a unit vector suitable for
+        ``add_geom_transf(vecxz=...)``.
+
+        Raises
+        ------
+        ValueError : if ``axis`` or ``local_z`` is zero-length, or if
+                     ``local_z`` is collinear with ``axis`` (no unique
+                     x-z plane exists).
+
+        Example
+        -------
+        ::
+
+            # Horizontal beam, gravity downward, strong axis vertical
+            vxz = g.opensees.elements.vecxz(axis=(1, 0, 0))
+            # → (0.0, 0.0, 1.0)
+
+            # Same beam, section rotated 90° (weak axis now vertical)
+            vxz = g.opensees.elements.vecxz(axis=(1, 0, 0), roll_deg=90)
+            # → (0.0, -1.0, 0.0)
+        """
+        ax = _normalize3(axis)
+        lz = _normalize3(local_z)
+        if abs(ax[0] * lz[0] + ax[1] * lz[1] + ax[2] * lz[2]) > 1.0 - 1e-9:
+            raise ValueError(
+                "local_z is collinear with axis; no unique x-z plane. "
+                f"axis={ax}, local_z={lz}"
+            )
+        if roll_deg == 0.0:
+            return lz
+        # Rodrigues' rotation: rotate lz about ax by roll_deg
+        th = math.radians(roll_deg)
+        c, s = math.cos(th), math.sin(th)
+        kx, ky, kz = ax
+        vx, vy, vz = lz
+        # k × v
+        cx = ky * vz - kz * vy
+        cy = kz * vx - kx * vz
+        cz = kx * vy - ky * vx
+        # k · v
+        kdv = kx * vx + ky * vy + kz * vz
+        rx = vx * c + cx * s + kx * kdv * (1 - c)
+        ry = vy * c + cy * s + ky * kdv * (1 - c)
+        rz = vz * c + cz * s + kz * kdv * (1 - c)
+        return (rx, ry, rz)
 
     def add_geom_transf(
         self,
