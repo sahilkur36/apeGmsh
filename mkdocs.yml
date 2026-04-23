@@ -100,6 +100,7 @@ plugins:
 nav:
   - Home: index.md
   - Guides:
+      - First steps: internal_docs/first_steps.md
       - Basics: internal_docs/guide_basics.md
       - Parts & Assembly: internal_docs/guide_parts_assembly.md
       - Parts vs Session: internal_docs/guide_parts_vs_session.md
