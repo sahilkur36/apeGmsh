@@ -10,6 +10,13 @@ plugged in through the same `FEMData` contract.
 
 **Documentation:** <https://nmorabowen.github.io/apeGmsh/>
 
+> [!NOTE]
+> **Built on Gmsh.** apeGmsh is a wrapper built on top of the (awesome)
+> [Gmsh](https://gmsh.info) Python API. It adds a set of abstractions over the
+> main API to fit an intended structural-FEM workflow — parts, constraints,
+> loads, masses, and an OpenSees bridge. You still have the full Gmsh API
+> underneath whenever you need it.
+
 ## Installation
 
 Not on PyPI yet — install directly from the repo:
@@ -317,3 +324,9 @@ split into five sub-composites, `g.mesh.*` split into seven,
 `g.mass → g.masses`, `g.initialize/finalize → g.begin/end`. The
 migration guide ships a ~150-line Python script that handles every
 mechanical rewrite on an existing project.
+
+## Credits
+
+**Developed by:** Nicolás Mora Bowen · Patricio Palacios · José Abell · Guppi
+
+Part of José Abell's *El Ladruño Research Group*.
