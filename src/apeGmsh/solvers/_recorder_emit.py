@@ -122,6 +122,36 @@ def _gauss_record_ops_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
     return next(iter(keywords))
 
 
+def _nodal_record_ops_keyword(rec: ResolvedRecorderRecord) -> Optional[str]:
+    """Return the ops keyword (``"globalForce"`` / ``"localForce"``) for an elements record.
+
+    Closed-form line elements (Phase 11b Step 3) expose per-element-
+    node forces under both ``globalForce`` and ``localForce`` recorder
+    tokens. The frame is derived from the record's canonical
+    components: ``nodal_resisting_force_local_*`` /
+    ``nodal_resisting_moment_local_*`` → ``localForce``; everything
+    else → ``globalForce``. Returns ``None`` if no components route
+    through the nodal-forces topology.
+
+    Raises ``ValueError`` if the record mixes the two frames.
+    """
+    from ._element_response import gauss_keyword_for_canonical
+    keywords: set[str] = set()
+    for comp in rec.components:
+        keyword = gauss_keyword_for_canonical(comp, topology="nodal_forces")
+        if keyword is not None:
+            keywords.add(keyword)
+    if not keywords:
+        return None
+    if len(keywords) > 1:
+        raise ValueError(
+            f"Record {rec.name!r} (category=elements) mixes global and "
+            f"local frames ({sorted(keywords)}); split into separate "
+            f"records (one per ops keyword)."
+        )
+    return next(iter(keywords))
+
+
 # =====================================================================
 # Logical recorder spec — backend-agnostic intermediate
 # =====================================================================
@@ -271,11 +301,21 @@ def _emit_element_simple(
     output_dir: str,
     file_format: str,
 ) -> Iterable[LogicalRecorder]:
-    """One logical recorder per element-level record.
+    """One (or two) logical recorders per element-level record.
 
     Emits the broad response token for the category. The file
     contains the full response vector per element; the transcoder
     extracts canonical components from it post-hoc.
+
+    Line-stations records emit a *second* paired recorder for
+    ``integrationPoints`` to a sibling ``_gpx.<ext>`` file. The
+    pair is required because per-element IP locations are not
+    derivable from the section-force ``.out`` alone (no META, no
+    GP_X) — Phase 11b Step 2c's transcoder reads both to reconstruct
+    the same ``LineStationSlab`` shape that MPCO read and
+    DomainCapture produce. See
+    ``internal_docs/plan_phase_11b_line_stations.md`` and
+    ``apeGmsh.results.transcoders._recorder`` for the consumer.
     """
     if rec.element_ids is None or rec.element_ids.size == 0:
         return
@@ -287,6 +327,18 @@ def _emit_element_simple(
         if keyword is None:
             return
         response_str = keyword
+    elif rec.category == "elements":
+        # Phase 11b Step 3c: keyword depends on components
+        # (globalForce vs localForce) — local-frame components emit
+        # a localForce recorder; everything else falls through to
+        # the category default ("globalForce").
+        keyword = _nodal_record_ops_keyword(rec)
+        if keyword is not None:
+            response_str = keyword
+        else:
+            response_str = _ELEMENT_CATEGORY_RESPONSE.get(rec.category)
+            if response_str is None:
+                return
     else:
         response_str = _ELEMENT_CATEGORY_RESPONSE.get(rec.category)
         if response_str is None:
@@ -309,6 +361,27 @@ def _emit_element_simple(
         record_name=rec.name,
         comment=f"{rec.name} {rec.category}",
     )
+
+    if rec.category == "line_stations":
+        # Paired integrationPoints recorder. OpenSees writes per-element
+        # physical IP positions ``xi*L`` (per ForceBeamColumn3d.cpp:3338–
+        # 3346 ``locs(i) = pts[i] * L``) — one row per step, but only
+        # the first row is needed because IPs are static. The transcoder
+        # normalises ``xi*L → [-1, +1]`` using element length from the
+        # bound FEMData.
+        gpx_path = line_station_gpx_path(file_path)
+        yield LogicalRecorder(
+            kind="Element",
+            file_path=gpx_path,
+            file_format=file_format,
+            target_kind="ele",
+            target_ids=target_ids,
+            response_tokens=("integrationPoints",),
+            dofs=None,
+            dt=rec.dt,
+            record_name=rec.name,
+            comment=f"{rec.name} line_stations gpx",
+        )
 
 
 # =====================================================================
@@ -356,6 +429,25 @@ def _build_file_path(
         return fname
     sep = "" if output_dir.endswith(("/", "\\")) else "/"
     return f"{output_dir}{sep}{fname}"
+
+
+def line_station_gpx_path(line_station_file_path: str) -> str:
+    """Return the paired ``integrationPoints`` recorder path for a line-stations file.
+
+    Convention: replace the file extension on
+    ``<base>_line_stations.<ext>`` with ``_gpx.<ext>``, yielding
+    ``<base>_line_stations_gpx.<ext>``. Both files are emitted by
+    :func:`_emit_element_simple` for line_stations records and
+    consumed together by the .out transcoder.
+
+    Used by both the emitter (when producing the paired recorder
+    line) and the transcoder (when locating it on disk to read).
+    """
+    if line_station_file_path.endswith(".out"):
+        return line_station_file_path[:-4] + "_gpx.out"
+    if line_station_file_path.endswith(".xml"):
+        return line_station_file_path[:-4] + "_gpx.xml"
+    return line_station_file_path + "_gpx"
 
 
 def _file_flag_tcl(path: str, file_format: str) -> list[str]:
