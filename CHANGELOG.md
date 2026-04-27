@@ -1,5 +1,109 @@
 # Changelog
 
+## v1.1.0 — Results: backend-agnostic FEM post-processing system rebuild
+
+Wholesale rebuild of the `apeGmsh.results` module. The legacy
+in-memory `Results` carrier (a thin VTK-feeder bound to live numpy
+arrays) is replaced by a lazy disk-backed reader plus a unified
+composite API that mirrors `FEMData`. Recording flows through three
+execution strategies — Tcl/Py recorders, in-process domain capture,
+and an MPCO bridge — all driven by one declarative
+`g.opensees.recorders` spec. **987 tests pass** end-to-end including
+the El Ladruno OpenSees Tcl subprocess integration. See PR #12 and
+`internal_docs/Results_architecture.md` for full design.
+
+### ADDED — `apeGmsh.results`
+
+- **Native HDF5 schema + I/O.** `NativeWriter` / `NativeReader`
+  round-trip nodes, Gauss points, fibers, layers, line stations, and
+  per-element forces. Stages are first-class (`kind="transient"` /
+  `"static"` / `"mode"`). Multi-partition stitching transparent to
+  the reader. Embedded FEMData snapshot in `/model/` — including
+  `MeshSelectionStore` — so result files are self-contained.
+- **`Results` composite class** mirroring `FEMData`. Selection
+  vocabulary `pg=` / `label=` / `selection=` / `ids=`. Stage scoping
+  via `results.stage(name)`; mode access via `results.modes`.
+  Soft FEM coupling with hash-validated `bind()`.
+- **`compute_snapshot_id(fem)`** deterministic content hash —
+  ties recorder specs ↔ result files ↔ FEMData snapshots.
+- **MPCO reader.** `Results.from_mpco(path)` reads existing STKO
+  `.mpco` files through the same composite API. Partial FEMData
+  synthesis from MPCO `MODEL/` group (nodes + elements +
+  region-derived PGs).
+- **`g.opensees.recorders`** declarative spec composite.
+  Standalone class, no parent ref, no gmsh dependency. `.nodes`,
+  `.elements`, `.line_stations`, `.gauss`, `.fibers`, `.layers`,
+  `.modal` declaration methods. `spec.resolve(fem, ndm, ndf)`
+  expands shorthand components, validates per category, locks
+  `fem_snapshot_id`.
+- **Three execution strategies driven by the spec:**
+  - **Strategy A** — `g.opensees.export.tcl/py(..., recorders=spec)`
+    emits `recorder Node/Element ...` commands + HDF5 manifest
+    sidecar. `Results.from_recorders(spec, output_dir, fem=fem)`
+    parses output `.out` files into native HDF5 with a cache layer
+    at `<project_root>/results/`.
+  - **Strategy B** — `with spec.capture(path, fem) as cap:` wraps
+    an openseespy analyze loop, querying `ops.nodeDisp` etc. per
+    record. Multi-record merge with NaN-fill when records target
+    disjoint node sets. `cap.capture_modes()` writes one mode-kind
+    stage per `ops.eigen` mode.
+  - **Strategy C** — `recorders_file_format="mpco"` dispatches to
+    a single `recorder mpco` line aggregating all records.
+    Validated via subprocess against the El Ladruno OpenSees Tcl
+    build.
+- **Element capability flags** on `_ElemSpec`: `has_gauss`,
+  `has_fibers`, `has_layers`, `has_line_stations` plus a
+  `supports(category)` helper. All 16 entries in `_ELEM_REGISTRY`
+  annotated.
+- **`MeshSelectionStore`** name-based lookups: `names()`,
+  `node_ids(name)`, `element_ids(name)` — mirrors
+  `PhysicalGroupSet`'s API.
+- **Architecture doc** `internal_docs/Results_architecture.md`
+  (single canonical reference).
+
+### CHANGED — Results module API (BREAKING)
+
+- **`Results.from_fem(fem, point_data=..., cell_data=...)` removed.**
+  Use `Results.from_native(...)`, `from_mpco(...)`,
+  `from_recorders(...)`, or hand-construct via `NativeWriter` for
+  the in-memory case.
+- **`fem.viewer()`** raises `NotImplementedError` until the viewer
+  rebuild project. The new flow will go through the rebuilt
+  composite API.
+- **`g.mesh.viewer(point_data=..., cell_data=...)`** raises
+  `NotImplementedError`. The mesh-only paths (`g.mesh.viewer()` and
+  `g.mesh.viewer(results=path)` for a `.vtu`/`.pvd` file) still
+  work unchanged.
+- **Public exports** under `apeGmsh.results`: `Results`,
+  `ResultsReader`, `NativeReader`, `MPCOReader`, `ResultLevel`,
+  `StageInfo`, `BindError`, and the slab dataclasses
+  (`NodeSlab`, `ElementSlab`, `LineStationSlab`, `GaussSlab`,
+  `FiberSlab`, `LayerSlab`).
+
+### DEFERRED — element-level transcoding
+
+Element-level records (`gauss` / `fibers` / `layers` /
+`line_stations` / `elements`) work end-to-end on the **declaration
+and emission** side. The **read/decode** side is stubbed:
+
+- `MPCOReader.read_gauss/fibers/layers/...` returns empty slabs.
+- `RecorderTranscoder` skips element records silently.
+- `DomainCapture.step()` raises `NotImplementedError` for element
+  categories.
+
+All three need the same missing piece: a per-element-class
+response-metadata catalog. Plan in
+`internal_docs/plan_element_transcoding.md` (Phase 11a).
+**Nodal results work everywhere today.**
+
+### NEW FIXTURE
+
+- `tests/fixtures/results/elasticFrame.mpco` — 400 KB binary,
+  12 nodes / 11 elastic frame elements / 10 transient steps /
+  2 model stages. Used by the MPCO reader + integration tests.
+
+---
+
 ## v1.0.9 — Viewer: higher-order rendering + filter overhaul (WIP)
 
 Lands the viewer fixes and refactor scaffolding from PR #11.  Higher-
