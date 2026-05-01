@@ -588,8 +588,26 @@ def _rgba(hex_str: str, alpha: float) -> str:
     return f"rgba({r}, {g}, {b}, {alpha})"
 
 
-def build_stylesheet(p: Palette) -> str:
-    """Render the viewer QSS for a given palette."""
+def build_stylesheet(p: Palette, density: object = None) -> str:
+    """Render the viewer QSS for a given palette + density.
+
+    ``density`` is a :class:`density.DensityTokens` instance — left as
+    ``object`` here to avoid an import cycle. Pass ``None`` to use a
+    sensible compact default; the live viewer always passes the
+    current :data:`density.DENSITY` value.
+    """
+    # Density-driven sizing. Inlining a tiny default avoids importing
+    # the density module at module load time (theme.py is imported
+    # very early via the static ``STYLESHEET`` constant).
+    if density is not None:
+        d_row_h = int(getattr(density, "row_h", 22))
+        d_pad_x = int(getattr(density, "pad_x", 8))
+        d_pad_y = int(getattr(density, "pad_y", 4))
+        d_fs_body = float(getattr(density, "fs_body", 11.5))
+        d_fs_head = float(getattr(density, "fs_head", 11.0))
+    else:
+        d_row_h, d_pad_x, d_pad_y = 22, 8, 4
+        d_fs_body, d_fs_head = 11.5, 11.0
     return f"""
     QMainWindow {{
         background-color: {p.base};
@@ -958,6 +976,92 @@ def build_stylesheet(p: Palette) -> str:
     }}
     QFrame#ProbeHUDSep {{
         color: {p.surface0};
+    }}
+
+    /* Pick readout HUD (top-left viewport overlay) */
+    QFrame#PickReadoutHUD {{
+        background-color: {_rgba(p.mantle, 0.92)};
+        border: 1px solid {p.surface0};
+        border-radius: 6px;
+    }}
+    QLabel#PickReadoutHeader {{
+        color: {p.text};
+        font-weight: 600;
+        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+        font-size: 11px;
+    }}
+    QLabel#PickReadoutCoords {{
+        color: {p.subtext};
+        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+        font-size: 10px;
+    }}
+    QLabel#PickReadoutValues {{
+        color: {p.text};
+        font-family: "JetBrains Mono", "Cascadia Code", "Consolas", monospace;
+        font-size: 10px;
+    }}
+    QLabel#PickReadoutHint {{
+        color: {p.overlay};
+        font-size: 9px;
+        margin-top: 2px;
+    }}
+
+    /* Inline kind picker (popover under outline header) */
+    QFrame#OutlineKindPicker {{
+        background-color: {p.surface0};
+        border-bottom: 1px solid {p.mantle};
+    }}
+    QToolButton#OutlineKindBtn {{
+        background-color: {p.mantle};
+        border: 1px solid {p.surface0};
+        border-radius: 4px;
+        color: {p.text};
+        font-size: 10px;
+        padding: 4px 6px;
+    }}
+    QToolButton#OutlineKindBtn:hover {{
+        background-color: {p.surface1};
+        border-color: {p.accent};
+    }}
+    QToolButton#OutlineKindBtn:pressed {{
+        background-color: {p.surface2};
+    }}
+
+    /* Title-bar utility icons (top-row strip) */
+    QToolButton#ResultsTitleIconBtn {{
+        background: transparent;
+        border: 1px solid transparent;
+        border-radius: 4px;
+        color: {p.subtext};
+        font-size: 13px;
+    }}
+    QToolButton#ResultsTitleIconBtn:hover {{
+        background-color: {p.surface0};
+        color: {p.text};
+        border-color: {p.surface1};
+    }}
+    QToolButton#ResultsTitleIconBtn:pressed {{
+        background-color: {p.surface1};
+    }}
+
+    /* Density-driven sizing (B++ §5 RV_DENSITY) */
+    QTreeWidget {{
+        font-size: {d_fs_body}px;
+    }}
+    QTreeWidget::item {{
+        padding-top: {d_pad_y}px;
+        padding-bottom: {d_pad_y}px;
+        padding-left: {d_pad_x}px;
+        min-height: {d_row_h}px;
+    }}
+    QFrame#OutlineHeader QLabel {{
+        font-size: {d_fs_head}px;
+    }}
+    QFrame#PlotPaneHeader QLabel {{
+        font-size: {d_fs_head}px;
+    }}
+    QFrame#DetailsHeader QLabel {{
+        font-size: {d_fs_head}px;
     }}
     """
 

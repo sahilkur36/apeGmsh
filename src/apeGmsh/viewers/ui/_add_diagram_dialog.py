@@ -187,7 +187,13 @@ class AddDiagramDialog:
     was added to the registry.
     """
 
-    def __init__(self, director: "ResultsDirector", parent: Any = None) -> None:
+    def __init__(
+        self,
+        director: "ResultsDirector",
+        parent: Any = None,
+        *,
+        initial_kind: Optional[str] = None,
+    ) -> None:
         QtWidgets, QtCore = _qt()
         self._director = director
 
@@ -201,10 +207,20 @@ class AddDiagramDialog:
         form.setContentsMargins(12, 12, 12, 12)
         form.setSpacing(8)
 
-        # Kind
+        # Kind. Pre-flight every kind against every stage so we can mark
+        # kinds whose topology has no data anywhere in the file. The
+        # picker stays selectable (editable component combo lets users
+        # type custom names regardless), but the suffix tells them up
+        # front not to expect a populated dropdown.
+        self._kinds_without_data: set[str] = self._compute_kinds_without_data(
+            director,
+        )
         self._kind_combo = QtWidgets.QComboBox()
         for k in _KINDS:
-            self._kind_combo.addItem(k.label, k)
+            label = k.label
+            if k.kind_id in self._kinds_without_data:
+                label = f"{k.label} — no data"
+            self._kind_combo.addItem(label, k)
         form.addRow("Kind:", self._kind_combo)
 
         # Stage
@@ -267,6 +283,16 @@ class AddDiagramDialog:
             self._populate_components,
         )
 
+        # Preset — filters to the current kind. The "(default)" entry
+        # leaves the dialog's existing default-style behaviour intact.
+        self._preset_combo = QtWidgets.QComboBox()
+        self._preset_combo.setToolTip(
+            "Reuse a saved style preset for this kind. (default) keeps "
+            "the dialog's built-in defaults."
+        )
+        form.addRow("Preset:", self._preset_combo)
+        self._populate_presets()
+
         # Selector
         self._selector_kind = QtWidgets.QComboBox()
         self._selector_kind.addItem("All nodes", "all")
@@ -294,9 +320,68 @@ class AddDiagramDialog:
         bb.rejected.connect(dlg.reject)
         form.addRow(bb)
 
+        # Pre-select the requested kind (used by the inline 2×4 picker
+        # in OutlineTree which jumps straight from "click kind" to the
+        # configuration dialog).
+        if initial_kind is not None:
+            for i in range(self._kind_combo.count()):
+                entry = self._kind_combo.itemData(i)
+                if entry is not None and entry.kind_id == initial_kind:
+                    self._kind_combo.setCurrentIndex(i)
+                    break
+
         # Initial visibility + component list for the default kind.
         self._update_topology_row_visibility()
         self._populate_components()
+
+    # ------------------------------------------------------------------
+    # Pre-flight: which kinds have no recorded data anywhere?
+    # ------------------------------------------------------------------
+
+    def _compute_kinds_without_data(
+        self, director: "ResultsDirector",
+    ) -> set[str]:
+        """Return ``kind_id`` of every kind whose topology is empty in
+        every stage of this Results file.
+
+        Contour is treated specially: its dialog topology defaults to
+        ``"auto"`` (nodes ∪ gauss), so we mark it without-data only if
+        both composites are empty in every stage.
+        """
+        out: set[str] = set()
+        try:
+            stages = list(director.stages())
+        except Exception:
+            return out
+        if not stages:
+            return out
+
+        for entry in _KINDS:
+            topology = _KIND_TO_TOPOLOGY.get(entry.kind_id)
+            if topology is None:
+                continue
+            has_any = False
+            for s in stages:
+                sid = getattr(s, "id", None)
+                if sid is None:
+                    continue
+                try:
+                    scoped = director.results.stage(sid)
+                except Exception:
+                    continue
+                if entry.kind_id == "contour":
+                    found = (
+                        _components_for(scoped, "nodes")
+                        or _components_for(scoped, "gauss")
+                    )
+                else:
+                    found = _components_for(scoped, topology)
+                if found:
+                    has_any = True
+                    break
+            if not has_any:
+                out.add(entry.kind_id)
+        return out
 
     # ------------------------------------------------------------------
     # Slots
@@ -305,6 +390,31 @@ class AddDiagramDialog:
     def _on_kind_changed(self, *_args: Any) -> None:
         self._update_topology_row_visibility()
         self._populate_components()
+        self._populate_presets()
+
+    def _populate_presets(self) -> None:
+        """Refresh the Preset combo against the current kind.
+
+        Inserts a leading ``(default)`` entry so users can pick "no
+        preset" without an extra control. Preset names that fail to
+        load (corrupt JSON / removed kind) are skipped silently.
+        """
+        from ..diagrams._style_presets import default_store
+        kind_entry: _KindEntry = self._kind_combo.currentData()
+        kind_id = kind_entry.kind_id if kind_entry is not None else None
+        self._preset_combo.blockSignals(True)
+        try:
+            self._preset_combo.clear()
+            self._preset_combo.addItem("(default)", None)
+            if kind_id is not None:
+                try:
+                    names = default_store().list_for_kind(kind_id)
+                except Exception:
+                    names = []
+                for name in names:
+                    self._preset_combo.addItem(name, name)
+        finally:
+            self._preset_combo.blockSignals(False)
 
     def _update_topology_row_visibility(self) -> None:
         """Show the Topology row only when Contour is the kind."""
@@ -377,10 +487,37 @@ class AddDiagramDialog:
             else:
                 # Empty list for this (kind, stage) — clear the field
                 # rather than leaving stale text from the previous kind.
-                # The placeholder still hints at typing a custom name.
                 self._component_combo.setEditText("")
+                # Replace the generic example placeholder with a
+                # specific reason so the user knows whether the file
+                # has no such data anywhere or just not in this stage.
+                self._update_empty_placeholder(kind_entry, stage_id)
         finally:
             self._component_combo.blockSignals(False)
+        # Restore the generic example placeholder when we did populate
+        # something — otherwise the empty-state hint persists across
+        # subsequent populations.
+        if components:
+            self._component_combo.lineEdit().setPlaceholderText(
+                "displacement_z, bending_moment_y, fiber_stress, …"
+            )
+
+    def _update_empty_placeholder(
+        self, kind_entry: _KindEntry, stage_id: Any,
+    ) -> None:
+        """Set a placeholder explaining why the Component combo is empty.
+
+        Distinguishes "no data of this topology anywhere in the file"
+        from "no data in this particular stage" — same empty combo, very
+        different fix on the user's side (record a different recorder vs
+        switch stages).
+        """
+        topology = _KIND_TO_TOPOLOGY.get(kind_entry.kind_id, "")
+        if kind_entry.kind_id in self._kinds_without_data:
+            text = f"(no {topology} data in file)"
+        else:
+            text = f"(no {topology} data in selected stage)"
+        self._component_combo.lineEdit().setPlaceholderText(text)
 
     def _on_selector_change(self, _index: int) -> None:
         kind = self._selector_kind.currentData()
@@ -426,20 +563,31 @@ class AddDiagramDialog:
             self._show_error(f"Invalid selector: {exc}")
             return False
 
-        style = kind_entry.make_default_style(component)
-        # Contour exposes a per-instance ``topology`` field; thread the
-        # dialog's sub-combo selection into the constructed style.
-        # Other kinds have no equivalent control to thread.
-        if kind_entry.kind_id == "contour":
-            chosen = self._topology_combo.currentData() or "auto"
-            style = ContourStyle(
-                cmap=style.cmap,
-                clim=style.clim,
-                opacity=style.opacity,
-                show_edges=style.show_edges,
-                show_scalar_bar=style.show_scalar_bar,
-                topology=chosen,
-            )
+        # Style: prefer a chosen preset; otherwise fall back to the
+        # kind's per-component default. Preset takes priority over the
+        # Topology sub-combo for Contour — saving a preset captures
+        # the topology field too, so loading restores it intact.
+        preset_name = self._preset_combo.currentData()
+        style: Any = None
+        if preset_name is not None:
+            from ..diagrams._style_presets import default_store
+            try:
+                _kind_id, style = default_store().load(preset_name)
+            except Exception as exc:
+                self._show_error(f"Failed to load preset: {exc}")
+                return False
+        if style is None:
+            style = kind_entry.make_default_style(component)
+            if kind_entry.kind_id == "contour":
+                chosen = self._topology_combo.currentData() or "auto"
+                style = ContourStyle(
+                    cmap=style.cmap,
+                    clim=style.clim,
+                    opacity=style.opacity,
+                    show_edges=style.show_edges,
+                    show_scalar_bar=style.show_scalar_bar,
+                    topology=chosen,
+                )
         label = self._label_edit.text().strip() or None
         spec = DiagramSpec(
             kind=kind_entry.kind_id,
