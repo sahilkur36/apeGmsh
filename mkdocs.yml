@@ -80,6 +80,15 @@ markdown_extensions:
 
 plugins:
   - search
+  - mkdocs-jupyter:
+      include_source: true
+      ignore_h1_titles: true
+      execute: false
+      remove_tag_config:
+        remove_input_tags:
+          - hide-input
+        remove_cell_tags:
+          - hide-cell
   - mkdocstrings:
       default_handler: python
       handlers:
@@ -100,47 +109,69 @@ plugins:
 nav:
   - Home: index.md
   - Guides:
-      - First steps: internal_docs/first_steps.md
-      - Basics: internal_docs/guide_basics.md
-      - Parts & Assembly: internal_docs/guide_parts_assembly.md
-      - Parts vs Session: internal_docs/guide_parts_vs_session.md
-      - CAD Import: internal_docs/guide_cad_import.md
-      - Meshing: internal_docs/guide_meshing.md
-      - Partitioning: internal_docs/guide_partitioning.md
-      - Selection: internal_docs/guide_selection.md
-      - Queries: internal_docs/guide_queries.md
-      - Transforms: internal_docs/guide_transforms.md
-      - Constraints: internal_docs/guide_constraints.md
-      - Loads: internal_docs/guide_loads.md
-      - Masses: internal_docs/guide_masses.md
-      - Sections: internal_docs/guide_sections.md
-      - FEM Broker: internal_docs/guide_fem_broker.md
-      - OpenSees: internal_docs/guide_opensees.md
-      - Results: internal_docs/guide_results.md
-      - Obtaining results: internal_docs/guide_obtaining_results.md
-      - Architecture overview: internal_docs/architecture.md
+      - Getting started:
+          - First steps: internal_docs/first_steps.md
+          - Basics: internal_docs/guide_basics.md
+      - Building models:
+          - Parts & Assembly: internal_docs/guide_parts_assembly.md
+          - Parts vs Session: internal_docs/guide_parts_vs_session.md
+          - CAD Import: internal_docs/guide_cad_import.md
+          - Meshing: internal_docs/guide_meshing.md
+          - Partitioning: internal_docs/guide_partitioning.md
+          - Selection: internal_docs/guide_selection.md
+          - Queries: internal_docs/guide_queries.md
+          - Transforms: internal_docs/guide_transforms.md
+          - Sections: internal_docs/guide_sections.md
+      - Physics:
+          - Constraints: internal_docs/guide_constraints.md
+          - Loads: internal_docs/guide_loads.md
+          - Masses: internal_docs/guide_masses.md
+      - Solver bridge:
+          - FEM Broker: internal_docs/guide_fem_broker.md
+          - OpenSees: internal_docs/guide_opensees.md
+      - Results:
+          - Results container: internal_docs/guide_results.md
+          - Obtaining results: internal_docs/guide_obtaining_results.md
+      - Reference:
+          - Architecture overview: internal_docs/architecture.md
+  - Examples:
+      - Overview: examples/index.md
+      - Getting started:
+          - "Hello plate": examples/notebooks/01_hello_plate.ipynb
+          - "Cantilever beam (2D)": examples/notebooks/02_cantilever_beam_2D.ipynb
+      - Building richer models:
+          - "Portal frame (2D)": examples/notebooks/04_portal_frame_2D.ipynb
+          - "Labels & physical groups": examples/notebooks/05_labels_and_pgs.ipynb
+          - "Part assembly": examples/notebooks/10b_part_assembly.ipynb
+          - "Interface tie": examples/notebooks/12_interface_tie.ipynb
+      - Analysis types:
+          - "Modal analysis": examples/notebooks/17_modal_analysis.ipynb
+          - "Pushover (elastoplastic)": examples/notebooks/19_pushover_elastoplastic.ipynb
   - Architecture:
-      - Overview: architecture/apeGmsh_architecture.md
-      - Principles: architecture/apeGmsh_principles.md
-      - Navigation: architecture/apeGmsh_navigation.md
-      - Broker: architecture/apeGmsh_broker.md
-      - Parts & Assembly: architecture/apeGmsh_partInstanceAssemble.md
-      - Constraints: architecture/apeGmsh_constraints.md
-      - Loads: architecture/apeGmsh_loads.md
-      - Visualization: architecture/apeGmsh_visualization.md
-      - Results viewer: architecture/apeGmsh_results_viewer.md
-      - Results — Obtaining: architecture/apeGmsh_results_obtaining.md
-      - Aesthetic: architecture/apeGmsh_aesthetic.md
-      - Ground truth: architecture/apeGmsh_groundTruth.md
-      - Type hinting: architecture/apeGmsh_hinting.md
-      - "Gmsh — Basics": architecture/gmsh_basics.md
-      - "Gmsh — Geometry": architecture/gmsh_geometry_basics.md
-      - "Gmsh — Interface": architecture/gmsh_interface.md
-      - "Gmsh — Meshing basics": architecture/gmsh_meshing_basics.md
-      - "Gmsh — Meshing advanced": architecture/gmsh_meshing_advanced.md
-      - "Gmsh — Selection": architecture/gmsh_selection.md
-      - "Gmsh — Partitioning": architecture/gmsh_partitioning.md
-      - "Gmsh — API reference": architecture/gmsh_api_reference.md
+      - Foundations:
+          - Overview: architecture/apeGmsh_architecture.md
+          - Principles: architecture/apeGmsh_principles.md
+          - Navigation: architecture/apeGmsh_navigation.md
+          - Aesthetic: architecture/apeGmsh_aesthetic.md
+          - Ground truth: architecture/apeGmsh_groundTruth.md
+          - Type hinting: architecture/apeGmsh_hinting.md
+      - Subsystems:
+          - Broker: architecture/apeGmsh_broker.md
+          - Parts & Assembly: architecture/apeGmsh_partInstanceAssemble.md
+          - Constraints: architecture/apeGmsh_constraints.md
+          - Loads: architecture/apeGmsh_loads.md
+          - Visualization: architecture/apeGmsh_visualization.md
+          - Results viewer: architecture/apeGmsh_results_viewer.md
+          - Results — Obtaining: architecture/apeGmsh_results_obtaining.md
+      - Gmsh background:
+          - "Gmsh — Basics": architecture/gmsh_basics.md
+          - "Gmsh — Geometry": architecture/gmsh_geometry_basics.md
+          - "Gmsh — Interface": architecture/gmsh_interface.md
+          - "Gmsh — Meshing basics": architecture/gmsh_meshing_basics.md
+          - "Gmsh — Meshing advanced": architecture/gmsh_meshing_advanced.md
+          - "Gmsh — Selection": architecture/gmsh_selection.md
+          - "Gmsh — Partitioning": architecture/gmsh_partitioning.md
+          - "Gmsh — API reference": architecture/gmsh_api_reference.md
   - API Reference:
       - Overview: api/index.md
       - Session (apeGmsh): api/session.md
