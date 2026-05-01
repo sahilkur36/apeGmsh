@@ -28,6 +28,215 @@ if TYPE_CHECKING:
 
 
 # =====================================================================
+# Geometric helpers — coordinate / box queries against the bound FEM
+# =====================================================================
+
+def _require_fem(results: "Results", method: str):
+    fem = results._fem
+    if fem is None:
+        raise RuntimeError(
+            f"{method} requires a bound FEMData. Pass fem= when "
+            f"constructing Results, or call .bind(fem)."
+        )
+    return fem
+
+
+def _nearest_node_id(fem, point, *, candidate_ids=None) -> int:
+    """Return the node ID closest to ``point`` in 3D Euclidean distance.
+
+    If ``candidate_ids`` is provided, restrict the search to that set
+    (additive composition with named selectors).
+    """
+    target = np.asarray(point, dtype=np.float64).reshape(3)
+    all_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+    if all_ids.size == 0:
+        raise RuntimeError("FEMData has no nodes.")
+    if candidate_ids is None:
+        cand_idx = np.arange(all_ids.size)
+    else:
+        cand_idx = np.flatnonzero(np.isin(all_ids, candidate_ids))
+        if cand_idx.size == 0:
+            raise RuntimeError(
+                "Candidate set has no nodes — check pg/label/selection/ids."
+            )
+    i = cand_idx[int(np.argmin(
+        np.linalg.norm(coords[cand_idx] - target, axis=1),
+    ))]
+    return int(all_ids[i])
+
+
+def _node_ids_in_box(fem, box_min, box_max) -> ndarray:
+    """Return node IDs whose coordinates lie inside the AABB.
+
+    Box is half-open on the upper side:
+    ``box_min <= xyz < box_max`` per axis. Coordinates equal to
+    ``box_max`` are excluded so adjacent boxes don't double-count a
+    shared face.
+    """
+    lo = np.asarray(box_min, dtype=np.float64).reshape(3)
+    hi = np.asarray(box_max, dtype=np.float64).reshape(3)
+    coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+    if coords.size == 0:
+        return np.array([], dtype=np.int64)
+    mask = np.all((coords >= lo) & (coords < hi), axis=1)
+    return np.asarray(fem.nodes.ids, dtype=np.int64)[mask]
+
+
+def _node_ids_in_sphere(fem, center, radius) -> ndarray:
+    """Return node IDs within ``radius`` of ``center`` (closed ball)."""
+    c = np.asarray(center, dtype=np.float64).reshape(3)
+    r = float(radius)
+    if r < 0:
+        raise ValueError(f"radius must be non-negative, got {r}.")
+    coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+    if coords.size == 0:
+        return np.array([], dtype=np.int64)
+    mask = np.linalg.norm(coords - c, axis=1) <= r
+    return np.asarray(fem.nodes.ids, dtype=np.int64)[mask]
+
+
+def _node_ids_on_plane(fem, point_on_plane, normal, tolerance) -> ndarray:
+    """Return node IDs within ``tolerance`` of the plane.
+
+    Plane is defined by a point on it and a normal vector. The normal
+    is normalised internally; perpendicular distance is computed via
+    the signed dot product.
+    """
+    p = np.asarray(point_on_plane, dtype=np.float64).reshape(3)
+    n = np.asarray(normal, dtype=np.float64).reshape(3)
+    n_norm = np.linalg.norm(n)
+    if n_norm == 0:
+        raise ValueError("normal vector has zero length.")
+    n_hat = n / n_norm
+    tol = float(tolerance)
+    if tol < 0:
+        raise ValueError(f"tolerance must be non-negative, got {tol}.")
+    coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+    if coords.size == 0:
+        return np.array([], dtype=np.int64)
+    distance = np.abs((coords - p) @ n_hat)
+    mask = distance <= tol
+    return np.asarray(fem.nodes.ids, dtype=np.int64)[mask]
+
+
+def _element_centroids(fem) -> tuple[ndarray, ndarray]:
+    """Return ``(ids, centroids)`` for every element in the FEM.
+
+    Walks every element-type group, computes the centroid as the mean
+    of its node coordinates, and concatenates the results. O(E) work
+    per call — callers should cache when calling repeatedly.
+    """
+    coords = np.asarray(fem.nodes.coords, dtype=np.float64)
+    sorted_ids = np.argsort(np.asarray(fem.nodes.ids, dtype=np.int64))
+    sorted_node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)[sorted_ids]
+    inverse_perm = sorted_ids   # sorted index -> original index
+
+    out_ids: list[ndarray] = []
+    out_cent: list[ndarray] = []
+
+    for type_info in fem.elements.types:
+        ids, conn = fem.elements.resolve(element_type=type_info.name)
+        if ids.size == 0:
+            continue
+        flat = np.asarray(conn, dtype=np.int64).ravel()
+        loc = np.searchsorted(sorted_node_ids, flat)
+        # Guard against any node IDs not in the FEM (shouldn't happen,
+        # but if it does, np.searchsorted returns len(sorted_node_ids)).
+        loc = np.clip(loc, 0, len(sorted_node_ids) - 1)
+        orig = inverse_perm[loc]
+        node_xyz = coords[orig].reshape(conn.shape + (3,))
+        cent = node_xyz.mean(axis=1)
+
+        out_ids.append(np.asarray(ids, dtype=np.int64))
+        out_cent.append(cent)
+
+    if not out_ids:
+        return np.array([], dtype=np.int64), np.empty((0, 3), dtype=np.float64)
+    return np.concatenate(out_ids), np.vstack(out_cent)
+
+
+def _nearest_element_id(fem, point, *, candidate_ids=None) -> int:
+    """Return the element ID whose centroid is closest to ``point``.
+
+    If ``candidate_ids`` is provided, restrict the search to that set.
+    """
+    target = np.asarray(point, dtype=np.float64).reshape(3)
+    ids, cent = _element_centroids(fem)
+    if ids.size == 0:
+        raise RuntimeError("FEMData has no elements.")
+    if candidate_ids is None:
+        cand_mask = np.ones(ids.size, dtype=bool)
+    else:
+        cand_mask = np.isin(ids, candidate_ids)
+        if not cand_mask.any():
+            raise RuntimeError(
+                "Candidate set has no elements — check pg/label/selection/ids."
+            )
+    sub_ids = ids[cand_mask]
+    sub_cent = cent[cand_mask]
+    i = int(np.argmin(np.linalg.norm(sub_cent - target, axis=1)))
+    return int(sub_ids[i])
+
+
+def _element_ids_in_box(fem, box_min, box_max) -> ndarray:
+    """Return element IDs whose centroid lies inside the AABB."""
+    lo = np.asarray(box_min, dtype=np.float64).reshape(3)
+    hi = np.asarray(box_max, dtype=np.float64).reshape(3)
+    ids, cent = _element_centroids(fem)
+    if ids.size == 0:
+        return np.array([], dtype=np.int64)
+    mask = np.all((cent >= lo) & (cent < hi), axis=1)
+    return ids[mask]
+
+
+def _element_ids_in_sphere(fem, center, radius) -> ndarray:
+    """Return element IDs whose centroid is within ``radius`` of ``center``."""
+    c = np.asarray(center, dtype=np.float64).reshape(3)
+    r = float(radius)
+    if r < 0:
+        raise ValueError(f"radius must be non-negative, got {r}.")
+    ids, cent = _element_centroids(fem)
+    if ids.size == 0:
+        return np.array([], dtype=np.int64)
+    mask = np.linalg.norm(cent - c, axis=1) <= r
+    return ids[mask]
+
+
+def _element_ids_on_plane(fem, point_on_plane, normal, tolerance) -> ndarray:
+    """Return element IDs whose centroid is within ``tolerance`` of the plane."""
+    p = np.asarray(point_on_plane, dtype=np.float64).reshape(3)
+    n = np.asarray(normal, dtype=np.float64).reshape(3)
+    n_norm = np.linalg.norm(n)
+    if n_norm == 0:
+        raise ValueError("normal vector has zero length.")
+    n_hat = n / n_norm
+    tol = float(tolerance)
+    if tol < 0:
+        raise ValueError(f"tolerance must be non-negative, got {tol}.")
+    ids, cent = _element_centroids(fem)
+    if ids.size == 0:
+        return np.array([], dtype=np.int64)
+    distance = np.abs((cent - p) @ n_hat)
+    mask = distance <= tol
+    return ids[mask]
+
+
+def _element_ids_of_type(fem, element_type: str) -> ndarray:
+    """Return element IDs matching the given broker element-type name.
+
+    The element-type name is the broker's label (e.g. ``"Tet4"``,
+    ``"Hex8"``, ``"Quad4"``) — see ``fem.elements.types``. If the
+    name doesn't match any group, returns an empty array.
+    """
+    available = [t.name for t in fem.elements.types]
+    if element_type not in available:
+        return np.array([], dtype=np.int64)
+    ids, _ = fem.elements.resolve(element_type=element_type)
+    return np.asarray(ids, dtype=np.int64)
+
+
+# =====================================================================
 # Selection helpers
 # =====================================================================
 
@@ -155,6 +364,158 @@ def _as_iter(x) -> list[str]:
     return list(x)
 
 
+class _ElementGeometryMixin:
+    """Geometric helpers for element-level composites.
+
+    Provides ``nearest_to`` / ``in_box`` / ``in_sphere`` / ``on_plane``,
+    each accepting the standard selectors (``pg=`` / ``label=`` /
+    ``selection=`` / ``ids=`` / ``element_type=``) for **additive**
+    composition: the named selectors restrict the candidate set first,
+    then the geometric filter narrows that subset. Distance and
+    containment are computed against element centroids (mean of the
+    element's node coordinates).
+    """
+
+    _r: "Results"
+
+    # ------------------------------------------------------------------
+    # Internal — combine named selectors plus element_type
+    # ------------------------------------------------------------------
+
+    def _combine_candidates(
+        self,
+        *,
+        pg, label, selection, ids,
+        element_type: str | None,
+    ):
+        """Return the candidate ID array (or None for "all elements")."""
+        cand = self._resolve_element_ids(
+            pg=pg, label=label, selection=selection, ids=ids,
+        )
+        if element_type is not None:
+            fem = _require_fem(self._r, "element_type=")
+            type_ids = _element_ids_of_type(fem, element_type)
+            cand = (
+                np.intersect1d(cand, type_ids, assume_unique=False)
+                if cand is not None else type_ids
+            )
+        return cand
+
+    # ------------------------------------------------------------------
+    # Geometric helpers
+    # ------------------------------------------------------------------
+
+    def nearest_to(
+        self,
+        point,
+        *,
+        component: str,
+        pg=None, label=None, selection=None, ids=None,
+        element_type: str | None = None,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ):
+        """Read ``component`` at the element whose centroid is nearest ``point``."""
+        fem = _require_fem(
+            self._r, f"{type(self).__name__}.nearest_to(...)",
+        )
+        cand = self._combine_candidates(
+            pg=pg, label=label, selection=selection, ids=ids,
+            element_type=element_type,
+        )
+        eid = _nearest_element_id(fem, point, candidate_ids=cand)
+        return self.get(
+            ids=[eid], component=component, time=time, stage=stage,
+        )
+
+    def in_box(
+        self,
+        box_min,
+        box_max,
+        *,
+        component: str,
+        pg=None, label=None, selection=None, ids=None,
+        element_type: str | None = None,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ):
+        """Read ``component`` at every element whose centroid is in ``[box_min, box_max)``."""
+        fem = _require_fem(
+            self._r, f"{type(self).__name__}.in_box(...)",
+        )
+        cand = self._combine_candidates(
+            pg=pg, label=label, selection=selection, ids=ids,
+            element_type=element_type,
+        )
+        in_box_ids = _element_ids_in_box(fem, box_min, box_max)
+        narrowed = (
+            np.intersect1d(cand, in_box_ids, assume_unique=False)
+            if cand is not None else in_box_ids
+        )
+        return self.get(
+            ids=narrowed, component=component, time=time, stage=stage,
+        )
+
+    def in_sphere(
+        self,
+        center,
+        radius: float,
+        *,
+        component: str,
+        pg=None, label=None, selection=None, ids=None,
+        element_type: str | None = None,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ):
+        """Read ``component`` at every element whose centroid is within ``radius`` of ``center``."""
+        fem = _require_fem(
+            self._r, f"{type(self).__name__}.in_sphere(...)",
+        )
+        cand = self._combine_candidates(
+            pg=pg, label=label, selection=selection, ids=ids,
+            element_type=element_type,
+        )
+        in_sphere_ids = _element_ids_in_sphere(fem, center, radius)
+        narrowed = (
+            np.intersect1d(cand, in_sphere_ids, assume_unique=False)
+            if cand is not None else in_sphere_ids
+        )
+        return self.get(
+            ids=narrowed, component=component, time=time, stage=stage,
+        )
+
+    def on_plane(
+        self,
+        point_on_plane,
+        normal,
+        tolerance: float,
+        *,
+        component: str,
+        pg=None, label=None, selection=None, ids=None,
+        element_type: str | None = None,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ):
+        """Read ``component`` at every element whose centroid is within ``tolerance`` of the plane."""
+        fem = _require_fem(
+            self._r, f"{type(self).__name__}.on_plane(...)",
+        )
+        cand = self._combine_candidates(
+            pg=pg, label=label, selection=selection, ids=ids,
+            element_type=element_type,
+        )
+        on_plane_ids = _element_ids_on_plane(
+            fem, point_on_plane, normal, tolerance,
+        )
+        narrowed = (
+            np.intersect1d(cand, on_plane_ids, assume_unique=False)
+            if cand is not None else on_plane_ids
+        )
+        return self.get(
+            ids=narrowed, component=component, time=time, stage=stage,
+        )
+
+
 # =====================================================================
 # Nodes
 # =====================================================================
@@ -188,12 +549,132 @@ class NodeResultsComposite(_SelectionMixin):
         sid = self._r._resolve_stage(stage)
         return self._r._reader.available_components(sid, ResultLevel.NODES)
 
+    # ------------------------------------------------------------------
+    # Geometric helpers
+    # ------------------------------------------------------------------
+
+    def nearest_to(
+        self,
+        point,
+        *,
+        component: str,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | ndarray | None = None,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ) -> NodeSlab:
+        """Read ``component`` at the node nearest ``point`` (3D coord)."""
+        fem = _require_fem(self._r, "results.nodes.nearest_to(...)")
+        candidate = self._resolve_node_ids(
+            pg=pg, label=label, selection=selection, ids=ids,
+        )
+        nid = _nearest_node_id(fem, point, candidate_ids=candidate)
+        return self.get(
+            ids=[nid], component=component, time=time, stage=stage,
+        )
+
+    def in_box(
+        self,
+        box_min,
+        box_max,
+        *,
+        component: str,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | ndarray | None = None,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ) -> NodeSlab:
+        """Read ``component`` at every node inside ``[box_min, box_max)``.
+
+        Box bounds are half-open on the upper side so adjacent boxes
+        don't double-count shared faces. Use ``-np.inf`` / ``np.inf``
+        to relax an axis.
+        """
+        fem = _require_fem(self._r, "results.nodes.in_box(...)")
+        candidate = self._resolve_node_ids(
+            pg=pg, label=label, selection=selection, ids=ids,
+        )
+        in_box_ids = _node_ids_in_box(fem, box_min, box_max)
+        narrowed = (
+            np.intersect1d(candidate, in_box_ids, assume_unique=False)
+            if candidate is not None else in_box_ids
+        )
+        return self.get(
+            ids=narrowed, component=component, time=time, stage=stage,
+        )
+
+    def in_sphere(
+        self,
+        center,
+        radius: float,
+        *,
+        component: str,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | ndarray | None = None,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ) -> NodeSlab:
+        """Read ``component`` at every node within ``radius`` of ``center``."""
+        fem = _require_fem(self._r, "results.nodes.in_sphere(...)")
+        candidate = self._resolve_node_ids(
+            pg=pg, label=label, selection=selection, ids=ids,
+        )
+        in_sphere_ids = _node_ids_in_sphere(fem, center, radius)
+        narrowed = (
+            np.intersect1d(candidate, in_sphere_ids, assume_unique=False)
+            if candidate is not None else in_sphere_ids
+        )
+        return self.get(
+            ids=narrowed, component=component, time=time, stage=stage,
+        )
+
+    def on_plane(
+        self,
+        point_on_plane,
+        normal,
+        tolerance: float,
+        *,
+        component: str,
+        pg: str | Iterable[str] | None = None,
+        label: str | Iterable[str] | None = None,
+        selection: str | Iterable[str] | None = None,
+        ids: Iterable[int] | ndarray | None = None,
+        time: TimeSlice = None,
+        stage: str | None = None,
+    ) -> NodeSlab:
+        """Read ``component`` at every node within ``tolerance`` of the plane.
+
+        The plane is defined by a point on it and a normal vector.
+        Useful for slicing through a model — e.g. mid-span or a
+        story-level cut.
+        """
+        fem = _require_fem(self._r, "results.nodes.on_plane(...)")
+        candidate = self._resolve_node_ids(
+            pg=pg, label=label, selection=selection, ids=ids,
+        )
+        on_plane_ids = _node_ids_on_plane(
+            fem, point_on_plane, normal, tolerance,
+        )
+        narrowed = (
+            np.intersect1d(candidate, on_plane_ids, assume_unique=False)
+            if candidate is not None else on_plane_ids
+        )
+        return self.get(
+            ids=narrowed, component=component, time=time, stage=stage,
+        )
+
 
 # =====================================================================
 # Elements (per-element-node forces)
 # =====================================================================
 
-class ElementResultsComposite(_SelectionMixin):
+class ElementResultsComposite(_SelectionMixin, _ElementGeometryMixin):
     """``results.elements`` — per-element-node forces, plus sub-composites."""
 
     def __init__(self, results: "Results") -> None:
@@ -233,7 +714,7 @@ class ElementResultsComposite(_SelectionMixin):
 # Gauss points
 # =====================================================================
 
-class GaussResultsComposite(_SelectionMixin):
+class GaussResultsComposite(_SelectionMixin, _ElementGeometryMixin):
     """``results.elements.gauss`` — continuum Gauss-point values."""
 
     def __init__(self, results: "Results") -> None:
@@ -267,7 +748,7 @@ class GaussResultsComposite(_SelectionMixin):
 # Fibers
 # =====================================================================
 
-class FibersResultsComposite(_SelectionMixin):
+class FibersResultsComposite(_SelectionMixin, _ElementGeometryMixin):
     """``results.elements.fibers`` — fiber values within fiber-section GPs."""
 
     def __init__(self, results: "Results") -> None:
@@ -307,7 +788,7 @@ class FibersResultsComposite(_SelectionMixin):
 # Layers
 # =====================================================================
 
-class LayersResultsComposite(_SelectionMixin):
+class LayersResultsComposite(_SelectionMixin, _ElementGeometryMixin):
     """``results.elements.layers`` — layered shell layer values."""
 
     def __init__(self, results: "Results") -> None:
@@ -353,7 +834,7 @@ class LayersResultsComposite(_SelectionMixin):
 # Line stations
 # =====================================================================
 
-class LineStationsResultsComposite(_SelectionMixin):
+class LineStationsResultsComposite(_SelectionMixin, _ElementGeometryMixin):
     """``results.elements.line_stations`` — beam section forces along the length."""
 
     def __init__(self, results: "Results") -> None:
@@ -389,7 +870,7 @@ class LineStationsResultsComposite(_SelectionMixin):
 # Springs (ZeroLength)
 # =====================================================================
 
-class SpringsResultsComposite(_SelectionMixin):
+class SpringsResultsComposite(_SelectionMixin, _ElementGeometryMixin):
     """``results.elements.springs`` — ZeroLength spring force / deformation."""
 
     def __init__(self, results: "Results") -> None:
