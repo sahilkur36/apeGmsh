@@ -1,13 +1,28 @@
 # Examples
 
 A curated, in-progress gallery — a working tour through the apeGmsh
-API by example. Each notebook is rendered inline; you can also open
-the source on GitHub.
+API by example. Every notebook follows the same modernised template:
 
-> **Looking for the full repo?** All 60+ examples live at
+* Build geometry / mesh / FEM with apeGmsh.
+* Drive OpenSees with **vanilla `openseespy`** calls.
+* Declare **apeGmsh recorders** by physical-group / label name.
+* Wrap the analysis in **`spec.capture(...)`** or
+  **`spec.emit_recorders(...)`** — the two strategies are split across
+  the gallery so you see both in action.
+* Read results back via **`Results.from_native(...)` /
+  `Results.from_recorders(...)`**, verify against closed-form
+  references, and plot in-notebook from the slabs.
+
+> **Looking for the full repo?** 60+ examples live under
 > [apeGmsh/examples](https://github.com/nmorabowen/apeGmsh/tree/main/examples)
-> on GitHub. The gallery below is the curated subset we surface in
+> on GitHub. The 8 below are the curated subset rendered inline in
 > the docs.
+
+> **Strategy at a glance.** Each card calls out which results-acquisition
+> strategy that notebook uses — `spec.capture` for the apeGmsh-native
+> HDF5 path with broadest coverage, `spec.emit_recorders` for live
+> classic OpenSees recorders. Same `Results` API on the read side
+> regardless.
 
 ## Getting started
 
@@ -17,17 +32,25 @@ the source on GitHub.
 
     ---
 
-    The smallest viable apeGmsh model — a square plate, fixed on one
-    edge, loaded on the opposite. Covers the session, geometry,
-    physical groups, meshing, and the OpenSees bridge in ~40 lines.
+    *Strategy: `spec.capture`*
+
+    The smallest viable apeGmsh ↔ openseespy ↔ Results loop. A unit
+    plate in plane stress under uniaxial tension, verified against
+    $u_x = \sigma L / E$ to machine precision. Covers the full
+    pipeline in ~26 cells: geometry → mesh → vanilla `ops.*` model →
+    recorder declaration → capture → read back → in-notebook plot.
 
 -   :material-numeric-2-circle:{ .lg .middle } &nbsp; __[Cantilever beam (2D)](notebooks/02_cantilever_beam_2D.ipynb)__
 
     ---
 
-    The canonical FEM teaching example: a 2D cantilever under
-    end-load. Walks through the linear-static analysis pipeline and
-    pulls displacements, reactions, and stresses out of `Results`.
+    *Strategy: `spec.emit_recorders`*
+
+    The other results-acquisition strategy. Same `begin_stage` /
+    `end_stage` lifecycle as `capture`, but classic recorder `.out`
+    files on disk that `Results.from_recorders(stage_id=...)` reads
+    back. Verified against Euler-Bernoulli $\delta = -PL^3/(3EI)$
+    plus the deflected-shape cubic.
 
 </div>
 
@@ -39,32 +62,48 @@ the source on GitHub.
 
     ---
 
-    Multi-element frame with beam-column elements, shared nodes, and
-    distributed loads. Introduces section assignment and load
-    patterns.
+    *Strategy: `spec.capture`*
+
+    Multi-element frame with **two element groups of different
+    cross-section** (columns + rigid beam) driven from named
+    physical groups. The first example where the FEM is *more*
+    correct than the classical drift formula — the residual ~0.75%
+    is inherent (axial deformation + joint kinematics).
 
 -   :material-tag-multiple:{ .lg .middle } &nbsp; __[Labels & physical groups](notebooks/05_labels_and_pgs.ipynb)__
 
     ---
 
-    The naming system in practice — Tier 1 labels (geometry-time,
-    boolean-survivable) vs Tier 2 physical groups (solver-facing).
-    The selection vocabulary used everywhere downstream.
+    *Strategy: `spec.capture` (small)*
+
+    The two naming namespaces and how both flow through to `Results`.
+    Declare recorders in **both** namespaces (`pg=` and `label=`),
+    cross-check that the read side gives identical answers either
+    way. Demonstrates the `target=` precedence order
+    (label → PG → part).
 
 -   :material-puzzle-outline:{ .lg .middle } &nbsp; __[Part assembly](notebooks/10b_part_assembly.ipynb)__
 
     ---
 
-    Build a part once, instantiate it many times, fragment into a
-    conformal assembly. Labels survive the STEP round-trip.
+    *Strategy: `spec.emit_recorders`*
+
+    Build a column once as a `Part`, instantiate three times via
+    `g.parts.add(part, label=..., translate=...)`. Declare **one
+    recorder per part label**, read each part's slab independently —
+    part labels survive end-to-end as first-class selectors.
 
 -   :material-vector-link:{ .lg .middle } &nbsp; __[Interface tie](notebooks/12_interface_tie.ipynb)__
 
     ---
 
-    Non-matching meshes joined via `ASDEmbeddedNodeElement` —
-    apeGmsh's tie constraint emitted as a penalty element. Useful
-    when two meshed regions need to act as one.
+    *Strategy: `spec.capture`*
+
+    Two beams meeting at a shared point with **non-matching meshes**,
+    joined via `g.constraints.equal_dof`. The notebook verifies the
+    constraint contract directly through `Results` —
+    `u_master` and `u_slave` at the junction are equal to round-off.
+    Tip deflection matches the single-cantilever closed form.
 
 </div>
 
@@ -76,19 +115,50 @@ the source on GitHub.
 
     ---
 
-    Eigenvalue analysis with `DomainCapture.capture_modes()` — one
-    stage per mode in a single results file. Reads back as
-    `results.modes[i]` with frequency, period, and mode shape.
+    *Strategy: `spec.capture` (`capture_modes`)*
+
+    Eigenvalue analysis — `cap.capture_modes(N)` writes one stage per
+    mode with `kind="mode"`. Read back via `results.modes`, with
+    `mode_index`, `eigenvalue`, `frequency_hz`, `period_s` exposed as
+    scoped properties. First three bending modes verified against
+    Euler-Bernoulli to <0.3% error. **Modal is capture-only** — the
+    classic recorder path can't drive `ops.eigen()`.
 
 -   :material-chart-bell-curve:{ .lg .middle } &nbsp; __[Pushover (elastoplastic)](notebooks/19_pushover_elastoplastic.ipynb)__
 
     ---
 
-    Nonlinear pushover analysis using fiber sections. Demonstrates
-    iterative load stepping, capacity tracking, and pulling section
-    forces along the length via line-station results.
+    *Strategy: `spec.capture`*
+
+    The first **multi-step nonlinear** notebook — a Steel01 bar
+    pushed to 4× yield via `DisplacementControl`. The recorder fires
+    at every converged step; the capacity curve drops out of two
+    `Results.nodes.get(...)` calls without any manual `nodeDisp` /
+    `nodeReaction` accumulation. Three closed-form checks (slope,
+    plateau, yield onset) all match to round-off.
 
 </div>
+
+## Common shape across every notebook
+
+```
+1.  Imports + parameters
+2.  Geometry              ← apeGmsh
+3.  Physical groups + labels
+4.  Mesh
+5.  Build OpenSees model  ← VANILLA openseespy (ops.*)
+6.  Declare recorders     ← apeGmsh
+7.  Run analysis          ← spec.capture(...) or spec.emit_recorders(...)
+8.  Read results back     ← Results
+9.  Verify + plot         ← matplotlib from slabs
+10. Optional viewer       ← results.viewer(blocking=False)
+```
+
+The "vanilla openseespy except for recorders" rule is visible in
+section 5 (raw `ops.*` calls — nodes, elements, materials, fix,
+load) vs section 6 onward (apeGmsh recorders, capture, Results,
+viewer). The model setup stays close to OpenSees idioms; the
+**results pipeline is where apeGmsh adds value**.
 
 ## What's not in the gallery (yet)
 
