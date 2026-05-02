@@ -101,10 +101,43 @@ def _world_via_bbox(
 # Top-level entry                                                       #
 # --------------------------------------------------------------------- #
 
-def compute_global_coords(slab: "GaussSlab", fem: "FEMData") -> ndarray:
-    """Return ``(sum_GP, 3)`` world coords for every GP in ``slab``."""
-    eids = np.asarray(slab.element_index, dtype=np.int64)
-    nat = np.asarray(slab.natural_coords, dtype=np.float64)
+def compute_global_coords(
+    slab: "GaussSlab",
+    fem: "FEMData",
+    *,
+    node_coords_override: "ndarray | None" = None,
+) -> ndarray:
+    """Return ``(sum_GP, 3)`` world coords for every GP in ``slab``.
+
+    ``node_coords_override`` (optional) replaces ``fem.nodes.coords``
+    for the shape-function evaluation. The override must be a
+    ``(len(fem.nodes.ids), 3)`` array row-aligned with ``fem.nodes.ids``
+    — typically the deformed substrate points from
+    :class:`FEMSceneData.grid` after a Geometry's deformation has been
+    applied. Useful for visualizing GP markers on the deformed shape.
+    """
+    return compute_global_coords_from_arrays(
+        np.asarray(slab.element_index, dtype=np.int64),
+        np.asarray(slab.natural_coords, dtype=np.float64),
+        fem,
+        node_coords_override=node_coords_override,
+    )
+
+
+def compute_global_coords_from_arrays(
+    element_index: ndarray,
+    natural_coords: ndarray,
+    fem: "FEMData",
+    *,
+    node_coords_override: "ndarray | None" = None,
+) -> ndarray:
+    """Lower-level entry — same as :func:`compute_global_coords` but
+    takes ``element_index`` and ``natural_coords`` directly. Useful
+    when a caller has cached those arrays from an earlier slab read
+    and wants to recompute world coords against a different node
+    coords array (e.g. the deformed substrate)."""
+    eids = np.asarray(element_index, dtype=np.int64)
+    nat = np.asarray(natural_coords, dtype=np.float64)
     if nat.ndim == 1:
         nat = nat[:, None]
     n_gp = eids.size
@@ -114,9 +147,17 @@ def compute_global_coords(slab: "GaussSlab", fem: "FEMData") -> ndarray:
 
     # ── Lookup: FEM node id -> coord row ───────────────────────────
     node_ids_arr = np.asarray(list(fem.nodes.ids), dtype=np.int64)
-    coords_arr = np.asarray(fem.nodes.coords, dtype=np.float64)
+    coords_arr = (
+        np.asarray(node_coords_override, dtype=np.float64)
+        if node_coords_override is not None
+        else np.asarray(fem.nodes.coords, dtype=np.float64)
+    )
     if node_ids_arr.size == 0:
         return out
+    if coords_arr.shape[0] != node_ids_arr.shape[0]:
+        # Override length must match fem.nodes.ids — silently fall
+        # back to the embedded fem coords.
+        coords_arr = np.asarray(fem.nodes.coords, dtype=np.float64)
     max_nid = int(node_ids_arr.max())
     nid_to_idx = np.full(max_nid + 2, -1, dtype=np.int64)
     nid_to_idx[node_ids_arr] = np.arange(
@@ -124,10 +165,29 @@ def compute_global_coords(slab: "GaussSlab", fem: "FEMData") -> ndarray:
     )
 
     # ── Per-element info: type code + node coords ─────────────────
+    # MPCO-derived FEMData carries synthetic negative codes (e.g.
+    # ``-33`` for Tri31) that don't exist in the Gmsh-keyed shape
+    # function catalog. Map them to the equivalent Gmsh linear code
+    # by (dim, npe) so the shape function evaluation hits instead of
+    # falling through to the bbox approximation.
+    _GMSH_CODE_BY_DIM_NPE: dict[tuple[int, int], int] = {
+        (1, 2): 1,   # Line2
+        (2, 3): 2,   # Tri3
+        (2, 4): 3,   # Quad4
+        (3, 4): 4,   # Tet4
+        (3, 8): 5,   # Hex8
+    }
     needed = set(int(e) for e in np.unique(eids))
     eid_info: dict[int, tuple[int, ndarray]] = {}
     for group in fem.elements:
-        type_code = int(group.element_type.code)
+        et = group.element_type
+        raw_code = int(et.code)
+        type_code = (
+            raw_code if raw_code >= 0
+            else _GMSH_CODE_BY_DIM_NPE.get(
+                (int(et.dim), int(et.npe)), raw_code,
+            )
+        )
         ids = np.asarray(group.ids, dtype=np.int64)
         conn = np.asarray(group.connectivity, dtype=np.int64)
         for k in range(len(group)):

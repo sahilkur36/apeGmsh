@@ -6,6 +6,11 @@ Hosts session-scoped controls that don't belong inside the model
 - Visualization toggles (substrate mesh + node cloud overlay).
 - Theme picker.
 
+The deformation editor previously lived here as a global modifier.
+After the Geometry refactor it moved into each Geometry's details
+panel, so deformation is now per-Geometry and each geometry can
+carry a different warp.
+
 Future additions land here as new sections (density, layout reset,
 file actions, …).
 """
