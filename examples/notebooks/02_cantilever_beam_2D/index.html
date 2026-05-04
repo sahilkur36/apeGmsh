@@ -2354,6 +2354,8 @@
       
         
       
+        
+      
     
     
     
@@ -2579,6 +2581,34 @@
     
   
     Results — Obtaining
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../internal_docs/Results_architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results — Architecture
   
 
     
@@ -3399,6 +3429,12 @@
       
         
       
+        
+      
+        
+      
+        
+      
     
     
     
@@ -3627,6 +3663,90 @@
     
   
     Instance computed view (deferred)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../internal_docs/plan_element_transcoding/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Element transcoding
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../internal_docs/plan_phase_11b_line_stations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Phase 11b — Line stations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../internal_docs/design_brief_results_viewer/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results viewer — Design brief
   
 
     
@@ -5179,7 +5299,9 @@ design at work.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">out_dir</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"02_cantilever_out"</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">apeGmsh</span><span class="w"> </span><span class="kn">import</span> <span class="n">workdir</span>
+<span class="n">OUT</span> <span class="o">=</span> <span class="n">workdir</span><span class="p">()</span>
+<span class="n">out_dir</span> <span class="o">=</span> <span class="n">OUT</span> <span class="o">/</span> <span class="s2">"recorders"</span>
 <span class="k">if</span> <span class="n">out_dir</span><span class="o">.</span><span class="n">exists</span><span class="p">():</span>
     <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">out_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.out"</span><span class="p">):</span>
         <span class="n">f</span><span class="o">.</span><span class="n">unlink</span><span class="p">()</span>
@@ -5204,7 +5326,9 @@ design at work.</p>
 <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">out_dir</span><span class="o">.</span><span class="n">glob</span><span class="p">(</span><span class="s2">"*.out"</span><span class="p">)):</span>
     <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"  </span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">  (</span><span class="si">{</span><span class="n">f</span><span class="o">.</span><span class="n">stat</span><span class="p">()</span><span class="o">.</span><span class="n">st_size</span><span class="si">}</span><span class="s2"> B)"</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-7">out_dir = Path("02_cantilever_out")
+<div class="clipboard-copy-txt" id="cell-7">from apeGmsh import workdir
+OUT = workdir()
+out_dir = OUT / "recorders"
 if out_dir.exists():
     for f in out_dir.glob("*.out"):
         f.unlink()
@@ -5477,19 +5601,10 @@ the read API is identical regardless of which strategy produced the file.</p>
 </div>
 </clipboard-copy>
 </div>
-<div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
-<span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s2">"APEGMSH_SKIP_VIEWER"</span><span class="p">):</span>
-    <span class="nb">print</span><span class="p">(</span><span class="s2">"[skip viewer] APEGMSH_SKIP_VIEWER set"</span><span class="p">)</span>
-<span class="k">else</span><span class="p">:</span>
-    <span class="n">handle</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">blocking</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
-    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">"viewer pid: </span><span class="si">{</span><span class="n">handle</span><span class="o">.</span><span class="n">pid</span><span class="si">}</span><span class="s2">  — close the window to exit."</span><span class="p">)</span>
+<div class="highlight-ipynb hl-python"><pre><span></span><span class="n">results</span><span class="o">.</span><span class="n">viewer</span><span class="p">(</span><span class="n">blocking</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span>
 </pre></div>
-<div class="clipboard-copy-txt" id="cell-12">import os
-if os.environ.get("APEGMSH_SKIP_VIEWER"):
-    print("[skip viewer] APEGMSH_SKIP_VIEWER set")
-else:
-    handle = results.viewer(blocking=False)
-    print(f"viewer pid: {handle.pid}  — close the window to exit.")</div>
+<div class="clipboard-copy-txt" id="cell-12">results.viewer(blocking=False)
+</div>
 </div>
 </div>
 </div>
