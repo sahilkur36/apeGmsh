@@ -141,6 +141,16 @@ class FaceLoadDef(LoadDef):
     via a least-norm distribution such that ``Sum(r_i x f_i) = M`` and
     ``Sum(f_i) = 0``.
 
+    A scalar ``magnitude`` (total Newtons, NOT pressure) can be combined
+    with either ``normal=True`` or an explicit ``direction`` to produce
+    the equivalent ``force_xyz`` without manually computing the face
+    normal.  Sign convention: ``magnitude * direction_unit`` always —
+    i.e. ``+magnitude`` with ``normal=True`` acts along the
+    area-weighted average outward normal ``+n_avg`` (and
+    ``-magnitude`` flips it, matching :class:`SurfaceLoadDef`'s
+    "into-face" pressure when desired).  Composes with ``moment_xyz``;
+    combining with ``force_xyz`` is an error.
+
     Use this instead of a reference node + coupling when you only need
     to apply a load to a face without structural coupling to another
     element.
@@ -148,6 +158,9 @@ class FaceLoadDef(LoadDef):
     kind: str = field(init=False, default="face_load")
     force_xyz: tuple[float, float, float] | None = None
     moment_xyz: tuple[float, float, float] | None = None
+    magnitude: float = 0.0
+    normal: bool = False
+    direction: tuple[float, float, float] | None = None
 
 
 @dataclass
@@ -157,8 +170,16 @@ class FaceSPDef(LoadDef):
     Maps a rigid-body motion at the face centroid to per-node
     displacements using ``u_i = disp_xyz + rot_xyz x r_i``.
 
-    When both ``disp_xyz`` and ``rot_xyz`` are ``None``, all values are
-    zero and the result is a homogeneous fix.
+    When ``disp_xyz``, ``rot_xyz``, and ``magnitude`` are all None /
+    zero, the result is a homogeneous fix.
+
+    A scalar ``magnitude`` (displacement, in mesh length units) can be
+    combined with ``normal=True`` or an explicit ``direction`` to
+    derive the centroid translation without computing the face normal
+    by hand.  Sign convention matches :class:`FaceLoadDef`: total =
+    ``magnitude * unit_direction`` along ``+n_avg`` (or the normalised
+    ``direction``).  Composes with ``rot_xyz``; combining with
+    ``disp_xyz`` is an error.
 
     Parameters
     ----------
@@ -168,11 +189,21 @@ class FaceSPDef(LoadDef):
         Prescribed translation at the face centroid.
     rot_xyz : tuple or None
         Prescribed rotation about the face centroid.
+    magnitude : float
+        Scalar centroid translation, routed via ``normal``/``direction``.
+    normal : bool
+        When True, use the area-weighted face normal as the direction.
+    direction : tuple or None
+        Explicit unit direction (auto-normalised); mutually exclusive
+        with ``normal=True``.
     """
     kind: str = field(init=False, default="face_sp")
     dofs: list[int] = field(default_factory=lambda: [1, 1, 1])
     disp_xyz: tuple[float, float, float] | None = None
     rot_xyz: tuple[float, float, float] | None = None
+    magnitude: float = 0.0
+    normal: bool = False
+    direction: tuple[float, float, float] | None = None
 
 
 # ======================================================================
@@ -767,19 +798,71 @@ class LoadResolver:
         self,
         defn: FaceLoadDef,
         face_node_ids: list[int],
+        faces: list[list[int]] | None = None,
     ) -> list[NodalLoadRecord]:
         """Distribute centroidal force/moment to face nodes.
 
         ``force_xyz``: equal share ``F / N`` per node.
         ``moment_xyz``: least-norm nodal forces satisfying
         ``Sum(f_i) = 0`` and ``Sum(r_i x f_i) = M``.
+        ``magnitude`` + ``normal``/``direction``: equivalent force_xyz
+        derived from face geometry.  Requires ``faces`` (per-element
+        node-id lists) when ``normal=True`` so the area-weighted
+        average normal can be computed.
         """
         N = len(face_node_ids)
         if N == 0:
             return []
         accum: dict[int, ndarray] = {}
 
-        # Force contribution: equal split
+        # Magnitude path: derive an equivalent force_xyz from
+        # face geometry, then equal-split like force_xyz.
+        if defn.magnitude != 0.0:
+            if defn.normal:
+                if not faces:
+                    raise ValueError(
+                        "face_load with normal=True requires face "
+                        "element information; got empty `faces`."
+                    )
+                weighted = np.zeros(3)
+                total_area = 0.0
+                for face in faces:
+                    A = self.face_area(face)
+                    if A <= 0:
+                        continue
+                    weighted += A * self.face_normal(face)
+                    total_area += A
+                w_norm = float(np.linalg.norm(weighted))
+                if w_norm < 1e-30 or total_area <= 0:
+                    raise ValueError(
+                        "face_load(normal=True): degenerate face "
+                        "geometry (zero area or null average normal)."
+                    )
+                # Sign convention: magnitude * +n_avg.  Positive
+                # magnitude acts along the average outward face normal.
+                # Pass a negative magnitude for an "into-face"
+                # (pressure-like) load.
+                f_total = defn.magnitude * (weighted / w_norm)
+            else:
+                if defn.direction is None:
+                    raise ValueError(
+                        "face_load(magnitude=...) requires either "
+                        "normal=True or an explicit direction= vector."
+                    )
+                d = np.asarray(defn.direction, dtype=float)
+                d_norm = float(np.linalg.norm(d))
+                if d_norm < 1e-30:
+                    raise ValueError(
+                        "face_load(direction=...): null direction vector."
+                    )
+                f_total = defn.magnitude * (d / d_norm)
+            per_node = f_total / N
+            f6 = np.array([per_node[0], per_node[1], per_node[2],
+                           0.0, 0.0, 0.0])
+            for nid in face_node_ids:
+                _accumulate_nodal(accum, nid, f6)
+
+        # Explicit force_xyz: equal split
         if defn.force_xyz is not None:
             f_total = np.asarray(defn.force_xyz, dtype=float)
             per_node = f_total / N
@@ -841,12 +924,18 @@ class LoadResolver:
         self,
         defn: FaceSPDef,
         face_node_ids: list[int],
+        faces: list[list[int]] | None = None,
     ) -> list[SPRecord]:
         """Map centroidal rigid-body motion to per-node SP constraints.
 
         For each constrained DOF *d* and each node *i*:
         ``u_i = disp_xyz + rot_xyz x r_i``, then emit
         ``SPRecord(node_id=i, dof=d, value=u_i[d-1])``.
+
+        ``magnitude`` + ``normal``/``direction`` derive an additional
+        translation contribution (along ``+n_avg`` for ``normal=True``,
+        otherwise along the normalised ``direction``).  Requires
+        ``faces`` when ``normal=True``.
         """
         if not face_node_ids:
             return []
@@ -856,6 +945,41 @@ class LoadResolver:
 
         u0 = np.asarray(defn.disp_xyz, dtype=float) if defn.disp_xyz else np.zeros(3)
         theta = np.asarray(defn.rot_xyz, dtype=float) if defn.rot_xyz else np.zeros(3)
+
+        # Magnitude path: derive an equivalent disp_xyz along the
+        # face normal or an explicit direction.
+        if defn.magnitude != 0.0:
+            if defn.normal:
+                if not faces:
+                    raise ValueError(
+                        "face_sp with normal=True requires face element "
+                        "information; got empty `faces`."
+                    )
+                weighted = np.zeros(3)
+                for face in faces:
+                    A = self.face_area(face)
+                    if A <= 0:
+                        continue
+                    weighted += A * self.face_normal(face)
+                w_norm = float(np.linalg.norm(weighted))
+                if w_norm < 1e-30:
+                    raise ValueError(
+                        "face_sp(normal=True): degenerate face geometry."
+                    )
+                u0 = u0 + defn.magnitude * (weighted / w_norm)
+            else:
+                if defn.direction is None:
+                    raise ValueError(
+                        "face_sp(magnitude=...) requires normal=True or "
+                        "an explicit direction= vector."
+                    )
+                d = np.asarray(defn.direction, dtype=float)
+                d_norm = float(np.linalg.norm(d))
+                if d_norm < 1e-30:
+                    raise ValueError(
+                        "face_sp(direction=...): null direction vector."
+                    )
+                u0 = u0 + defn.magnitude * (d / d_norm)
 
         out: list[SPRecord] = []
         for i, nid in enumerate(face_node_ids):
