@@ -118,6 +118,35 @@ class ResultsViewer:
         return self._plotter
 
     # ------------------------------------------------------------------
+    # Animation export
+    # ------------------------------------------------------------------
+
+    def export_animation(
+        self,
+        path: "str | Any",
+        *,
+        fps: int = 30,
+        step_stride: int = 1,
+    ) -> Any:
+        """Export the time history as an animated MP4 or GIF.
+
+        Format auto-detected from the path suffix (``.mp4`` / ``.gif``).
+        See :func:`apeGmsh.viewers.animation.export_animation` for the
+        full parameter documentation. Requires the viewer to have been
+        :meth:`show`-n so the plotter and director are wired.
+        """
+        if self._plotter is None or self._director is None:
+            raise RuntimeError(
+                "export_animation: call viewer.show() first so the "
+                "plotter and director are constructed."
+            )
+        from .animation import export_animation
+        return export_animation(
+            self._plotter, self._director, path,
+            fps=fps, step_stride=step_stride,
+        )
+
+    # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
 
