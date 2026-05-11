@@ -38,14 +38,14 @@ from ._constraint_geom import (
     _is_inside_parametric,
     _project_point_to_face,
 )
-from ._constraint_records import (
+from apeGmsh.mesh.records._constraints import (
     InterpolationRecord,
     NodeGroupRecord,
     NodePairRecord,
     NodeToSurfaceRecord,
     SurfaceCouplingRecord,
 )
-from ._kinds import ConstraintKind
+from apeGmsh.mesh.records._kinds import ConstraintKind
 
 
 def _barycentric_tri3(

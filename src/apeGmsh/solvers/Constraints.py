@@ -113,7 +113,7 @@ from ._constraint_geom import (  # noqa: F401  (intentional re-exports of privat
     _shape_tri3,
     _shape_tri6,
 )
-from ._constraint_records import (
+from apeGmsh.mesh.records._constraints import (
     ConstraintRecord,
     InterpolationRecord,
     NodeGroupRecord,

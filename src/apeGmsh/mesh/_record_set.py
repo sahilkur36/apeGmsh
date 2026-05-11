@@ -25,8 +25,8 @@ from typing import TYPE_CHECKING, Generic, Iterator, TypeVar
 import numpy as np
 
 # Re-exported so callers that historically imported ConstraintKind/LoadKind
-# from this module keep working; canonical home is apeGmsh.solvers._kinds.
-from apeGmsh.solvers._kinds import ConstraintKind, LoadKind  # noqa: F401
+# from this module keep working; canonical home is apeGmsh.mesh.records.
+from .records._kinds import ConstraintKind, LoadKind  # noqa: F401
 
 _R = TypeVar('_R')
 
