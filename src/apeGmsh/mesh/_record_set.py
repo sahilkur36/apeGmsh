@@ -36,7 +36,7 @@ if TYPE_CHECKING:
         ConstraintRecord, NodePairRecord, NodeGroupRecord,
         NodeToSurfaceRecord, InterpolationRecord, SurfaceCouplingRecord,
     )
-    from apeGmsh.solvers.Loads import NodalLoadRecord, ElementLoadRecord, SPRecord  # noqa: F401
+    from apeGmsh.mesh.records._loads import NodalLoadRecord, ElementLoadRecord, SPRecord  # noqa: F401
     from apeGmsh.solvers.Masses import MassRecord  # noqa: F401
 
 

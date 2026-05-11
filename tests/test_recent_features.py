@@ -29,14 +29,9 @@ from apeGmsh.solvers.Constraints import (
     SurfaceCouplingRecord,
     TiedContactDef,
 )
-from apeGmsh.solvers.Loads import (
-    FaceLoadDef,
-    FaceSPDef,
-    LoadResolver,
-    NodalLoadRecord,
-    SPRecord,
-)
-from apeGmsh.solvers._kinds import ConstraintKind
+from apeGmsh.core.loads.defs import FaceLoadDef, FaceSPDef
+from apeGmsh.mesh._load_resolver import LoadResolver
+from apeGmsh.mesh.records import ConstraintKind, NodalLoadRecord, SPRecord
 
 
 # ---------------------------------------------------------------------

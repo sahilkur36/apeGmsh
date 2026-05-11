@@ -61,7 +61,7 @@ def _split_constraints(records: list) -> tuple[list, list]:
 
 def _split_loads(records: list) -> tuple[list, list, list]:
     """Split resolved load records into nodal, element, and SP."""
-    from apeGmsh.solvers.Loads import NodalLoadRecord, ElementLoadRecord, SPRecord
+    from apeGmsh.mesh.records._loads import NodalLoadRecord, ElementLoadRecord, SPRecord
 
     nodal = []
     element = []

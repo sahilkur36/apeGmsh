@@ -24,15 +24,28 @@ from ._constraints import (
     SurfaceCouplingRecord,
 )
 from ._kinds import ConstraintKind, LoadKind
+from ._loads import (
+    ElementLoadRecord,
+    LoadRecord,
+    NodalLoadRecord,
+    SPRecord,
+)
 
 
 __all__ = [
+    # Kind enums
     "ConstraintKind",
     "LoadKind",
+    # Constraint records
     "ConstraintRecord",
     "NodePairRecord",
     "NodeGroupRecord",
     "InterpolationRecord",
     "SurfaceCouplingRecord",
     "NodeToSurfaceRecord",
+    # Load records
+    "LoadRecord",
+    "NodalLoadRecord",
+    "ElementLoadRecord",
+    "SPRecord",
 ]
