@@ -541,12 +541,41 @@ class apeSees:
         emitter = LiveOpsEmitter(wipe=wipe)
         bm.emit(emitter)
 
-    def h5(self, path: str) -> None:
-        """Emit a model-definition HDF5 archive (Phase 6 fills)."""
-        raise NotImplementedError(
-            "ops.h5() is declared in Phase 0 but H5Emitter lands "
-            "in Phase 6."
+    def h5(self, path: str, *, model_name: str | None = None) -> None:
+        """Emit a model-definition HDF5 archive at ``path``.
+
+        Drives an :class:`~apeGmsh.opensees.emitter.h5.H5Emitter`
+        through the full :class:`BuiltModel` and materializes the
+        result to disk. The file conforms to ``architecture/h5-schema.md``
+        and is consumable by the apeGmsh viewer.
+
+        Parameters
+        ----------
+        path
+            File path to write the HDF5 archive to.
+        model_name
+            Optional human-readable name written to ``/meta/model_name``.
+            Defaults to the path's stem.
+        """
+        from .emitter.h5 import H5Emitter
+
+        snapshot_id = ""
+        try:
+            snapshot_id = str(self._fem.snapshot_id)
+        except Exception:
+            # FEM snapshots produced by some legacy paths may not have
+            # a snapshot_id; tolerate gracefully (the H5 emitter writes
+            # an empty string into /meta/snapshot_id, which the schema
+            # already allows).
+            snapshot_id = ""
+
+        bm = self.build()
+        emitter = H5Emitter(
+            model_name=model_name or _path_stem(path),
+            snapshot_id=snapshot_id,
         )
+        bm.emit(emitter)
+        emitter.write(path)
 
     # -- Registration -----------------------------------------------------
 
@@ -638,6 +667,14 @@ def _resolve_opensees_binary(explicit: str | None) -> str:
         "$OPENSEES_BIN environment variable, shutil.which('OpenSees'). "
         "Set $OPENSEES_BIN or install OpenSees on PATH."
     )
+
+
+def _path_stem(path: str) -> str:
+    """Return ``path``'s file-name stem (no extension). Used as the
+    default H5 ``/meta/model_name``."""
+    base = os.path.basename(path)
+    stem, _ = os.path.splitext(base)
+    return stem or "model"
 
 
 def _resolve_python_binary() -> str:
