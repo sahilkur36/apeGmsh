@@ -196,9 +196,29 @@ def test_h5emitter_analysis_chain() -> None:
     assert e._analyze_call == (20, None)
 
 
-def test_h5emitter_write_raises_until_step_2() -> None:
-    """Step 1 scaffold: write() raises NotImplementedError."""
-    import pytest
+def test_h5emitter_write_meta_roundtrip(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Step 2: /meta is written with the schema attrs."""
+    import h5py
+    e = H5Emitter(model_name="cantilever", apegmsh_version="0.99.0")
+    e.model(ndm=3, ndf=6)
+    out = tmp_path / "model.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        assert "meta" in f
+        meta = f["meta"]
+        assert meta.attrs["schema_version"] == SCHEMA_VERSION
+        assert meta.attrs["model_name"] == "cantilever"
+        assert int(meta.attrs["ndm"]) == 3
+        assert int(meta.attrs["ndf"]) == 6
+        assert meta.attrs["apeGmsh_version"] == "0.99.0"
+
+
+def test_h5emitter_write_meta_with_no_model_call(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """An emitter with no model() call still writes /meta with ndm=0/ndf=0."""
+    import h5py
     e = H5Emitter()
-    with pytest.raises(NotImplementedError):
-        e.write("/tmp/should_not_exist.h5")
+    out = tmp_path / "model.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        assert int(f["meta"].attrs["ndm"]) == 0
+        assert int(f["meta"].attrs["ndf"]) == 0

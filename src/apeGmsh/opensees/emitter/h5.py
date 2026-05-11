@@ -85,6 +85,69 @@ _BLOCK_PATTERN_TOKENS: tuple[str, ...] = ("Plain", "MultiSupport")
 
 
 # ---------------------------------------------------------------------------
+# Low-level write helpers
+# ---------------------------------------------------------------------------
+
+def _set_attr(target: Any, key: str, value: Any) -> None:
+    """Write ``value`` as an HDF5 attribute on ``target``.
+
+    HDF5 stores attributes as native scalars or arrays — never as JSON
+    blobs (per the schema's "structured groups, scalar attrs, array
+    datasets" rule). This helper coerces Python values to the closest
+    h5py-friendly representation:
+
+    * ``str`` → variable-length UTF-8 string
+    * ``bool`` / ``int`` → int64
+    * ``float`` → float64
+    * ``None`` → empty-string attr (h5py rejects ``None``)
+    * tuple/list of numbers → 1-D float64 / int64 array
+    * tuple/list of strings → 1-D variable-length string array
+    """
+    import h5py
+    import numpy as np
+
+    if value is None:
+        target.attrs[key] = ""
+        return
+    if isinstance(value, bool):
+        target.attrs[key] = np.int64(int(value))
+        return
+    if isinstance(value, int):
+        target.attrs[key] = np.int64(value)
+        return
+    if isinstance(value, float):
+        target.attrs[key] = np.float64(value)
+        return
+    if isinstance(value, str):
+        target.attrs.create(key, value, dtype=h5py.string_dtype(encoding="utf-8"))
+        return
+    if isinstance(value, (tuple, list)):
+        if not value:
+            target.attrs.create(
+                key, np.array([], dtype=np.float64),
+            )
+            return
+        if all(isinstance(v, str) for v in value):
+            target.attrs.create(
+                key, list(value),
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            )
+            return
+        if all(isinstance(v, bool) or isinstance(v, int) for v in value):
+            target.attrs[key] = np.asarray(value, dtype=np.int64)
+            return
+        # Mixed numeric — coerce to float64.
+        target.attrs[key] = np.asarray(
+            [float(v) for v in value], dtype=np.float64,
+        )
+        return
+    # Fallback: stringify so we never crash on an unexpected attr type.
+    target.attrs.create(
+        key, repr(value), dtype=h5py.string_dtype(encoding="utf-8"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Buffered intermediate representations
 # ---------------------------------------------------------------------------
 
@@ -570,9 +633,24 @@ class H5Emitter:
     def write(self, path: str) -> None:
         """Materialize the buffered model to an HDF5 file at ``path``.
 
-        Implementation lands in Step 2 (write infrastructure).
+        h5py is imported here (not at module load) so users who never
+        call ``ops.h5()`` do not pay the import cost.
         """
-        raise NotImplementedError("H5Emitter.write lands in Phase 6 Step 2.")
+        import h5py  # local import — lazy h5py dep; see module docstring
+
+        with h5py.File(path, "w") as f:
+            self._write_meta(f)
+            # Subsequent steps fill in /nodes, /bcs, /materials,
+            # /sections, /transforms, /beam_integration, /elements,
+            # /time_series, /patterns, /recorders, /analysis.
+
+    # -- Per-group writers (split out so each step adds one) -------------
+
+    def _write_meta(self, f: Any) -> None:
+        """Create ``/meta`` and populate its attributes."""
+        meta = f.create_group("meta")
+        for key, value in self._meta_attrs().items():
+            _set_attr(meta, key, value)
 
     # =====================================================================
     # Helpers used by the writer (and by tests inspecting buffer state)
