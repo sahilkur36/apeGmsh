@@ -30,6 +30,7 @@ from ._loads import (
     NodalLoadRecord,
     SPRecord,
 )
+from ._masses import MassRecord
 
 
 __all__ = [
@@ -48,4 +49,6 @@ __all__ = [
     "NodalLoadRecord",
     "ElementLoadRecord",
     "SPRecord",
+    # Mass records
+    "MassRecord",
 ]
