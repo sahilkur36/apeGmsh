@@ -382,3 +382,80 @@ def test_h5emitter_write_beam_integration_group(tmp_path) -> None:  # type: igno
         np.testing.assert_array_equal(
             g.attrs["params"], np.array([5.0, 5.0]),
         )
+
+
+def test_h5emitter_write_elements_grouped_by_type(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import h5py
+    import numpy as np
+    e = H5Emitter()
+    set_element_nodes(e, (1, 2))
+    e.element("forceBeamColumn", 10, 1, 2, 1, 1)
+    set_element_nodes(e, (2, 3))
+    e.element("forceBeamColumn", 11, 2, 3, 1, 1)
+    set_element_nodes(e, (3, 4, 5, 6))
+    e.element("FourNodeTetrahedron", 12, 3, 4, 5, 6, 99)  # noqa
+    out = tmp_path / "ele.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        g_fbc = f["elements/forceBeamColumn"]
+        np.testing.assert_array_equal(g_fbc["ids"][:], [10, 11])
+        np.testing.assert_array_equal(
+            g_fbc["connectivity"][:], np.array([[1, 2], [2, 3]]),
+        )
+        g_tet = f["elements/FourNodeTetrahedron"]
+        np.testing.assert_array_equal(g_tet["ids"][:], [12])
+        assert g_tet["connectivity"].shape == (1, 4)
+
+
+def test_h5emitter_write_time_series(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import h5py
+    e = H5Emitter()
+    e.timeSeries("Linear", 1, "-factor", 1.0)
+    out = tmp_path / "ts.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        g = f["time_series/Linear_1"]
+        assert g.attrs["type"] == "Linear"
+        assert int(g.attrs["tag"]) == 1
+
+
+def test_h5emitter_write_plain_pattern_with_loads_and_series_ref(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import h5py
+    e = H5Emitter()
+    e.timeSeries("Linear", 1, "-factor", 1.0)
+    e.pattern_open("Plain", 1, 1)
+    e.load(10, 1.0, 0.0, 0.0)
+    e.load(11, 0.0, 1.0, 0.0)
+    e.sp(20, 1, 0.001)
+    e.pattern_close()
+    out = tmp_path / "pat.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        g = f["patterns/Plain_1"]
+        assert g.attrs["type"] == "Plain"
+        assert g.attrs["series_ref"] == "/time_series/Linear_1"
+        loads = g["loads"][:]
+        assert len(loads) == 2
+        assert _s(loads[0]["target"]) == "10"
+        assert tuple(loads[0]["forces"]) == (1.0, 0.0, 0.0)
+        sps = g["sps"][:]
+        assert len(sps) == 1
+        assert int(sps[0]["dof"]) == 1
+        assert float(sps[0]["value"]) == 0.001
+
+
+def test_h5emitter_write_uniform_excitation_pattern(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    import h5py
+    e = H5Emitter()
+    e.timeSeries("Path", 5, "-dt", 0.01, "-filePath", "elcentro.txt")
+    e.pattern_open("UniformExcitation", 2, 1, "-accel", 5)
+    e.pattern_close()
+    out = tmp_path / "uniex.h5"
+    e.write(str(out))
+    with h5py.File(out, "r") as f:
+        g = f["patterns/UniformExcitation_2"]
+        assert g.attrs["type"] == "UniformExcitation"
+        assert int(g.attrs["direction"]) == 1
+        assert g.attrs["series_ref"] == "/time_series/Path_5"
+        # No /loads sub-dataset for single-line patterns.
+        assert "loads" not in g

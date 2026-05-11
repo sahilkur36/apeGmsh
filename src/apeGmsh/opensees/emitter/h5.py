@@ -688,8 +688,10 @@ class H5Emitter:
             self._write_sections(f)
             self._write_transforms(f)
             self._write_beam_integration(f)
-            # Subsequent steps fill in /elements, /time_series,
-            # /patterns, /recorders, /analysis.
+            self._write_elements(f)
+            self._write_time_series(f)
+            self._write_patterns(f)
+            # Step 6 fills in /recorders, /analysis.
 
     # -- Per-group writers (split out so each step adds one) -------------
 
@@ -1007,6 +1009,271 @@ class H5Emitter:
             _set_attr(g, "type", rec.type_token)
             _set_attr(g, "tag", rec.tag)
             _write_param_array(g, "params", rec.args)
+
+    # -- Elements --------------------------------------------------------
+
+    def _write_elements(self, f: Any) -> None:
+        """Write ``/elements/{type_token}/`` groups.
+
+        Schema deviation (documented in module docstring): the schema
+        groups elements by physical group, but the streaming Protocol
+        does not surface ``spec.pg``. We therefore group by element
+        type token. Within a group, ``ids`` is a 1-D int dataset and
+        ``connectivity`` is a 2-D int dataset whose width equals the
+        connectivity arity of that element type.
+        """
+        if not self._elements:
+            return
+        import numpy as np
+
+        # Bin by type token; preserve per-type insertion order.
+        bins: dict[str, list[_ElementRecord]] = {}
+        for rec in self._elements:
+            bins.setdefault(rec.type_token, []).append(rec)
+
+        elements = f.create_group("elements")
+        for type_token, recs in bins.items():
+            g = elements.create_group(element_group_name(type_token))
+            _set_attr(g, "type", type_token)
+            _set_attr(g, "__deviation__", "grouped by element type token")
+
+            ids = np.asarray([r.tag for r in recs], dtype=np.int64)
+            g.create_dataset("ids", data=ids)
+
+            # Connectivity widths inside one type SHOULD be uniform; if
+            # not, pad with -1 to the max width and annotate. (Heterogeneous
+            # connectivity within a single OpenSees element type is not
+            # something OpenSees actually allows, so this is defensive.)
+            conn_lens = {len(r.connectivity) for r in recs}
+            if len(conn_lens) == 1:
+                width = conn_lens.pop()
+                if width == 0:
+                    # No connectivity context was set — emit empty.
+                    g.create_dataset(
+                        "connectivity",
+                        data=np.empty((len(recs), 0), dtype=np.int64),
+                    )
+                else:
+                    arr = np.asarray(
+                        [list(r.connectivity) for r in recs], dtype=np.int64,
+                    )
+                    g.create_dataset("connectivity", data=arr)
+            else:
+                width = max(conn_lens)
+                padded = np.full((len(recs), width), -1, dtype=np.int64)
+                for i, r in enumerate(recs):
+                    padded[i, : len(r.connectivity)] = r.connectivity
+                g.create_dataset("connectivity", data=padded)
+                _set_attr(
+                    g, "__deviation_connectivity__",
+                    "heterogeneous widths padded with -1",
+                )
+
+            # Cross-references: the H5 emitter cannot reliably decode
+            # the element's full positional arg list (each element type
+            # has its own shape). We surface the raw args as parallel
+            # numeric/string arrays so a vocabulary-aware reader can
+            # recover refs (transf_ref, section_ref, integration_ref,
+            # material_ref) by indexing into the element type's known
+            # signature.
+            self._write_element_argstack(g, recs)
+
+    def _write_element_argstack(
+        self, g: Any, recs: list[_ElementRecord],
+    ) -> None:
+        """Write the element ``args`` array of arrays, one row per element.
+
+        The first two args of every element are its node tags (``i``,
+        ``j``, ...); these duplicate ``connectivity`` and are dropped
+        before the array is written. The remaining tail is what carries
+        the element's parameter / cross-reference payload.
+        """
+        import h5py
+        import numpy as np
+
+        # Determine connectivity arity (constant per group when reachable).
+        arity = max(len(r.connectivity) for r in recs)
+        if arity == 0:
+            # No connectivity context — keep all args.
+            arity = 0
+
+        max_tail = max(len(r.args) - arity for r in recs)
+        if max_tail <= 0:
+            return
+
+        arg_nums = np.full((len(recs), max_tail), float("nan"), dtype=np.float64)
+        arg_strs: list[list[str]] = []
+        any_str = False
+        for i, r in enumerate(recs):
+            tail = r.args[arity:]
+            row_strs: list[str] = []
+            for j, v in enumerate(tail):
+                if isinstance(v, str):
+                    row_strs.append(v)
+                    any_str = True
+                else:
+                    arg_nums[i, j] = float(v)
+                    row_strs.append("")
+            # Pad row_strs to max_tail.
+            row_strs.extend([""] * (max_tail - len(row_strs)))
+            arg_strs.append(row_strs)
+
+        g.create_dataset("args", data=arg_nums)
+        if any_str:
+            g.create_dataset(
+                "args_str",
+                data=np.asarray(arg_strs, dtype=object),
+                dtype=h5py.string_dtype(encoding="utf-8"),
+            )
+
+    # -- Time series -----------------------------------------------------
+
+    def _write_time_series(self, f: Any) -> None:
+        if not self._time_series:
+            return
+        ts = f.create_group("time_series")
+        for rec in self._time_series:
+            g = ts.create_group(time_series_name(rec))
+            _set_attr(g, "type", rec.type_token)
+            _set_attr(g, "tag", rec.tag)
+            _write_param_array(g, "params", rec.args)
+            # Schema's ``time`` and ``values`` arrays would require
+            # vocabulary-aware decoding of args (e.g. -dt / -filePath /
+            # inline values). The H5 emitter records the raw args; a
+            # vocabulary-aware reader (or a future schema-bumped
+            # primitive-side _emit) can populate time/values.
+
+    # -- Patterns --------------------------------------------------------
+
+    def _write_patterns(self, f: Any) -> None:
+        # Flush any still-open pattern (defensive; bridge always closes).
+        if self._open_pattern is not None:
+            self._patterns_complete.append(self._open_pattern)
+            self._open_pattern = None
+        if not self._patterns_complete:
+            return
+        patterns = f.create_group("patterns")
+        for rec in self._patterns_complete:
+            g = patterns.create_group(pattern_name(rec))
+            _set_attr(g, "type", rec.type_token)
+            _set_attr(g, "tag", rec.tag)
+            series_ref = self._pattern_series_ref(rec)
+            if series_ref is not None:
+                _set_attr(g, "series_ref", series_ref)
+            # Direction is a meaningful pattern-level attr for
+            # UniformExcitation; surface it explicitly.
+            if rec.type_token == "UniformExcitation" and rec.args:
+                _set_attr(g, "direction", int(rec.args[0]))
+            _write_param_array(g, "params", rec.args)
+
+            if rec.loads:
+                self._write_pattern_loads(g, rec.loads)
+            if rec.sps:
+                self._write_pattern_sps(g, rec.sps)
+            if rec.ele_loads:
+                self._write_pattern_ele_loads(g, rec.ele_loads)
+
+    def _pattern_series_ref(self, rec: _PatternRecord) -> str | None:
+        """Resolve the time-series tag a pattern references → an HDF5 path.
+
+        For ``Plain``: ``args = (ts_tag, ...)``.
+        For ``UniformExcitation``: ``args = (direction, "-accel", ts_tag)``
+        (per the typed primitive's emit shape). Search ``args`` for an
+        int that matches a known time-series tag; the first match wins.
+        Returns ``None`` if no match.
+        """
+        if rec.type_token == "Plain" and rec.args:
+            ts_tag = rec.args[0]
+            return self._time_series_ref_for_tag(ts_tag)
+        if rec.type_token == "UniformExcitation":
+            for v in rec.args:
+                if isinstance(v, int) and not isinstance(v, bool):
+                    candidate = self._time_series_ref_for_tag(v)
+                    if candidate is not None and candidate.endswith(
+                        f"_{v}"
+                    ) and v != rec.args[0]:
+                        return candidate
+            # Fallback: scan integer-coercible args other than
+            # direction (args[0]) for a known time-series tag.
+            for v in rec.args[1:]:
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    ref = self._time_series_ref_for_tag(int(v))
+                    if ref is not None:
+                        return ref
+        return None
+
+    def _time_series_ref_for_tag(self, tag: int | float | str) -> str | None:
+        try:
+            tag_int = int(tag)
+        except (TypeError, ValueError):
+            return None
+        for rec in self._time_series:
+            if rec.tag == tag_int:
+                return f"/time_series/{time_series_name(rec)}"
+        return None
+
+    def _write_pattern_loads(
+        self, g: Any, loads: list[_LoadRecord],
+    ) -> None:
+        import h5py
+        import numpy as np
+
+        ndf = max(int(self._ndf or 0), max(len(r.forces) for r in loads))
+        dt = np.dtype(
+            [
+                ("target_kind", h5py.string_dtype(encoding="utf-8")),
+                ("target", h5py.string_dtype(encoding="utf-8")),
+                ("forces", np.float64, (ndf,)),
+            ]
+        )
+        rows = np.empty(len(loads), dtype=dt)
+        for i, r in enumerate(loads):
+            padded = list(r.forces) + [float("nan")] * (ndf - len(r.forces))
+            rows[i] = ("node", str(r.target), tuple(padded))
+        g.create_dataset("loads", data=rows)
+
+    def _write_pattern_sps(
+        self, g: Any, sps: list[_SPRecord],
+    ) -> None:
+        import h5py
+        import numpy as np
+
+        dt = np.dtype(
+            [
+                ("target_kind", h5py.string_dtype(encoding="utf-8")),
+                ("target", h5py.string_dtype(encoding="utf-8")),
+                ("dof", np.int64),
+                ("value", np.float64),
+            ]
+        )
+        rows = np.empty(len(sps), dtype=dt)
+        for i, r in enumerate(sps):
+            rows[i] = ("node", str(r.target), r.dof, r.value)
+        g.create_dataset("sps", data=rows)
+
+    def _write_pattern_ele_loads(
+        self, g: Any, ele_loads: list[_EleLoadRecord],
+    ) -> None:
+        """Element-load records carry vocabulary-rich ``*args``; we
+        store them as a single string array per row (since the
+        ``-type``/``-ele``/``-eleRange`` flag tokens make positional
+        decoding without vocabulary impractical). One row per call."""
+        import h5py
+        import numpy as np
+
+        max_len = max(len(r.args) for r in ele_loads)
+        rows = np.empty((len(ele_loads), max_len), dtype=object)
+        for i, r in enumerate(ele_loads):
+            row = [
+                str(v) if isinstance(v, str) else repr(v)
+                for v in r.args
+            ]
+            row.extend([""] * (max_len - len(row)))
+            rows[i] = row
+        g.create_dataset(
+            "element_loads", data=rows,
+            dtype=h5py.string_dtype(encoding="utf-8"),
+        )
 
     # =====================================================================
     # Helpers used by the writer (and by tests inspecting buffer state)
