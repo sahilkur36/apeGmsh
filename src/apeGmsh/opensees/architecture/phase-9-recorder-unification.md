@@ -276,6 +276,46 @@ The actual file move:
 | `tests/test_results_domain_capture*.py` | Switch to `DomainCaptureSpec` |
 | `tests/test_recorders_resolve_*.py` | If they test `Recorders().resolve(...)` the path stays identical (deprecation shim) |
 
+### 3j. Implicit ndm / ndf resolution (added post-D8)
+
+Today's consumer APIs require `ndm` and `ndf` as arguments even though
+the bridge has already been told them via `ops.model(ndm=, ndf=)` and
+`model.h5` has them in `/meta` (Phase 8.5 already stamps both).
+Phase 9 collapses this redundancy.
+
+**Source of truth**, in priority order:
+
+1. **Live `apeSees` bridge** — `self._ndm`, `self._ndf` from `ops.model(...)`.
+2. **`model.h5` `/meta`** — `attrs["ndm"]`, `attrs["ndf"]` when no bridge is
+   available (loaded files).
+3. **Explicit args** — only at `Recorders()` construction for the standalone
+   no-bridge / no-h5 path (tests, notebooks); `ndf` is OpenSees-specific so
+   cannot be derived from FEMData alone, but `ndm` can fall back to
+   `_derive_ndm(fem)` when absent.
+
+**Concretely:**
+
+- `ops.recorder.declare(...)` takes **no** `ndm`/`ndf` kwargs. The
+  declaration captures the bridge's current `ndm`/`ndf` at construction
+  time. Shorthand expansion (`"displacement"` → `displacement_x/y/z`)
+  happens immediately.
+- `ops.recorder.builder()` similarly inherits from the bridge.
+- `Recorders()` standalone (no bridge) takes optional
+  `ndm=`/`ndf=` at construction; defaults to deferred resolution.
+- `Recorders.resolve(fem)` takes only `fem`. The previous
+  `resolve(fem, ndm, ndf)` signature is **removed** (no back-compat;
+  few users).
+- `DomainCaptureSpec` gains two construction paths:
+  - `ops.domain_capture(spec, path=...)` — live, bridge sources ndm/ndf
+  - `DomainCapture.from_h5("model.h5", spec=spec, output=...)` — file,
+    `/meta` sources ndm/ndf
+- `spec.capture(path, fem, ndm, ndf)` legacy entry point is **removed**;
+  callers migrate to one of the two paths above.
+
+This is a **net API simplification** — three signatures lose
+arguments, no consumer feature is lost. The bridge / `/meta`
+provides what was previously redundant.
+
 ### 3i. Doc-side surface
 
 | File | What changes |
@@ -299,6 +339,7 @@ Settled with the architect this session (May 2026):
 | D5 (model.h5) | **One unified `/opensees/recorders/`** group with `kind=("typed"|"declared")` attr | Single viewer code path |
 | D6 (`Recorders` fate) | **Relocate to bridge as `apeGmsh.opensees.recorder.Recorders`** | Few users → low-blast-radius relocation |
 | G (DomainCapture inputs) | **Sibling `DomainCaptureSpec` on results side** | Decoupled from bridge; same vocabulary, different package, different responsibilities |
+| D8 (ndm/ndf binding) | **Implicit from bridge or `/meta`; no consumer args** | Live bridge knows; model.h5 carries; user never passes twice. No back-compat for the legacy `resolve(fem, ndm, ndf)` / `capture(..., ndm, ndf)` signatures (few users) |
 
 ### D3 dissolution
 
@@ -339,7 +380,9 @@ mypy --strict clean.
 ### Commit 3 — `ops.recorder.declare(...)` namespace method
 
 - Wire `_RecorderNS.declare(...)` to construct + register a
-  `RecorderDeclaration`.
+  `RecorderDeclaration`. **No `ndm`/`ndf` kwargs** (per D8) — the
+  declaration captures the bridge's current `ndm`/`ndf` at
+  construction time; shorthand expansion happens immediately.
 - Update `_internal/build.py` `emit_recorder_spec` to handle
   declarations (fans out per-component into emitter calls).
 - Extend integration test `test_recorder_unification.py`.
@@ -354,23 +397,36 @@ and declared records produce expected `emitter.recorder(...)` calls.
   on `.build()` (and registers it on the bridge if attached).
 - Surface `ops.recorder.builder()` (or equivalent) as the bridge
   entry-point.
-- Deprecation shim at the old path.
+- **D8 simplification:** `Recorders.resolve(fem)` drops `ndm`/`ndf`
+  kwargs; bridge-bound builder inherits from `apeSees._ndm`/`._ndf`;
+  standalone `Recorders()` takes optional `ndm`/`ndf` at construction
+  with `_derive_ndm(fem)` fallback. Legacy
+  `Recorders().resolve(fem, ndm, ndf)` signature is removed.
+- Deprecation shim at the old path for `Recorders` itself (different
+  import location, same behavior); legacy signatures are *not*
+  preserved.
 
-**Test gate:** existing `tests/test_recorders_*.py` pass via shim;
-mypy --strict clean.
+**Test gate:** existing `tests/test_recorders_*.py` updated to drop
+the explicit ndm/ndf args; mypy --strict clean.
 
 ### Commit 5 — DomainCapture decouples to `DomainCaptureSpec`
 
 - New `src/apeGmsh/results/capture/spec.py` with `DomainCaptureSpec`
   + `ResolvedDomainCaptureSpec`.
 - `DomainCapture.__enter__` accepts `ResolvedDomainCaptureSpec` only.
+- **Implicit ndm/ndf (D8):** add two construction paths replacing
+  `spec.capture(path, fem, ndm, ndf)`:
+  - `ops.domain_capture(spec, path="run.h5")` — live, bridge sources
+    `ndm`/`ndf` from `apeSees._ndm`/`._ndf`.
+  - `DomainCapture.from_h5("model.h5", spec=spec, output="run.h5")` —
+    file, `/meta/ndm`/`ndf` source the values via `h5_reader.open(...)`.
 - Update `tests/test_results_domain_capture*.py` to use the sibling
-  type.
-- `ResolvedRecorderSpec` stays as a deprecation alias for one cycle
-  but is no longer a DomainCapture input.
+  type and the new construction paths.
+- `ResolvedRecorderSpec` no longer feeds DomainCapture; the legacy
+  `spec.capture(...)` signature is removed (no back-compat per D8).
 
 **Test gate:** every `tests/test_results_domain_capture*.py` passes
-against the new spec.
+against the new spec and the two construction paths.
 
 ### Commit 6 — Model.h5 schema 2.3.0
 
