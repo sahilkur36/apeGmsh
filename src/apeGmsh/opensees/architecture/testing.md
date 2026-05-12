@@ -156,7 +156,7 @@ def test_three_dof_frame_with_fiber_section(g):
 
     steel = ops.uniaxialMaterial.Steel02(fy=420e6, E=200e9, b=0.01)
     sec   = ops.section.Fiber(patches=[...], fibers=[...], GJ=1e9)
-    trans = ops.geomTransf.PDelta(csys=Cartesian())
+    trans = ops.geomTransf.PDelta(orientation=Cartesian())
     ops.element.forceBeamColumn(pg="Cols", section=sec, transf=trans, n_ip=5)
     ops.fix(pg="Base", dofs=(1,)*6)
 
@@ -177,7 +177,7 @@ For each model fixture, drive it through three emitters and verify
 they are equivalent:
 
 ```python
-@pytest.mark.parametrize("fixture", ["frame_3d", "arch_csys", "tank_cylindrical"])
+@pytest.mark.parametrize("fixture", ["frame_3d", "arch_orientation", "tank_cylindrical"])
 def test_emitter_parity(fixture):
     bm = _build(fixture)
 

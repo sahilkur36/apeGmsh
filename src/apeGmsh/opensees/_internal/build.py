@@ -3,9 +3,9 @@ Phase-4 build pipeline helpers.
 
 The bridge's ``BuiltModel.emit`` orchestrates emission, but the
 non-trivial work — dependency-sorted ordering, element fan-out across
-physical groups, csys-derived per-element ``vecxz`` fan-out, and
-pattern / recorder ``pg=`` fan-out — lives here as pure helpers so
-the orchestration in :mod:`apesees` stays small and readable.
+physical groups, orientation-derived per-element ``vecxz`` fan-out,
+and pattern / recorder ``pg=`` fan-out — lives here as pure helpers
+so the orchestration in :mod:`apesees` stays small and readable.
 
 The helpers in this module never import :mod:`openseespy`; they speak
 only to the frozen :class:`Emitter` Protocol via the bridge-attached
@@ -19,15 +19,16 @@ Three deferred contracts are resolved here:
      emitter's ``_current_element_nodes`` slot, allocates a per-element
      tag, and drives ``spec._emit`` once per element).
 
-  2. **csys-derived per-element vecxz fan-out** (ADR 0010): when a
-     ``Linear`` / ``PDelta`` / ``Corotational`` GeomTransf is constructed
-     with ``csys=`` rather than an explicit ``vecxz=``, the bridge
-     computes the local tangent for each element in the
-     transform-bearing PGs, queries the CS triad at the element midpoint,
-     resolves the per-element ``vecxz`` via :func:`resolve_vecxz`, and
-     emits one ``geomTransf`` line per distinct ``vecxz`` (within a
-     ``1e-9`` tolerance), reusing the same geomTransf tag for elements
-     whose vecxz matches.
+  2. **orientation-derived per-element vecxz fan-out** (ADR 0010):
+     when a ``Linear`` / ``PDelta`` / ``Corotational`` GeomTransf is
+     constructed with ``orientation=`` rather than an explicit
+     ``vecxz=``, the bridge computes the local tangent for each
+     element in the transform-bearing PGs, queries the orientation
+     triad at the element midpoint, resolves the per-element
+     ``vecxz`` via :func:`resolve_vecxz`, and emits one
+     ``geomTransf`` line per distinct ``vecxz`` (within a ``1e-9``
+     tolerance), reusing the same geomTransf tag for elements whose
+     vecxz matches.
 
   3. **Pattern / recorder ``pg=`` fan-out** to per-node and per-element
      tags: the bridge resolves ``pg=`` records on :class:`Plain`
@@ -41,7 +42,7 @@ from typing import TYPE_CHECKING, Iterable
 
 import numpy as np
 
-from .._csys import resolve_vecxz
+from .._orientation import resolve_vecxz
 
 from ..element.beam_column import (
     ElasticTimoshenkoBeam,
@@ -81,14 +82,14 @@ __all__ = [
     "emit_recorder_spec",
     "expand_pg_to_elements",
     "expand_pg_to_nodes",
-    "is_csys_transform",
+    "is_orientation_transform",
     "topological_order",
 ]
 
 
 #: Tolerance for considering two ``vecxz`` triples equal during the
-#: csys-derived fan-out's deduplication step. Two elements whose
-#: per-element ``vecxz`` agrees to this tolerance share one
+#: orientation-derived fan-out's deduplication step. Two elements
+#: whose per-element ``vecxz`` agrees to this tolerance share one
 #: ``geomTransf`` line.
 VECXZ_TOL: float = 1e-9
 
@@ -228,7 +229,7 @@ def _collect_reachable(
 
 
 # ---------------------------------------------------------------------------
-# csys → per-element vecxz computation
+# orientation → per-element vecxz computation
 # ---------------------------------------------------------------------------
 
 _AnyTransf = Linear | PDelta | Corotational
@@ -240,10 +241,10 @@ _TRANSF_TYPE_TOKEN: dict[type[GeomTransf], str] = {
 }
 
 
-def is_csys_transform(t: Primitive) -> bool:
-    """True if ``t`` is a Linear / PDelta / Corotational with a
-    ``csys=`` parameter set (and hence needs per-element vecxz fan-out
-    at build time).
+def is_orientation_transform(t: Primitive) -> bool:
+    """True if ``t`` is a Linear / PDelta / Corotational with an
+    ``orientation=`` parameter set (and hence needs per-element
+    vecxz fan-out at build time).
 
     A transform with explicit ``vecxz=`` does NOT need fan-out: it
     emits one ``geomTransf`` line with the spec's allocated tag. The
@@ -252,7 +253,7 @@ def is_csys_transform(t: Primitive) -> bool:
     """
     if not isinstance(t, (Linear, PDelta, Corotational)):
         return False
-    return t.csys is not None and t.vecxz is None
+    return t.orientation is not None and t.vecxz is None
 
 
 def compute_vecxz_for_element(
@@ -262,15 +263,17 @@ def compute_vecxz_for_element(
 ) -> tuple[float, float, float]:
     """Return the per-element ``vecxz`` for one element under ``transf``.
 
-    Reads the CS triad at the element midpoint, computes the unit
-    tangent from ``p_i``/``p_j``, and runs the CS rule (ADR 0010) via
-    :func:`resolve_vecxz`. ``transf`` MUST be a csys-bearing transform
-    (caller checks via :func:`is_csys_transform` first).
+    Reads the orientation triad at the element midpoint, computes the
+    unit tangent from ``p_i``/``p_j``, and runs the orientation rule
+    (ADR 0010) via :func:`resolve_vecxz`. ``transf`` MUST be an
+    orientation-bearing transform (caller checks via
+    :func:`is_orientation_transform` first).
     """
-    if transf.csys is None:
+    if transf.orientation is None:
         raise BridgeError(
             f"compute_vecxz_for_element: transform {transf!r} has no "
-            "csys; caller should have used the explicit vecxz path."
+            "orientation; caller should have used the explicit vecxz "
+            "path."
         )
     p_i = np.asarray(p_i, dtype=float)
     p_j = np.asarray(p_j, dtype=float)
@@ -283,7 +286,7 @@ def compute_vecxz_for_element(
         )
     tangent = edge / norm
     midpoint = 0.5 * (p_i + p_j)
-    e1, e2, e3 = transf.csys.triad_at(midpoint)
+    e1, e2, e3 = transf.orientation.triad_at(midpoint)
     return resolve_vecxz(tangent, e1, e2, e3, transf.roll_deg)
 
 
@@ -396,12 +399,13 @@ def emit_element_spec(
     base_resolver
         The bridge's base tag resolver (callable). The fan-out installs
         an *element-specific* resolver on top of it when the element's
-        transform requires csys-driven per-element vecxz overrides.
+        transform requires orientation-driven per-element vecxz
+        overrides.
     transf_tag_for_element
         Dict keyed ``(id(transf_spec), element_id)`` → per-element
         ``geomTransf`` tag. Filled by :func:`emit_transform_specs` for
-        csys-bearing transforms; ``None`` (or missing keys) means use
-        the spec's own resolver path.
+        orientation-bearing transforms; ``None`` (or missing keys)
+        means use the spec's own resolver path.
     """
     elements = expand_pg_to_elements(fem, spec.pg)  # type: ignore[attr-defined]
     if not elements:
@@ -475,8 +479,8 @@ def _element_transf(spec: Element) -> GeomTransf | None:
 
 
 # ---------------------------------------------------------------------------
-# csys-bearing transform fan-out — emit one geomTransf line per distinct
-# vecxz observed across the elements that reference the transform spec.
+# orientation-bearing transform fan-out — emit one geomTransf line per
+# distinct vecxz observed across the elements that reference the spec.
 # ---------------------------------------------------------------------------
 
 def emit_transform_specs(
@@ -489,12 +493,12 @@ def emit_transform_specs(
 ) -> dict[tuple[int, int], int]:
     """Emit ``geomTransf`` lines for every transform spec.
 
-    For non-csys transforms (explicit ``vecxz=``), one line per spec
-    using the spec's own allocated tag — that's the path :class:`Linear`
-    / :class:`PDelta` / :class:`Corotational` already handle in their
-    ``_emit``.
+    For non-orientation transforms (explicit ``vecxz=``), one line
+    per spec using the spec's own allocated tag — that's the path
+    :class:`Linear` / :class:`PDelta` / :class:`Corotational` already
+    handle in their ``_emit``.
 
-    For csys-bearing transforms, the bridge:
+    For orientation-bearing transforms, the bridge:
 
       1. Walks every element spec whose ``transf`` IS this transform.
       2. For each element in the spec's PG, computes the per-element
@@ -527,13 +531,13 @@ def emit_transform_specs(
 
     for transf in transforms:
         own_tag = spec_to_own_tag[id(transf)]
-        if not is_csys_transform(transf):
+        if not is_orientation_transform(transf):
             # Explicit vecxz path — drive the spec's own _emit once.
             transf._emit(emitter, own_tag)
             continue
 
-        # csys path: walk every element whose transf IS this transform,
-        # compute per-element vecxz, dedupe.
+        # orientation path: walk every element whose transf IS this
+        # transform, compute per-element vecxz, dedupe.
         type_token = _TRANSF_TYPE_TOKEN[type(transf)]
         elems = elems_by_transf.get(id(transf), [])
         if not elems:
@@ -547,11 +551,12 @@ def emit_transform_specs(
         for ele_spec in elems:
             for eid, node_ids in expand_pg_to_elements(fem, ele_spec.pg):  # type: ignore[attr-defined]
                 if len(node_ids) != 2:
+                    pg = ele_spec.pg  # type: ignore[attr-defined]
                     raise BridgeError(
-                        f"csys transform {type(transf).__name__}: element "
-                        f"{eid} in PG {ele_spec.pg!r} has {len(node_ids)} "  # type: ignore[attr-defined]
-                        "nodes; csys-driven vecxz fan-out requires line "
-                        "elements (2 nodes)."
+                        f"orientation transform {type(transf).__name__}: "
+                        f"element {eid} in PG {pg!r} has "
+                        f"{len(node_ids)} nodes; orientation-driven "
+                        "vecxz fan-out requires line elements (2 nodes)."
                     )
                 p_i = _node_coord(fem, int(node_ids[0]))
                 p_j = _node_coord(fem, int(node_ids[1]))

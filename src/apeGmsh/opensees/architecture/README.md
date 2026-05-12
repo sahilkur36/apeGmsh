@@ -78,7 +78,7 @@ core  = ops.uniaxialMaterial.Concrete02(
     lambda_val=0.1, ft=2.5e6, Ets=200e6,
 )
 sec   = ops.section.Fiber(patches=[...], fibers=[...], GJ=1e9)
-trans = ops.geomTransf.PDelta(csys=Cartesian())
+trans = ops.geomTransf.PDelta(orientation=Cartesian())
 integ = ops.beamIntegration.Lobatto(section=sec, n_ip=5)
 
 ops.element.forceBeamColumn(pg="Cols", transf=trans, integration=integ)

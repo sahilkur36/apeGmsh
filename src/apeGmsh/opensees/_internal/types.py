@@ -107,9 +107,9 @@ class GeomTransf(Primitive):
     """Abstract base for ``geomTransf <Type>`` primitives.
 
     Concrete transforms (Linear, PDelta, Corotational) live in
-    ``opensees.transform``; coordinate-system helpers (Cartesian,
-    Cylindrical, Spherical) are re-exported from
-    :mod:`apeGmsh.solvers._opensees_csys` per ADR 0010.
+    ``opensees.transform``; orientation helpers (Cartesian,
+    Cylindrical, Spherical) are exported from
+    :mod:`apeGmsh.opensees._orientation` per ADR 0010.
     """
 
 

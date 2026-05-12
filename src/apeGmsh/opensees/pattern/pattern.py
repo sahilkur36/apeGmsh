@@ -25,7 +25,7 @@ without churn.
 
 Load-record fan-out (pg= → element / node tags) is **the bridge
 build pipeline's responsibility** (Phase 4), consistent with Phase 2
-elements + Phase 1D csys-driven transforms. ``_emit`` for the Plain
+elements + Phase 1D orientation-driven transforms. ``_emit`` for the Plain
 pattern raises :class:`NotImplementedError` when it sees a ``pg=``
 record so test suites that drive ``_emit`` directly use ``node=``
 records.

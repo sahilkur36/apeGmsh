@@ -22,10 +22,10 @@ curriculum notebooks under ``examples/EOS Examples/curriculum/``.
 
 ::: apeGmsh.opensees.apeSees
 
-## Coordinate-system helpers
+## Orientation helpers
 
-Used as the ``csys=`` argument on the typed geom_transf primitives
-(``Linear`` / ``PDelta`` / ``Corotational``).
+Used as the ``orientation=`` argument on the typed geom_transf
+primitives (``Linear`` / ``PDelta`` / ``Corotational``).
 
 ::: apeGmsh.opensees.Cartesian
 

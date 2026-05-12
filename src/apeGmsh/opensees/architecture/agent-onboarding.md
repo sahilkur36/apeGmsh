@@ -142,7 +142,7 @@ Specific deliverables:
 2. Handle the `*_open` / `*_close` pairs correctly for the dialect
    (Tcl uses braces; Py uses stateful current-X).
 3. Write parity tests that drive the standard fixtures
-   (frame_3d, arch_csys, tank_cylindrical) through your emitter
+   (frame_3d, arch_orientation, tank_cylindrical) through your emitter
    AND through `RecordingEmitter`, then assert structural
    equivalence.
 

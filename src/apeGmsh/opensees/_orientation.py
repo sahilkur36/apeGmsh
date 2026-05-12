@@ -1,15 +1,15 @@
 """
-Coordinate systems for beam frame orientation.
+Orientation fields for beam frame local-axis derivation.
 
-Each CS class evaluates an orthonormal triad ``(e1, e2, e3)`` at a point
-``p``.  The third axis ``e3`` is the *reference axis* the orientation
-rule uses to place the section's local-z in the plane of (beam-axis,
-e3).
+Each orientation class evaluates an orthonormal triad ``(e1, e2, e3)``
+at a point ``p``.  The third axis ``e3`` is the *reference axis* the
+orientation rule uses to place the section's local-z in the plane of
+(beam-axis, e3).
 
 Used by the typed :class:`~apeGmsh.opensees.transform.Linear`,
 :class:`~apeGmsh.opensees.transform.PDelta`, and
 :class:`~apeGmsh.opensees.transform.Corotational` geom_transf
-primitives when constructed with ``csys=``.
+primitives when constructed with ``orientation=``.
 
 Three flavors:
 
@@ -27,7 +27,7 @@ The orientation rule applied at each beam element:
     if |t · e3| < 1 - tol:
         local_y = unit(e3 × t)
     else:                          # tangent parallel to reference axis
-        local_y = e2               # fall back to CS in-plane axis
+        local_y = e2               # fall back to in-plane axis
     vecxz   = t × local_y          # local-z = vector in x-z plane
     if roll_deg != 0:
         vecxz = Rodrigues(vecxz, axis=t, angle=roll_deg)
@@ -50,8 +50,8 @@ __all__ = [
 
 _TOL = 1e-9
 # ``ArrayLike`` is the broad numpy alias for anything ``np.asarray``
-# accepts; the CS classes use it so callers can pass tuples, lists,
-# or arrays interchangeably for the 3-vector inputs.
+# accepts; the orientation classes use it so callers can pass tuples,
+# lists, or arrays interchangeably for the 3-vector inputs.
 
 
 def _unit(v: ArrayLike) -> np.ndarray:
@@ -97,10 +97,10 @@ class Cartesian:
         from apeGmsh.opensees import Cartesian
 
         # Standard structural convention: Z is vertical
-        cs = Cartesian()                          # reference_axis = +Z
+        orientation = Cartesian()                          # reference_axis = +Z
 
         # Mechanical CAD convention: Y is vertical
-        cs = Cartesian(reference_axis=(0, 1, 0))
+        orientation = Cartesian(reference_axis=(0, 1, 0))
     """
 
     def __init__(self, reference_axis: ArrayLike = (0.0, 0.0, 1.0)) -> None:
@@ -134,7 +134,7 @@ class Cartesian:
 
 class Cylindrical:
     """
-    Cylindrical CS about an axis of revolution.
+    Cylindrical orientation about an axis of revolution.
 
     At a point ``p``:
 
@@ -159,7 +159,7 @@ class Cylindrical:
         from apeGmsh.opensees import Cylindrical
 
         # Vertical tank
-        cs = Cylindrical(origin=(0, 0, 0), axis=(0, 0, 1))
+        orientation = Cylindrical(origin=(0, 0, 0), axis=(0, 0, 1))
     """
 
     def __init__(
@@ -199,7 +199,7 @@ class Cylindrical:
 
 class Spherical:
     """
-    Spherical CS about a fixed origin.  Polar axis is global ``+Z``.
+    Spherical orientation about a fixed origin.  Polar axis is global ``+Z``.
 
     At a point ``p`` (with ``r = |p − origin|``):
 
@@ -223,7 +223,7 @@ class Spherical:
 
         from apeGmsh.opensees import Spherical
 
-        cs = Spherical(origin=(0, 0, 0))
+        orientation = Spherical(origin=(0, 0, 0))
     """
 
     def __init__(self, origin: ArrayLike = (0.0, 0.0, 0.0)) -> None:
@@ -269,8 +269,8 @@ def resolve_vecxz(
     roll_deg: float = 0.0,
 ) -> tuple[float, float, float]:
     """
-    Compute ``vecxz`` for a beam element from its tangent and a CS
-    triad.  See module docstring for the rule.
+    Compute ``vecxz`` for a beam element from its tangent and an
+    orientation triad.  See module docstring for the rule.
 
     ``tangent`` must be unit-length.  ``(e1, e2, e3)`` must be an
     orthonormal triad.  ``roll_deg`` rotates the result about

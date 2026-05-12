@@ -228,9 +228,9 @@ def make_two_column_frame() -> FEMStub:
     return FEMStub(nodes=nodes, elements=elements)
 
 
-def make_arch_with_csys_fan_out() -> FEMStub:
+def make_arch_with_orientation_fan_out() -> FEMStub:
     """Three-segment arch — non-collinear elements drive distinct vecxz under
-    cylindrical CS.
+    cylindrical orientation.
 
     Geometry: three line elements arranged so the unit tangent rotates
     between elements — a coarse approximation of an arch in the X-Z

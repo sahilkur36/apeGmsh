@@ -283,8 +283,8 @@ The bridge team will ship the following fixture files under
 |---|---|
 | `minimal.h5` | One column, one fiber section, one ground motion, no analysis |
 | `frame_3d.h5` | The moment-frame example from charter — multiple PGs, mixed sections, multi-pattern |
-| `arch_csys.h5` | Shoebuckle arch with cylindrical CS — many distinct vecxz |
-| `dome_spherical.h5` | Spherical CS on dome ribs |
+| `arch_orientation.h5` | Shoebuckle arch with cylindrical orientation — many distinct vecxz |
+| `dome_spherical.h5` | Spherical orientation on dome ribs |
 | `tank_cylindrical.h5` | Tank with ring beams + vertical stiffeners |
 | `incomplete.h5` | `/meta` + `/elements` only — viewer must show mesh, hide all enrichment panels |
 | `wrong_major.h5` | Schema major v3 — viewer must refuse |

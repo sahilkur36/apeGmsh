@@ -19,7 +19,7 @@ from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.section.fiber import FiberPoint, RectPatch
 
 from tests.opensees.fixtures.fem_stub import (
-    make_arch_with_csys_fan_out,
+    make_arch_with_orientation_fan_out,
     make_two_column_frame,
     make_two_node_beam,
 )
@@ -300,19 +300,20 @@ def test_recorder_pg_nodes_fans_to_explicit_list() -> None:
     assert 4 in args
 
 
-def test_csys_transform_fans_one_geomtransf_per_distinct_vecxz() -> None:
-    """ADR 0010: a csys-bearing GeomTransf emits one ``geomTransf`` line
-    per distinct per-element vecxz across the elements that reference
-    it. Curved members (arch) produce multiple geomTransf lines under
-    a Spherical CS (the radial direction varies along the arch)."""
+def test_orientation_transform_fans_one_geomtransf_per_distinct_vecxz() -> None:
+    """ADR 0010: an orientation-bearing GeomTransf emits one
+    ``geomTransf`` line per distinct per-element vecxz across the
+    elements that reference it. Curved members (arch) produce multiple
+    geomTransf lines under a Spherical orientation (the radial
+    direction varies along the arch)."""
     from apeGmsh.opensees.transform import Spherical
 
-    fem = make_arch_with_csys_fan_out()
+    fem = make_arch_with_orientation_fan_out()
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=3, ndf=6)
 
-    csys = Spherical(origin=(0.0, 0.0, 0.0))
-    transf = ops.geomTransf.Linear(csys=csys)
+    orientation = Spherical(origin=(0.0, 0.0, 0.0))
+    transf = ops.geomTransf.Linear(orientation=orientation)
     ops.element.elasticBeamColumn(
         pg="Arch",
         transf=transf,
@@ -325,26 +326,27 @@ def test_csys_transform_fans_one_geomtransf_per_distinct_vecxz() -> None:
 
     geomtransf_calls = [c for c in rec.calls if c[0] == "geomTransf"]
     # Three arch segments at distinct angles -> three distinct vecxz
-    # under spherical CS (e_r varies with position) -> three geomTransf
-    # lines, one per distinct vecxz.
+    # under spherical orientation (e_r varies with position) -> three
+    # geomTransf lines, one per distinct vecxz.
     assert len(geomtransf_calls) == 3
     distinct_vecxzs = {tuple(c[1][2:5]) for c in geomtransf_calls}
     assert len(distinct_vecxzs) == 3
 
 
-def test_csys_transform_collinear_elements_share_one_geomtransf() -> None:
-    """When multiple elements share the same vecxz under a CS, only
-    one ``geomTransf`` line is emitted and reused across them."""
+def test_orientation_transform_collinear_elements_share_one_geomtransf() -> None:
+    """When multiple elements share the same vecxz under an
+    orientation, only one ``geomTransf`` line is emitted and reused
+    across them."""
     from apeGmsh.opensees.transform import Cartesian
 
     fem = make_two_column_frame()
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=3, ndf=6)
 
-    # Both columns are vertical and parallel — Cartesian CS yields one
-    # vecxz for both.
-    csys = Cartesian()
-    transf = ops.geomTransf.Linear(csys=csys)
+    # Both columns are vertical and parallel — Cartesian orientation
+    # yields one vecxz for both.
+    orientation = Cartesian()
+    transf = ops.geomTransf.Linear(orientation=orientation)
     ops.element.elasticBeamColumn(
         pg="Cols",
         transf=transf,

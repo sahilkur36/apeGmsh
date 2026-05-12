@@ -46,9 +46,9 @@ ops
 │                                            → ElasticMembranePlateSection
 │    ...
 ├─ geomTransf                  (namespace)
-│    .Linear(*, csys=None)                  → Linear
-│    .PDelta(*, csys=None)                  → PDelta
-│    .Corotational(*, csys=None)            → Corotational
+│    .Linear(*, orientation=None)           → Linear
+│    .PDelta(*, orientation=None)           → PDelta
+│    .Corotational(*, orientation=None)     → Corotational
 ├─ beamIntegration             (namespace)
 │    .Lobatto(*, section, n_ip)             → Lobatto
 │    .Legendre / .NewtonCotes / .Radau / .Trapezoidal (same shape)
@@ -195,7 +195,7 @@ sec.plot()
 sec.area, sec.centroid                   # geometric
 sec.moment_curvature(axial_load=-1000e3) # MomentCurvatureResult
 
-trans = ops.geomTransf.PDelta(csys=Cartesian())
+trans = ops.geomTransf.PDelta(orientation=Cartesian())
 trans.plot_for_pg("Cols")                # vis vecxz on each beam
 
 gm = ops.timeSeries.Path(file="elcentro.txt", dt=0.01, factor=9.81)

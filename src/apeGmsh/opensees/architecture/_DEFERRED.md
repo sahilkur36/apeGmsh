@@ -51,8 +51,8 @@ another mesh entity rather than from a fixed geometry.
 Sketch:
 
 ```python
-csys = AlongBeam(reference_curve_pg="MainGirder")
-ops.geomTransf.Linear(csys=csys)
+orientation = AlongBeam(reference_curve_pg="MainGirder")
+ops.geomTransf.Linear(orientation=orientation)
 ```
 
 Stirrups are usually circular rebar (rotation about local-x is
@@ -121,5 +121,5 @@ classes via introspection.
 
 `Cylindrical(axis=(0,0,1))` for a 2-D model would be meaningful
 (in-plane radial / circumferential axes). Today the build step
-raises if `csys=` is supplied with `ndm=2`. Lift the restriction
+raises if `orientation=` is supplied with `ndm=2`. Lift the restriction
 when we add 2-D-specific tests.

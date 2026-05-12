@@ -1,10 +1,10 @@
-"""Unit + integration tests for the CS-based frame orientation rule."""
+"""Unit + integration tests for the orientation-based frame rule."""
 import math
 
 import numpy as np
 
 from apeGmsh.opensees import Cartesian, Cylindrical, Spherical
-from apeGmsh.opensees._csys import resolve_vecxz
+from apeGmsh.opensees._orientation import resolve_vecxz
 
 
 def _close(a, b, tol=1e-9):
@@ -198,6 +198,6 @@ class TestCylindricalRule:
 # ``g.opensees.elements.add_geom_transf(csys=…)`` flow on the legacy
 # ``apeGmsh.solvers.OpenSees`` bridge.  Equivalent coverage on the
 # new typed ``Linear`` / ``PDelta`` / ``Corotational`` primitives
-# (which accept ``csys=`` directly at construction) lives in
+# (which accept ``orientation=`` directly at construction) lives in
 # :mod:`tests.opensees.unit.primitives.test_geom_transf` and
 # :mod:`tests.opensees.contract.test_geom_transf_contract`.

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from .apesees import apeSees
 from .node import Node, NodeSet
-from ._csys import Cartesian, Cylindrical, Spherical
+from ._orientation import Cartesian, Cylindrical, Spherical
 
 __all__ = [
     "apeSees",

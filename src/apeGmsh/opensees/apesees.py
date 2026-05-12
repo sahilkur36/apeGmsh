@@ -180,18 +180,20 @@ class BuiltModel:
         Topological order rules:
           1. Materials & sections & time series & transforms come
              before elements & patterns & recorders & analysis chain.
-          2. Within the topo order: csys-bearing transforms perform a
-             one-shot fan-out across the elements that reference them
-             (ADR 0010), producing a per-element override map.
+          2. Within the topo order: orientation-bearing transforms
+             perform a one-shot fan-out across the elements that
+             reference them (ADR 0010), producing a per-element
+             override map.
           3. Element specs fan out across their physical groups,
              allocating one element tag per element instance.
           4. Pattern / recorder specs resolve ``pg=`` records into
              per-node / per-element calls.
         """
         # Re-create a TagAllocator seeded with the bridge's existing
-        # primitive-tag assignments. Element fan-out + csys override
-        # tags allocate freshly during emit; the seeded counters keep
-        # those allocations from collidng with primitive-own tags.
+        # primitive-tag assignments. Element fan-out + orientation
+        # override tags allocate freshly during emit; the seeded
+        # counters keep those allocations from colliding with
+        # primitive-own tags.
         tags = TagAllocator()
         for prim in self.primitives:
             tags.allocate_for(prim, _kind_of(prim))
@@ -290,7 +292,7 @@ class BuiltModel:
         )
 
         # 6. Elements — fan out across PG with per-element-vecxz overrides
-        # where csys-bearing transforms produced distinct vecxz.
+        # where orientation-bearing transforms produced distinct vecxz.
         for ele_spec in elements:
             emit_element_spec(
                 spec=ele_spec,

@@ -31,34 +31,34 @@ class TestLinear:
     def test_construction_with_vecxz(self) -> None:
         t = Linear(vecxz=(0.0, 0.0, 1.0))
         assert t.vecxz == (0.0, 0.0, 1.0)
-        assert t.csys is None
+        assert t.orientation is None
         assert t.roll_deg == 0.0
 
-    def test_construction_with_csys_cartesian(self) -> None:
-        cs = Cartesian()
-        t = Linear(csys=cs)
-        assert t.csys is cs
+    def test_construction_with_orientation_cartesian(self) -> None:
+        o = Cartesian()
+        t = Linear(orientation=o)
+        assert t.orientation is o
         assert t.vecxz is None
 
-    def test_construction_with_csys_cylindrical(self) -> None:
-        cs = Cylindrical(origin=(0, 0, 0), axis=(0, 0, 1))
-        t = Linear(csys=cs)
-        assert t.csys is cs
+    def test_construction_with_orientation_cylindrical(self) -> None:
+        o = Cylindrical(origin=(0, 0, 0), axis=(0, 0, 1))
+        t = Linear(orientation=o)
+        assert t.orientation is o
 
-    def test_construction_with_csys_spherical(self) -> None:
-        cs = Spherical(origin=(0, 0, 0))
-        t = Linear(csys=cs)
-        assert t.csys is cs
+    def test_construction_with_orientation_spherical(self) -> None:
+        o = Spherical(origin=(0, 0, 0))
+        t = Linear(orientation=o)
+        assert t.orientation is o
 
     def test_construction_with_neither_is_allowed_for_2d_models(self) -> None:
         # 2D-only path: bridge will raise at build time if used in 3D.
         t = Linear()
-        assert t.csys is None
+        assert t.orientation is None
         assert t.vecxz is None
 
-    def test_construction_with_both_csys_and_vecxz_is_rejected(self) -> None:
+    def test_construction_with_both_orientation_and_vecxz_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="Linear: supply either"):
-            Linear(csys=Cartesian(), vecxz=(0.0, 0.0, 1.0))
+            Linear(orientation=Cartesian(), vecxz=(0.0, 0.0, 1.0))
 
     def test_construction_with_roll_deg(self) -> None:
         t = Linear(vecxz=(0.0, 0.0, 1.0), roll_deg=15.0)
@@ -80,10 +80,10 @@ class TestLinear:
             ("geomTransf", ("Linear", 7, 0.5, -0.3, 0.7), {}),
         ]
 
-    def test_emit_with_csys_set_raises_not_implemented(self) -> None:
-        t = Linear(csys=Cartesian())
+    def test_emit_with_orientation_set_raises_not_implemented(self) -> None:
+        t = Linear(orientation=Cartesian())
         emitter = RecordingEmitter()
-        with pytest.raises(NotImplementedError, match="csys-derived"):
+        with pytest.raises(NotImplementedError, match="orientation-derived"):
             t._emit(emitter, tag=1)
         assert emitter.calls == []
 
@@ -91,7 +91,7 @@ class TestLinear:
         # Same path: vecxz is None, so the deferred-fan-out error fires.
         t = Linear()
         emitter = RecordingEmitter()
-        with pytest.raises(NotImplementedError, match="csys-derived"):
+        with pytest.raises(NotImplementedError, match="orientation-derived"):
             t._emit(emitter, tag=1)
 
     def test_dependencies_is_empty(self) -> None:
@@ -116,21 +116,21 @@ class TestPDelta:
     def test_construction_with_vecxz(self) -> None:
         t = PDelta(vecxz=(0.0, 0.0, 1.0))
         assert t.vecxz == (0.0, 0.0, 1.0)
-        assert t.csys is None
+        assert t.orientation is None
 
-    def test_construction_with_csys(self) -> None:
-        cs = Cartesian()
-        t = PDelta(csys=cs)
-        assert t.csys is cs
+    def test_construction_with_orientation(self) -> None:
+        o = Cartesian()
+        t = PDelta(orientation=o)
+        assert t.orientation is o
 
     def test_construction_with_neither_is_allowed_for_2d_models(self) -> None:
         t = PDelta()
-        assert t.csys is None
+        assert t.orientation is None
         assert t.vecxz is None
 
     def test_construction_with_both_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="PDelta: supply either"):
-            PDelta(csys=Cartesian(), vecxz=(0.0, 0.0, 1.0))
+            PDelta(orientation=Cartesian(), vecxz=(0.0, 0.0, 1.0))
 
     def test_emit_with_explicit_vecxz(self) -> None:
         t = PDelta(vecxz=(1.0, 0.0, 0.0))
@@ -140,8 +140,8 @@ class TestPDelta:
             ("geomTransf", ("PDelta", 3, 1.0, 0.0, 0.0), {}),
         ]
 
-    def test_emit_with_csys_raises_not_implemented(self) -> None:
-        t = PDelta(csys=Cartesian())
+    def test_emit_with_orientation_raises_not_implemented(self) -> None:
+        t = PDelta(orientation=Cartesian())
         emitter = RecordingEmitter()
         with pytest.raises(NotImplementedError, match="PDelta._emit"):
             t._emit(emitter, tag=1)
@@ -163,21 +163,21 @@ class TestCorotational:
     def test_construction_with_vecxz(self) -> None:
         t = Corotational(vecxz=(0.0, 0.0, 1.0))
         assert t.vecxz == (0.0, 0.0, 1.0)
-        assert t.csys is None
+        assert t.orientation is None
 
-    def test_construction_with_csys(self) -> None:
-        cs = Cartesian()
-        t = Corotational(csys=cs)
-        assert t.csys is cs
+    def test_construction_with_orientation(self) -> None:
+        o = Cartesian()
+        t = Corotational(orientation=o)
+        assert t.orientation is o
 
     def test_construction_with_neither_is_allowed_for_2d_models(self) -> None:
         t = Corotational()
-        assert t.csys is None
+        assert t.orientation is None
         assert t.vecxz is None
 
     def test_construction_with_both_is_rejected(self) -> None:
         with pytest.raises(ValueError, match="Corotational: supply either"):
-            Corotational(csys=Cartesian(), vecxz=(0.0, 0.0, 1.0))
+            Corotational(orientation=Cartesian(), vecxz=(0.0, 0.0, 1.0))
 
     def test_emit_with_explicit_vecxz(self) -> None:
         t = Corotational(vecxz=(0.0, 1.0, 0.0))
@@ -187,8 +187,8 @@ class TestCorotational:
             ("geomTransf", ("Corotational", 99, 0.0, 1.0, 0.0), {}),
         ]
 
-    def test_emit_with_csys_raises_not_implemented(self) -> None:
-        t = Corotational(csys=Cartesian())
+    def test_emit_with_orientation_raises_not_implemented(self) -> None:
+        t = Corotational(orientation=Cartesian())
         emitter = RecordingEmitter()
         with pytest.raises(NotImplementedError, match="Corotational._emit"):
             t._emit(emitter, tag=1)
@@ -221,9 +221,9 @@ class TestGeomTransfNamespace:
 
     def test_namespace_PDelta_returns_typed_instance(self) -> None:
         ops = _stub_bridge()
-        t = ops.geomTransf.PDelta(csys=Cartesian())
+        t = ops.geomTransf.PDelta(orientation=Cartesian())
         assert isinstance(t, PDelta)
-        assert isinstance(t.csys, Cartesian)
+        assert isinstance(t.orientation, Cartesian)
         assert ops.tag_for(t) == 1
 
     def test_namespace_Corotational_returns_typed_instance(self) -> None:

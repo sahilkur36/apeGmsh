@@ -41,7 +41,7 @@ Protocol cannot supply the spec-level grouping the schema asks for:
 
 * ``/opensees/transforms/{name}`` — the schema shows one group per
   user-declared transform with a ``per_element_vecxz`` dataset of
-  shape ``(n_elements, 3)``.  The csys-driven fan-out in the bridge's
+  shape ``(n_elements, 3)``.  The orientation-driven fan-out in the bridge's
   build layer emits one ``geomTransf`` line per *distinct* vecxz; the
   H5 emitter sees these as N independent calls and cannot
   reverse-engineer the spec boundary.  We therefore emit one
@@ -1068,10 +1068,10 @@ class H5Emitter:
 
         See module docstring for the schema deviation rationale: the
         H5 emitter sees one call per emitted ``geomTransf`` line — for
-        csys-driven transforms the bridge fans these out across distinct
-        per-element vecxz, but the streaming Protocol does not surface
-        the spec boundary that would let us aggregate them into the
-        schema's per-spec grouping.
+        orientation-driven transforms the bridge fans these out across
+        distinct per-element vecxz, but the streaming Protocol does
+        not surface the spec boundary that would let us aggregate them
+        into the schema's per-spec grouping.
         """
         if not self._transforms:
             return

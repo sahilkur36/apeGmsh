@@ -18,6 +18,6 @@ earlier one, write a new ADR that supersedes it; do not edit history.
 | [0007](0007-time-series-separated-from-pattern.md) | Time series live outside `pattern/` | Accepted |
 | [0008](0008-three-emit-targets.md) | Three emit targets via Emitter Protocol | Accepted |
 | [0009](0009-no-backwards-compat-with-solvers.md) | No back-compat with `apeGmsh.solvers` | Accepted |
-| [0010](0010-csys-for-frame-orientation.md) | Coordinate systems for frame orientation | Accepted (already shipped in `solvers/`) |
+| [0010](0010-csys-for-frame-orientation.md) | Orientation fields for frame orientation (originally "csys") | Accepted |
 | [0011](0011-h5-as-fourth-emit-target.md) | HDF5 as a fourth emit target | Accepted |
 | [0013](0013-records-in-mesh-not-solvers.md) | Resolved records live in `apeGmsh.mesh.records`, not `apeGmsh.solvers` | Accepted |
