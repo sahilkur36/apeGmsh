@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Iterable
 
 import numpy as np
 
-from apeGmsh.solvers._opensees_csys import resolve_vecxz
+from .._csys import resolve_vecxz
 
 from ..element.beam_column import (
     ElasticTimoshenkoBeam,
@@ -62,7 +62,9 @@ from .tag_resolution import (
 from .types import Element, GeomTransf, Primitive, Recorder
 
 if TYPE_CHECKING:
-    from apeGmsh.mesh import FEMData
+    # Use the fully-qualified module path to disambiguate from the
+    # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
+    from apeGmsh.mesh.FEMData import FEMData
 
     from ..emitter.base import Emitter
 

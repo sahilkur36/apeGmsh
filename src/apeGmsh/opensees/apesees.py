@@ -81,7 +81,9 @@ if TYPE_CHECKING:
     # FEMData is the only mesh symbol the bridge depends on (P3, P9).
     # Imported under TYPE_CHECKING so that constructing apeSees does
     # not transitively import gmsh during static analysis.
-    from apeGmsh.mesh import FEMData
+    # Use the fully-qualified module path to disambiguate from the
+    # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
+    from apeGmsh.mesh.FEMData import FEMData
 
 
 __all__ = ["apeSees", "BuiltModel"]

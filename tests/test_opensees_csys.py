@@ -4,8 +4,8 @@ import math
 import numpy as np
 import pytest
 
-from apeGmsh.solvers import Cartesian, Cylindrical, Spherical
-from apeGmsh.solvers._opensees_csys import resolve_vecxz
+from apeGmsh.opensees import Cartesian, Cylindrical, Spherical
+from apeGmsh.opensees._csys import resolve_vecxz
 
 
 def _close(a, b, tol=1e-9):

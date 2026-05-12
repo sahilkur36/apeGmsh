@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from ._element_specs import _ETYPE_INFO, _ELEM_REGISTRY
-from ._opensees_csys import resolve_vecxz
+from apeGmsh.opensees._csys import resolve_vecxz
 
 if TYPE_CHECKING:
     from .OpenSees import OpenSees
