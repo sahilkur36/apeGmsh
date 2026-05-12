@@ -19,7 +19,10 @@ Usage
 -----
 ::
 
-    spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=3)
+    from apeGmsh.solvers.Recorders import Recorders   # canonical home moves in Phase 8.3b
+    recorders = Recorders()
+    recorders.nodes(components=["displacement"])
+    spec = recorders.resolve(fem, ndm=3, ndf=3)
 
     with spec.emit_mpco("run.mpco"):
         for _ in range(n_steps):
@@ -116,9 +119,7 @@ class LiveMPCO:
                 "distributions do not ship it. Workable options:\n"
                 "  - run inside STKO's bundled Python distribution\n"
                 "  - use spec.emit_recorders(...) for classic "
-                "recorders + Results.from_recorders(...)\n"
-                "  - export with g.opensees.export.tcl(..., "
-                "recorders=spec, mpco=True) and run with STKO loaded"
+                "recorders + Results.from_recorders(...)"
             ) from exc
 
         if isinstance(tag, int):

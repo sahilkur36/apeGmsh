@@ -62,7 +62,10 @@ Usage
 -----
 ::
 
-    spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=6)
+    from apeGmsh.solvers.Recorders import Recorders   # canonical home moves in Phase 8.3b
+    recorders = Recorders()
+    recorders.nodes(components=["displacement"])
+    spec = recorders.resolve(fem, ndm=3, ndf=6)
     with spec.capture(path="run.h5", fem=fem, ndm=3, ndf=6) as cap:
         cap.begin_stage("gravity", kind="static")
         for _ in range(n_grav):
@@ -1727,8 +1730,8 @@ class _LayerCapturer:
             raise ValueError(
                 f"Record {record.name!r} (category=layers) has no "
                 f"layer_section_metadata. Resolve the spec via "
-                f"``g.opensees.recorders.resolve(fem)`` so the "
-                f"OpenSees back-reference can populate it."
+                f"``Recorders().resolve(fem, ndm=..., ndf=...)`` so "
+                f"the OpenSees back-reference can populate it."
             )
         self._rec = record
         self._fem = fem

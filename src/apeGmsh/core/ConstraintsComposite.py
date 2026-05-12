@@ -632,11 +632,11 @@ class ConstraintsComposite:
         non-matching meshes.
 
         Resolution emits one
-        :class:`~apeGmsh.solvers.Constraints.InterpolationRecord`
-        per successfully projected slave node. apeGmsh emits these
-        downstream as ``ASDEmbeddedNodeElement`` penalty elements
-        (default K = 1e18; tunable via
-        ``g.opensees.ingest.constraints(fem, tie_penalty=…)``).
+        :class:`~apeGmsh.mesh.records.InterpolationRecord` per
+        successfully projected slave node. Downstream the apeGmsh
+        OpenSees bridge emits these as ``ASDEmbeddedNodeElement``
+        penalty elements (default K = 1e18; tunable on the bridge
+        ingest API).
 
         Parameters
         ----------
