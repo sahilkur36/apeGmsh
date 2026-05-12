@@ -884,6 +884,10 @@ class ResultsViewer:
             self._probe_overlay,
             director,
         )
+        # Swap the HUD's step/stage subscriptions onto the dispatcher's
+        # UI lane so a rapid scrubber drag collapses to one HDF5
+        # re-read per Qt tick instead of one per slider tick.
+        self._pick_hud.attach_dispatcher(dispatcher)
         self._shortcut_hud = ShortcutHelpHUD(
             plotter.interactor,
             entries=[
