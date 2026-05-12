@@ -128,6 +128,7 @@ cut_def = SectionCutDef.from_plane_and_pg(
 | 4 | `SectionCutDef.from_plane_and_pg` / `.from_planar_pg` builders | **done** |
 | 5 | `SectionSweepDef` + `from_pg_pattern` | **done** |
 | v2.1 | `bounding_polygon_from_physical_surface` + `with_bounding=True` flag | **done** |
+| v3.1 | `SectionSweepDef.from_pg_glob(pattern=...)` + `with_bounding` propagation | **done** |
 
 v2 and beyond (viewer overlay, bounding-polygon derivation, `model.h5`
 persistence, drift specs, sweep templates) are described in the
