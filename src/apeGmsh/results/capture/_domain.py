@@ -51,7 +51,7 @@ Scope
   Per-layer thickness + material tags come from
   ``record.layer_section_metadata``, populated at recorder-resolve
   time by reading the OpenSees back-reference's section registry
-  (see :class:`apeGmsh.solvers._recorder_specs.LayerSectionMetadata`).
+  (see :class:`apeGmsh.results.spec._resolved.LayerSectionMetadata`).
   Per-element local-axes quaternions are computed from element
   node coordinates via :mod:`apeGmsh.results._shell_geometry`.
   Layer records resolved without an OpenSees back-reference (i.e.
@@ -62,7 +62,7 @@ Usage
 -----
 ::
 
-    from apeGmsh.solvers.Recorders import Recorders   # canonical home moves in Phase 8.3b
+    from apeGmsh.results.spec.declaration import Recorders
     recorders = Recorders()
     recorders.nodes(components=["displacement"])
     spec = recorders.resolve(fem, ndm=3, ndf=6)
@@ -144,7 +144,7 @@ _normalise_integration_points = normalise_integration_points
 
 if TYPE_CHECKING:
     from ...mesh.FEMData import FEMData
-    from ...solvers._recorder_specs import (
+    from ..spec._resolved import (
         ResolvedRecorderRecord,
         ResolvedRecorderSpec,
     )

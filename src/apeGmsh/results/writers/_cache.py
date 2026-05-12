@@ -25,7 +25,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Iterable
 
 if TYPE_CHECKING:
-    from ...solvers._recorder_specs import ResolvedRecorderSpec
+    from ..spec._resolved import ResolvedRecorderSpec
 
 
 _DEFAULT_CACHE_DIR_NAME = "results"
@@ -92,7 +92,7 @@ def list_source_files(
     ``stage_id`` matches the prefix used by live recorder emission;
     pass it when listing files for a specific stage.
     """
-    from ...solvers._recorder_emit import emit_logical, _DEFERRED_CATEGORIES
+    from ..spec._emit import emit_logical, _DEFERRED_CATEGORIES
     files: list[Path] = []
     for rec in spec.records:
         if rec.category in _DEFERRED_CATEGORIES:

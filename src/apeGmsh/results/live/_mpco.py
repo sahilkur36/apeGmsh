@@ -19,7 +19,7 @@ Usage
 -----
 ::
 
-    from apeGmsh.solvers.Recorders import Recorders   # canonical home moves in Phase 8.3b
+    from apeGmsh.results.spec.declaration import Recorders
     recorders = Recorders()
     recorders.nodes(components=["displacement"])
     spec = recorders.resolve(fem, ndm=3, ndf=3)
@@ -36,10 +36,10 @@ import warnings
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-from ...solvers._recorder_emit import mpco_ops_args
+from ..spec._emit import mpco_ops_args
 
 if TYPE_CHECKING:
-    from ...solvers._recorder_specs import ResolvedRecorderSpec
+    from ..spec._resolved import ResolvedRecorderSpec
 
 
 class LiveMPCO:
