@@ -45,7 +45,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, TypeAlias
 
-from apeGmsh.solvers._opensees_csys import (
+from ._csys import (
     Cartesian,
     Cylindrical,
     Spherical,

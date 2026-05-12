@@ -157,7 +157,7 @@ class _Elements:
         -------
         ::
 
-            from apeGmsh.solvers import Cartesian, Cylindrical
+            from apeGmsh.opensees import Cartesian, Cylindrical
 
             # 2-D frame
             g.opensees.elements.add_geom_transf("Cols", "PDelta")

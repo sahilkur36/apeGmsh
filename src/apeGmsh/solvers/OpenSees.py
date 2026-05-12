@@ -63,7 +63,7 @@ from ._opensees_elements import _Elements
 from ._opensees_ingest import _Ingest
 from ._opensees_inspect import _Inspect
 from ._opensees_export import _Export
-from . import _opensees_csys as csys
+from apeGmsh.opensees import _csys as csys
 
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _ApeGmshSession

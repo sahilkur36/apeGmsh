@@ -1,21 +1,19 @@
-"""apeGmsh.solvers — Legacy compatibility shim (Phase 8.1).
+"""apeGmsh.solvers — Legacy compatibility shim.
 
 This package is being retired.  Phase 8.1 moved the broker-side
 content (record dataclasses, the constraint / load / mass resolvers,
 and the Numberer) out of ``apeGmsh.solvers`` into the mesh and core
-layers where they belong; the OpenSees-side helpers
-(``OpenSees``, ``Cartesian``/``Cylindrical``/``Spherical``, the
-recorder / response catalog, …) move in subsequent sub-phases.
+layers.  Phase 8.2 moves the coordinate-system helpers
+(``Cartesian`` / ``Cylindrical`` / ``Spherical`` / ``resolve_vecxz``)
+into ``apeGmsh.opensees``.  The legacy ``OpenSees`` bridge class and
+the response / recorder catalog move in subsequent sub-phases.
 
 Until those finish, this module keeps the old import paths alive.
 The per-module shim files (``Numberer.py``, ``Constraints.py``,
-``Loads.py``, ``Masses.py``, ``_kinds.py``, …) warn on import;
-the package-level ``__getattr__`` below catches the
-``from apeGmsh.solvers import Numberer`` shape so that path also
-emits a one-shot :class:`DeprecationWarning`.
-
-OpenSees-side re-exports (``OpenSees``, the coordinate-system
-helpers) stay eager and silent — they relocate in Phase 8.2.
+``Loads.py``, ``Masses.py``, ``_kinds.py``, ``_opensees_csys.py`` …)
+warn on import; the package-level ``__getattr__`` below catches the
+``from apeGmsh.solvers import X`` shape so that path also emits a
+one-shot :class:`DeprecationWarning`.
 """
 
 from __future__ import annotations
@@ -24,14 +22,21 @@ import warnings
 from typing import Any
 
 from .OpenSees import OpenSees
-from ._opensees_csys import Cartesian, Cylindrical, Spherical
 
-# Phase 8.1 names that moved out of apeGmsh.solvers.  Listed as
-# ``{attr: (canonical_module, canonical_attr)}`` so __getattr__ can
-# point users at the new home.
+# Names that moved out of apeGmsh.solvers during the Phase-8 untangle.
+# Listed as ``{attr: (canonical_module, canonical_attr)}`` so
+# __getattr__ can point users at the new home.
+#
+# Phase 8.1 — broker-side records & resolvers (mesh/ + core/).
+# Phase 8.2 — bridge-side coordinate-system helpers (opensees/).
 _RELOCATED: dict[str, tuple[str, str]] = {
+    # Phase 8.1
     "Numberer":     ("apeGmsh.mesh._numberer", "Numberer"),
     "NumberedMesh": ("apeGmsh.mesh._numberer", "NumberedMesh"),
+    # Phase 8.2
+    "Cartesian":    ("apeGmsh.opensees", "Cartesian"),
+    "Cylindrical":  ("apeGmsh.opensees", "Cylindrical"),
+    "Spherical":    ("apeGmsh.opensees", "Spherical"),
 }
 
 
@@ -60,10 +65,10 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "OpenSees",
+    # Accessible via __getattr__ (one-shot DeprecationWarning):
+    "Numberer",
+    "NumberedMesh",
     "Cartesian",
     "Cylindrical",
     "Spherical",
-    # Numberer / NumberedMesh accessible via __getattr__
-    "Numberer",
-    "NumberedMesh",
 ]
