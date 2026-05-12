@@ -47,7 +47,7 @@ def parse_node_file(
     Parameters
     ----------
     path : str or Path
-        File path (e.g. emitted by ``g.opensees.export.tcl``).
+        File path (e.g. emitted by an OpenSees ``recorder Node`` line).
     logical : LogicalRecorder
         The emitted recorder spec — gives us node order, DOFs, and
         ops_type. Must have ``kind="Node"`` and ``dofs`` populated.

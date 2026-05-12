@@ -6,7 +6,10 @@ Each CS class evaluates an orthonormal triad ``(e1, e2, e3)`` at a point
 rule uses to place the section's local-z in the plane of (beam-axis,
 e3).
 
-Used by :meth:`g.opensees.elements.add_geom_transf(csys=...)`.
+Used by the typed :class:`~apeGmsh.opensees.transform.Linear`,
+:class:`~apeGmsh.opensees.transform.PDelta`, and
+:class:`~apeGmsh.opensees.transform.Corotational` geom_transf
+primitives when constructed with ``csys=``.
 
 Three flavors:
 

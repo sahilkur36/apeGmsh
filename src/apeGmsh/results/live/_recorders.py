@@ -25,7 +25,10 @@ Usage
 -----
 ::
 
-    spec = g.opensees.recorders.resolve(fem, ndm=3, ndf=3)
+    from apeGmsh.solvers.Recorders import Recorders   # canonical home moves in Phase 8.3b
+    recorders = Recorders()
+    recorders.nodes(components=["displacement"])
+    spec = recorders.resolve(fem, ndm=3, ndf=3)
 
     with spec.emit_recorders("out/") as live:
         live.begin_stage("gravity", kind="static")

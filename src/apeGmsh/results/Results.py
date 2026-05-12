@@ -143,9 +143,9 @@ class Results:
         """Open the result of an OpenSees run driven by Tcl/Py recorders.
 
         Parses the ``.out`` / ``.xml`` files emitted at
-        ``output_dir`` (matching what ``g.opensees.export.tcl(...,
-        recorders=spec)`` or ``spec.emit_recorders(...)`` produced)
-        into an apeGmsh native HDF5, caches the result at
+        ``output_dir`` (matching what ``spec.emit_recorders(...)`` or
+        the apeGmsh OpenSees bridge's Tcl/Py emit produced) into an
+        apeGmsh native HDF5, caches the result at
         ``cache_root``, and opens it through ``NativeReader``.
 
         Caching: subsequent calls with unchanged input files return
