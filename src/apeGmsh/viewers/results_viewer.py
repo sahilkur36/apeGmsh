@@ -214,6 +214,11 @@ class ResultsViewer:
         # the picker having to walk every active diagram on every click.
         from .core.results_pick_engine import PickEngine as _PickEngine
         scene.pick_engine = _PickEngine()
+        # ElementVisibility — per-cell hide via the substrate
+        # ``vtkGhostType`` array. Box-pick consults the ghost mask,
+        # renderers / VTK pickers natively skip ghost-hidden cells.
+        from .core.element_visibility import ElementVisibility as _ElementVis
+        scene.element_visibility = _ElementVis(scene.grid)
 
         # ── Window (creates QApplication) ───────────────────────────
         title = self._title or self._default_title()
@@ -778,6 +783,8 @@ class ResultsViewer:
         # Inject the dispatcher into the PickEngine so set_pick_mode
         # can publish PICK_MODE_CHANGED through the event bus.
         scene.pick_engine.dispatcher = dispatcher
+        # Same for ElementVisibility so hide/show fires ELEMENT_VISIBILITY_CHANGED.
+        scene.element_visibility.dispatcher = dispatcher
 
         # ── Observer wiring — every callback fires a dispatcher event.
         # Director's existing observers are preserved (the time scrubber

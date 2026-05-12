@@ -436,6 +436,18 @@ def install_results_pick(
                 return None
             display = _project_points_to_display(centroids, renderer)
             mask = _inside_box(display, x0, y0, x1, y1)
+            # Phase 3.3 — exclude cells hidden via ElementVisibility.
+            # ``vtkGhostType`` is per-cell on the substrate grid; bit
+            # 0x01 (HIDDENCELL) means "skip this cell in render + pick".
+            # Filters like ``cell_centers`` don't carry the ghost array
+            # over to the result polydata, so we read it back from the
+            # source grid by cell index.
+            try:
+                ghosts = np.asarray(grid.cell_data["vtkGhostType"])
+                if ghosts.size == mask.size:
+                    mask = mask & ~(ghosts & 0x01).astype(bool)
+            except (KeyError, IndexError):
+                pass
             cell_idx = np.nonzero(mask)[0].astype(np.int64)
             element_ids = (
                 cell_to_element_id[cell_idx]
