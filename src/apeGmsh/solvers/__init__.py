@@ -57,8 +57,9 @@ _RELOCATED: dict[str, tuple[str, str]] = {
     "Cartesian":             ("apeGmsh.opensees", "Cartesian"),
     "Cylindrical":           ("apeGmsh.opensees", "Cylindrical"),
     "Spherical":             ("apeGmsh.opensees", "Spherical"),
-    # Phase 8.3b (Recorders subsequently relocated again in Phase 9 commit 4)
-    "Recorders":             ("apeGmsh.opensees.recorder", "Recorders"),
+    # Phase 8.3b (the Recorders fluent helper was deleted entirely
+    # in Phase 9 commit 5 — use ops.recorder.declare(...) for file
+    # emit or DomainCaptureSpec for in-process capture).
     "ResolvedRecorderSpec":  ("apeGmsh.results.spec", "ResolvedRecorderSpec"),
     "ResolvedRecorderRecord":("apeGmsh.results.spec", "ResolvedRecorderRecord"),
 }
@@ -94,7 +95,6 @@ __all__ = [
     "Cartesian",
     "Cylindrical",
     "Spherical",
-    "Recorders",
     "ResolvedRecorderSpec",
     "ResolvedRecorderRecord",
 ]

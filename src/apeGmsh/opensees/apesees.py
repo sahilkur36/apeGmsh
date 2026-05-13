@@ -22,7 +22,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable, TypeVar
+from typing import TYPE_CHECKING, Any, Iterable, TypeVar
 
 from ._internal.build import (
     BridgeError,
@@ -79,6 +79,8 @@ from .node import Node, _NodeAccessor, _iter_tags
 from .transform import Cartesian, Orientation
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import h5py
 
     # FEMData is the only mesh symbol the bridge depends on (P3, P9).
@@ -87,6 +89,8 @@ if TYPE_CHECKING:
     # Use the fully-qualified module path to disambiguate from the
     # similarly-named submodule ``apeGmsh.mesh.FEMData`` under mypy.
     from apeGmsh.mesh.FEMData import FEMData
+    from apeGmsh.results.capture._domain import DomainCapture
+    from apeGmsh.results.capture.spec import DomainCaptureSpec
 
 
 __all__ = ["apeSees", "BuiltModel"]
@@ -445,6 +449,55 @@ class apeSees:
         """Set the model dimensionality (``ndm``) and DOFs/node (``ndf``)."""
         self._ndm = ndm
         self._ndf = ndf
+
+    def domain_capture(
+        self,
+        spec: "DomainCaptureSpec",
+        *,
+        path: "str | Path",
+        ops: Any = None,
+    ) -> "DomainCapture":
+        """Open a :class:`DomainCapture` for in-process recording.
+
+        Live entry point that resolves the supplied
+        :class:`DomainCaptureSpec` against the bridge's ``fem``
+        snapshot using the bridge's ``ndm`` / ``ndf``, then returns a
+        :class:`DomainCapture` context manager writing to ``path``.
+
+        Per Phase 9 D8 ``ndm`` / ``ndf`` are sourced implicitly from
+        the bridge — the user must have called ``ops.model(ndm=,
+        ndf=)`` first. Use :meth:`DomainCapture.from_h5` instead when
+        no live bridge is available (sources ``ndm`` / ``ndf`` from a
+        ``model.h5`` ``/meta`` block).
+
+        Example::
+
+            ops.model(ndm=3, ndf=6)
+            spec = DomainCaptureSpec(opensees=ops)
+            spec.nodes(pg="Top", components=["displacement"])
+            with ops.domain_capture(spec, path="run.h5") as cap:
+                cap.begin_stage("gravity", kind="static")
+                for _ in range(n):
+                    ops.analyze(1, 1.0)
+                    cap.step(t=ops.getTime())
+                cap.end_stage()
+
+        Raises
+        ------
+        RuntimeError
+            If ``ops.model(ndm=, ndf=)`` has not been called yet.
+        """
+        if self._ndm is None or self._ndf is None:
+            raise RuntimeError(
+                "ops.domain_capture: ops.model(ndm=, ndf=) must be "
+                "called before opening a DomainCapture (Phase 9 D8 "
+                "binds ndm/ndf at resolve time)."
+            )
+        from ..results.capture._domain import DomainCapture
+        resolved = spec._resolve_with_explicit_ndm_ndf(
+            self._fem, ndm=self._ndm, ndf=self._ndf,
+        )
+        return DomainCapture(resolved, path, self._fem, ops=ops)
 
     def fix(
         self,

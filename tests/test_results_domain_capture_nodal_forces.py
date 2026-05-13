@@ -24,9 +24,9 @@ from apeGmsh.opensees._response_catalog import (
     ELE_TAG_ElasticBeam3d,
     ELE_TAG_ElasticTimoshenkoBeam3d,
 )
-from apeGmsh.results.spec._resolved import (
-    ResolvedRecorderRecord,
-    ResolvedRecorderSpec,
+from apeGmsh.results.capture.spec import (
+    ResolvedDomainCaptureRecord,
+    ResolvedDomainCaptureSpec,
 )
 
 
@@ -77,8 +77,8 @@ class _MockFem:
         group.create_group("elements")
 
 
-def _spec_with(*records, snapshot_id) -> ResolvedRecorderSpec:
-    return ResolvedRecorderSpec(
+def _spec_with(*records, snapshot_id) -> ResolvedDomainCaptureSpec:
+    return ResolvedDomainCaptureSpec(
         fem_snapshot_id=snapshot_id,
         records=tuple(records),
     )
@@ -90,7 +90,7 @@ def _spec_with(*records, snapshot_id) -> ResolvedRecorderSpec:
 
 class TestFrameRouting:
     def test_global_components_route_to_globalForce(self) -> None:
-        rec = ResolvedRecorderRecord(
+        rec = ResolvedDomainCaptureRecord(
             category="elements", name="r",
             components=("nodal_resisting_force_x", "nodal_resisting_moment_z"),
             dt=None, n_steps=None,
@@ -101,7 +101,7 @@ class TestFrameRouting:
         assert cap._catalog_token == "global_force"
 
     def test_local_components_route_to_localForce(self) -> None:
-        rec = ResolvedRecorderRecord(
+        rec = ResolvedDomainCaptureRecord(
             category="elements", name="r",
             components=("nodal_resisting_force_local_x",
                         "nodal_resisting_moment_local_z"),
@@ -113,7 +113,7 @@ class TestFrameRouting:
         assert cap._catalog_token == "local_force"
 
     def test_mixed_frames_raises(self) -> None:
-        rec = ResolvedRecorderRecord(
+        rec = ResolvedDomainCaptureRecord(
             category="elements", name="r",
             components=("nodal_resisting_force_x",
                         "nodal_resisting_force_local_y"),
@@ -124,7 +124,7 @@ class TestFrameRouting:
             _NodalForcesCapturer(rec)
 
     def test_no_recognised_components_raises(self) -> None:
-        rec = ResolvedRecorderRecord(
+        rec = ResolvedDomainCaptureRecord(
             category="elements", name="r",
             components=("displacement_x",),    # nodal kinematic, not nodal_forces
             dt=None, n_steps=None,
@@ -144,7 +144,7 @@ class TestElasticBeam3dGlobalCapture:
     ) -> None:
         fem = _MockFem([1, 2, 3])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="elements", name="beam_global",
                 components=(
                     "nodal_resisting_force_x", "nodal_resisting_force_y",
@@ -162,7 +162,7 @@ class TestElasticBeam3dGlobalCapture:
         ops.ele_class[11] = "ElasticBeam3d"
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ndm=3, ndf=6, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops) as cap:
             cap.begin_stage("static", kind="static")
             for t in (0.0, 1.0):
                 offset = int(t) * 1000
@@ -203,7 +203,7 @@ class TestElasticBeam3dLocalCapture:
     def test_local_frame_uses_localForce_keyword(self, tmp_path: Path) -> None:
         fem = _MockFem([1, 2])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="elements", name="beam_local",
                 components=(
                     "nodal_resisting_force_local_x",
@@ -244,7 +244,7 @@ class TestElasticBeam2dGlobalCapture:
     def test_2d_capture_3_components_per_node(self, tmp_path: Path) -> None:
         fem = _MockFem([1, 2])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="elements", name="beam2d",
                 components=(
                     "nodal_resisting_force_x",
@@ -286,7 +286,7 @@ class TestMixedClassCapture:
         """Same record covers ElasticBeam3d + ElasticTimoshenkoBeam3d."""
         fem = _MockFem([1, 2, 3, 4])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="elements", name="all_beams",
                 components=("nodal_resisting_force_x",),
                 dt=None, n_steps=None,
@@ -326,7 +326,7 @@ class TestSkipBehaviours:
     def test_uncatalogued_class_skipped(self, tmp_path: Path) -> None:
         fem = _MockFem([1, 2])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="elements", name="r",
                 components=("nodal_resisting_force_x",),
                 dt=None, n_steps=None,
@@ -351,7 +351,7 @@ class TestSkipBehaviours:
     def test_wrong_size_response_raises(self, tmp_path: Path) -> None:
         fem = _MockFem([1, 2])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="elements", name="r",
                 components=("nodal_resisting_force_x",),
                 dt=None, n_steps=None,
@@ -386,13 +386,13 @@ class TestMixedCategoriesAllPhases:
         ops.ele_response[(10, "stresses")] = np.arange(6, dtype=np.float64)
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="elements", name="beam",
                 components=("nodal_resisting_force_x",),
                 dt=None, n_steps=None,
                 element_ids=np.array([1]),
             ),
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="gauss", name="solid",
                 components=("stress_xx",),
                 dt=None, n_steps=None,

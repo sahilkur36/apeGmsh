@@ -14,9 +14,9 @@ import numpy as np
 import pytest
 
 from apeGmsh.results.capture._domain import DomainCapture
-from apeGmsh.results.spec._resolved import (
-    ResolvedRecorderRecord,
-    ResolvedRecorderSpec,
+from apeGmsh.results.capture.spec import (
+    ResolvedDomainCaptureRecord,
+    ResolvedDomainCaptureSpec,
 )
 
 
@@ -114,10 +114,12 @@ class _MockFem:
         group.create_group("elements")
 
 
-def _make_spec(*records, snapshot_id):
-    return ResolvedRecorderSpec(
+def _make_spec(*records, snapshot_id, ndm=3, ndf=6):
+    return ResolvedDomainCaptureSpec(
         fem_snapshot_id=snapshot_id,
         records=tuple(records),
+        ndm=ndm,
+        ndf=ndf,
     )
 
 
@@ -128,7 +130,7 @@ def _make_spec(*records, snapshot_id):
 def test_node_capture_displacement(tmp_path: Path) -> None:
     fem = _MockFem([1, 2, 3])
     spec = _make_spec(
-        ResolvedRecorderRecord(
+        ResolvedDomainCaptureRecord(
             category="nodes", name="all_disp",
             components=("displacement_x", "displacement_y", "displacement_z"),
             dt=None, n_steps=None,
@@ -144,7 +146,7 @@ def test_node_capture_displacement(tmp_path: Path) -> None:
         fake.disp_table[(nid, 3)] = 0.0
 
     path = tmp_path / "run.h5"
-    with DomainCapture(spec, path, fem, ndm=3, ndf=6, ops=fake) as cap:
+    with DomainCapture(spec, path, fem, ops=fake) as cap:
         cap.begin_stage("static", kind="static")
         cap.step(t=0.5)
         cap.end_stage()
@@ -161,7 +163,7 @@ def test_node_capture_displacement(tmp_path: Path) -> None:
 def test_multi_step_capture(tmp_path: Path) -> None:
     fem = _MockFem([1, 2])
     spec = _make_spec(
-        ResolvedRecorderRecord(
+        ResolvedDomainCaptureRecord(
             category="nodes", name="dyn",
             components=("displacement_x",),
             dt=None, n_steps=None,
@@ -200,7 +202,7 @@ def test_multi_step_capture(tmp_path: Path) -> None:
 def test_reaction_triggers_reactions_call(tmp_path: Path) -> None:
     fem = _MockFem([10])
     spec = _make_spec(
-        ResolvedRecorderRecord(
+        ResolvedDomainCaptureRecord(
             category="nodes", name="r",
             components=("reaction_force_x", "reaction_force_y", "reaction_force_z"),
             dt=None, n_steps=None,
@@ -232,7 +234,7 @@ def test_reaction_triggers_reactions_call(tmp_path: Path) -> None:
 def test_no_reactions_call_without_reaction_components(tmp_path: Path) -> None:
     fem = _MockFem([1])
     spec = _make_spec(
-        ResolvedRecorderRecord(
+        ResolvedDomainCaptureRecord(
             category="nodes", name="r",
             components=("displacement_x",),
             dt=None, n_steps=None,
@@ -256,7 +258,7 @@ def test_no_reactions_call_without_reaction_components(tmp_path: Path) -> None:
 def test_two_stage_capture(tmp_path: Path) -> None:
     fem = _MockFem([1, 2])
     spec = _make_spec(
-        ResolvedRecorderRecord(
+        ResolvedDomainCaptureRecord(
             category="nodes", name="r",
             components=("displacement_x",),
             dt=None, n_steps=None,
@@ -307,13 +309,14 @@ def test_two_stage_capture(tmp_path: Path) -> None:
 def test_modal_capture(tmp_path: Path) -> None:
     fem = _MockFem([1, 2, 3])
     spec = _make_spec(
-        ResolvedRecorderRecord(
+        ResolvedDomainCaptureRecord(
             category="modal", name="modes",
             components=(),
             dt=None, n_steps=None,
             n_modes=2,
         ),
         snapshot_id=fem.snapshot_id,
+        ndm=3, ndf=3,
     )
     fake = _FakeOps()
     fake.eigenvalues = [100.0, 400.0]
@@ -327,7 +330,7 @@ def test_modal_capture(tmp_path: Path) -> None:
         fake.eigen_vector_table[(nid, 2, 3)] = 0.0
 
     path = tmp_path / "run.h5"
-    with DomainCapture(spec, path, fem, ndm=3, ndf=3, ops=fake) as cap:
+    with DomainCapture(spec, path, fem, ops=fake) as cap:
         cap.capture_modes()
 
     from apeGmsh.results import Results
@@ -348,7 +351,7 @@ def test_modal_capture_with_rotational_dofs(tmp_path: Path) -> None:
     """ndf=6 captures rotation_x/y/z too."""
     fem = _MockFem([1])
     spec = _make_spec(
-        ResolvedRecorderRecord(
+        ResolvedDomainCaptureRecord(
             category="modal", name="m",
             components=(), dt=None, n_steps=None, n_modes=1,
         ),
@@ -360,7 +363,7 @@ def test_modal_capture_with_rotational_dofs(tmp_path: Path) -> None:
         fake.eigen_vector_table[(1, 1, dof)] = float(dof) * 0.1
 
     path = tmp_path / "run.h5"
-    with DomainCapture(spec, path, fem, ndm=3, ndf=6, ops=fake) as cap:
+    with DomainCapture(spec, path, fem, ops=fake) as cap:
         cap.capture_modes()
 
     from apeGmsh.results import Results
@@ -391,7 +394,7 @@ def test_layer_records_without_metadata_raise(tmp_path: Path) -> None:
     DomainCapture open time."""
     fem = _MockFem([1])
     spec = _make_spec(
-        ResolvedRecorderRecord(
+        ResolvedDomainCaptureRecord(
             category="layers", name="r",
             components=("fiber_stress",),
             dt=None, n_steps=None,
@@ -409,32 +412,43 @@ def test_layer_records_without_metadata_raise(tmp_path: Path) -> None:
 
 
 # =====================================================================
-# spec.capture(...) factory
+# DomainCapture.from_h5 — Phase 9 commit 5
 # =====================================================================
 
-def test_spec_capture_factory(tmp_path: Path) -> None:
-    """ResolvedRecorderSpec.capture(...) returns a working DomainCapture."""
-    fem = _MockFem([1])
-    spec = _make_spec(
-        ResolvedRecorderRecord(
-            category="nodes", name="r",
-            components=("displacement_x",),
-            dt=None, n_steps=None,
-            node_ids=np.array([1]),
-        ),
-        snapshot_id=fem.snapshot_id,
-    )
-    fake = _FakeOps()
-    fake.disp_table[(1, 1)] = 0.123
+def test_domain_capture_from_h5(tmp_path: Path) -> None:
+    """``DomainCapture.from_h5`` sources ndm/ndf from a model.h5 /meta."""
+    import h5py
 
-    path = tmp_path / "run.h5"
-    with spec.capture(path, fem, ops=fake) as cap:
+    from apeGmsh.results.capture import DomainCaptureSpec
+
+    # Forge a minimal bridge-shaped model.h5 with ndm/ndf in /meta.
+    model_path = tmp_path / "model.h5"
+    with h5py.File(model_path, "w") as f:
+        meta = f.create_group("meta")
+        meta.attrs["schema_version"] = "2.2.0"
+        meta.attrs["ndm"] = 3
+        meta.attrs["ndf"] = 6
+        meta.attrs["snapshot_id"] = "stub-snapshot"
+        meta.attrs["model_name"] = "stub"
+
+    fem = _MockFem([1])
+    spec = DomainCaptureSpec()
+    spec.nodes(components=["displacement"], ids=[1])
+
+    fake = _FakeOps()
+    for dof in range(1, 4):
+        fake.disp_table[(1, dof)] = 0.1 * dof
+
+    output = tmp_path / "run.h5"
+    with DomainCapture.from_h5(
+        model_path, spec=spec, fem=fem, output=output, ops=fake,
+    ) as cap:
         cap.begin_stage("g", kind="static")
         cap.step(t=0.0)
         cap.end_stage()
 
     from apeGmsh.results import Results
-    with Results.from_native(path, fem=fem) as r:
+    with Results.from_native(output, fem=fem) as r:
         np.testing.assert_allclose(
-            r.nodes.get(component="displacement_x").values, [[0.123]],
+            r.nodes.get(component="displacement_x").values, [[0.1]],
         )

@@ -93,15 +93,15 @@ def test_force_beam_3d_lobatto5_aggregated(tmp_path: Path) -> None:
 
     from apeGmsh.results import Results
     from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
     )
 
-    spec = ResolvedRecorderSpec(
+    spec = ResolvedDomainCaptureSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="beam",
                 components=(
                     "axial_force", "bending_moment_z",
@@ -115,7 +115,7 @@ def test_force_beam_3d_lobatto5_aggregated(tmp_path: Path) -> None:
     )
 
     path = tmp_path / "cap.h5"
-    with DomainCapture(spec, path, fem, ndm=3, ndf=6, ops=ops) as cap:
+    with DomainCapture(spec, path, fem, ops=ops) as cap:
         cap.begin_stage("static", kind="static")
         ops.analyze(1)
         cap.step(t=ops.getTime())
@@ -196,15 +196,15 @@ def test_force_beam_3d_disp_beam_skipped(tmp_path: Path) -> None:
 
     from apeGmsh.results import Results
     from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
     )
 
-    spec = ResolvedRecorderSpec(
+    spec = ResolvedDomainCaptureSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="beam",
                 components=("axial_force",),
                 dt=None, n_steps=None,
@@ -214,7 +214,7 @@ def test_force_beam_3d_disp_beam_skipped(tmp_path: Path) -> None:
     )
 
     path = tmp_path / "cap.h5"
-    with DomainCapture(spec, path, fem, ndm=3, ndf=6, ops=ops) as cap:
+    with DomainCapture(spec, path, fem, ops=ops) as cap:
         cap.begin_stage("static", kind="static")
         ops.analyze(1)
         # If DispBeamColumn happens to support integrationPoints in

@@ -109,9 +109,9 @@ def test_layered_shell_capture_round_trip(tmp_path: Path) -> None:
     fem = _MinimalFem(node_ids=node_ids, coords=coords)
 
     # Build LayerSectionMetadata by hand (no apeGmsh session here).
-    from apeGmsh.results.spec._resolved import (
+    from apeGmsh.results.capture.spec import (
         LayerSectionDef, LayerSectionMetadata,
-        ResolvedRecorderRecord, ResolvedRecorderSpec,
+        ResolvedDomainCaptureRecord, ResolvedDomainCaptureSpec,
     )
     sec_meta = LayerSectionMetadata(
         sections={
@@ -125,10 +125,10 @@ def test_layered_shell_capture_round_trip(tmp_path: Path) -> None:
         element_to_section={ele_tag: 7},
     )
 
-    spec = ResolvedRecorderSpec(
+    spec = ResolvedDomainCaptureSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="layers", name="slab_layers",
                 components=("fiber_stress", "fiber_strain"),
                 dt=None, n_steps=None,
@@ -140,7 +140,7 @@ def test_layered_shell_capture_round_trip(tmp_path: Path) -> None:
 
     from apeGmsh.results.capture._domain import DomainCapture
     cap_path = tmp_path / "shell.h5"
-    with DomainCapture(spec, cap_path, fem, ndm=3, ndf=6) as cap:
+    with DomainCapture(spec, cap_path, fem) as cap:
         cap.begin_stage("g", kind="static")
         for _ in range(2):
             assert ops.analyze(1) == 0

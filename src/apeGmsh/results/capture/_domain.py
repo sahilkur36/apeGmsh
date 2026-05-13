@@ -1,7 +1,7 @@
 """DomainCapture — in-process recording during an openseespy analysis.
 
-Wraps a ``ResolvedRecorderSpec`` and a target HDF5 path; the user
-drives the analysis loop and calls ``step(t)`` after each
+Wraps a :class:`ResolvedDomainCaptureSpec` and a target HDF5 path;
+the user drives the analysis loop and calls ``step(t)`` after each
 ``ops.analyze(...)``. The capture queries the openseespy domain
 directly (``ops.nodeDisp``, ``ops.nodeReaction``, ``ops.eleResponse``,
 …), buffers per-record values in RAM, and writes a chunk to the
@@ -49,37 +49,37 @@ Scope
   (when N>1).
 
   Per-layer thickness + material tags come from
-  ``record.layer_section_metadata``, populated at recorder-resolve
-  time by reading the OpenSees back-reference's section registry
-  (see :class:`apeGmsh.results.spec._resolved.LayerSectionMetadata`).
+  ``record.layer_section_metadata``, populated at resolve time by
+  reading the OpenSees back-reference's section registry (see
+  :class:`apeGmsh.results.capture.spec.LayerSectionMetadata`).
   Per-element local-axes quaternions are computed from element
   node coordinates via :mod:`apeGmsh.results._shell_geometry`.
-  Layer records resolved without an OpenSees back-reference (i.e.
-  ``Recorders()`` standalone) raise at ``DomainCapture`` open
-  time with a clear error.
+  Layer records resolved without an OpenSees back-reference raise
+  at ``DomainCapture`` open time with a clear error.
 
 Usage
 -----
 ::
 
-    from apeGmsh.opensees.recorder import Recorders
-    recorders = Recorders(opensees=ops)
-    recorders.nodes(components=["displacement"])
-    spec = recorders.resolve(fem)
-    with spec.capture(path="run.h5", fem=fem, ndm=3, ndf=6) as cap:
+    # Live, bridge sources ndm/ndf (Phase 9 D8)
+    from apeGmsh.results.capture import DomainCaptureSpec
+    spec = DomainCaptureSpec(opensees=ops)
+    spec.nodes(components=["displacement"], pg="Top")
+    with ops.domain_capture(spec, path="run.h5") as cap:
         cap.begin_stage("gravity", kind="static")
         for _ in range(n_grav):
             ops.analyze(1, 1.0)
             cap.step(t=ops.getTime())
         cap.end_stage()
-
-        cap.begin_stage("dynamic", kind="transient")
-        for _ in range(n_dyn):
-            ops.analyze(1, dt)
-            cap.step(t=ops.getTime())
-        cap.end_stage()
-
         cap.capture_modes()
+
+    # File, /meta sources ndm/ndf
+    spec = DomainCaptureSpec()
+    spec.nodes(components=["displacement"], ids=[1, 2, 3])
+    with DomainCapture.from_h5(
+        "model.h5", spec=spec, fem=fem, output="run.h5",
+    ) as cap:
+        ...
 
     results = Results.from_native("run.h5", fem=fem)
 """
@@ -143,10 +143,13 @@ _infer_section_codes = infer_section_codes
 _normalise_integration_points = normalise_integration_points
 
 if TYPE_CHECKING:
+    from pathlib import Path as _Path
+
     from ...mesh.FEMData import FEMData
-    from ..spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
+    from .spec import (
+        DomainCaptureSpec,
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
     )
 
 
@@ -209,7 +212,7 @@ def _component_needs_reactions(canonical: str) -> bool:
 # Gauss-record token derivation
 # =====================================================================
 
-def _gauss_record_tokens(record: "ResolvedRecorderRecord") -> tuple[str, str] | None:
+def _gauss_record_tokens(record: "ResolvedDomainCaptureRecord") -> tuple[str, str] | None:
     """Return ``(catalog_token, ops_keyword)`` for a gauss-category record.
 
     Returns ``None`` if the record has no Gauss-level components.
@@ -263,26 +266,30 @@ def _class_int_rule(class_name: str) -> int | None:
 class DomainCapture:
     """Context manager for in-process result capture.
 
-    Constructed by :meth:`ResolvedRecorderSpec.capture`. The user
+    Constructed live via ``ops.domain_capture(spec, path=...)``
+    (bridge-attached) or off-line via :meth:`DomainCapture.from_h5`
+    (``ndm`` / ``ndf`` sourced from a model.h5 ``/meta``). The user
     drives the analysis loop and calls ``step(t)`` to capture a
     snapshot.
     """
 
     def __init__(
         self,
-        spec: "ResolvedRecorderSpec",
+        spec: "ResolvedDomainCaptureSpec",
         path: str | Path,
         fem: "FEMData",
         *,
-        ndm: int = 3,
-        ndf: int = 6,
         ops: Any = None,
     ) -> None:
         self._spec = spec
         self._path = Path(path)
         self._fem = fem
-        self._ndm = ndm
-        self._ndf = ndf
+        # Per Phase 9 D8 ``ndm`` / ``ndf`` ride on the resolved spec —
+        # set at resolve time by ``ops.domain_capture`` (live bridge)
+        # or :meth:`from_h5` (file ``/meta``). The user never passes
+        # them directly.
+        self._ndm = spec.ndm
+        self._ndf = spec.ndf
         self._ops = ops    # injected for testing; lazy-loaded otherwise
 
         self._writer = None
@@ -362,6 +369,70 @@ class DomainCapture:
         if self._writer is not None:
             self._writer.close()
             self._writer = None
+
+    # ------------------------------------------------------------------
+    # Construction paths (Phase 9 commit 5 — D8: implicit ndm/ndf)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_h5(
+        cls,
+        model_path: "str | _Path",
+        *,
+        spec: "DomainCaptureSpec",
+        fem: "FEMData",
+        output: "str | _Path",
+        ops: Any = None,
+    ) -> "DomainCapture":
+        """Construct a DomainCapture sourcing ``ndm`` / ``ndf`` from a model.h5.
+
+        Reads ``/meta/ndm`` and ``/meta/ndf`` from the supplied
+        ``model_path``, resolves ``spec`` against ``fem`` using those
+        values, and returns a ready-to-use context manager writing
+        to ``output``. Use this entry point when you have a saved
+        ``model.h5`` but no live :class:`apeSees` bridge in the
+        current process (per Phase 9 D8 the user never types
+        ``ndm`` / ``ndf`` explicitly).
+
+        Parameters
+        ----------
+        model_path
+            Path to a bridge-emitted ``model.h5`` whose ``/meta``
+            carries ``ndm`` and ``ndf``.
+        spec
+            Declarative :class:`DomainCaptureSpec`. Standalone (no
+            bridge attached) is fine — this method supplies
+            ``ndm`` / ``ndf`` from the file rather than from a bridge.
+        fem
+            The :class:`FEMData` to resolve selectors against. Must
+            correspond to the same mesh that produced ``model_path``.
+        output
+            Path the resulting :class:`DomainCapture` will write to.
+        ops
+            Optional openseespy module (or test stand-in). Defaults
+            to lazy-loading ``openseespy.opensees``.
+
+        Returns
+        -------
+        DomainCapture
+            Ready to be used as a context manager.
+        """
+        from ...opensees.emitter import h5_reader
+
+        with h5_reader.open(str(model_path)) as model:
+            meta = model.meta()
+            try:
+                ndm = int(meta["ndm"])
+                ndf = int(meta["ndf"])
+            except KeyError as exc:
+                raise RuntimeError(
+                    f"DomainCapture.from_h5: {model_path!s} has no "
+                    f"ndm/ndf attrs in /meta (got {sorted(meta)!r})."
+                ) from exc
+        resolved = spec._resolve_with_explicit_ndm_ndf(
+            fem, ndm=ndm, ndf=ndf,
+        )
+        return cls(resolved, output, fem, ops=ops)
 
     # ------------------------------------------------------------------
     # Stage lifecycle
@@ -707,9 +778,9 @@ class DomainCapture:
 # =====================================================================
 
 class _NodesCapturer:
-    """Buffers values for one ``ResolvedRecorderRecord`` (category=nodes)."""
+    """Buffers values for one ``ResolvedDomainCaptureRecord`` (category=nodes)."""
 
-    def __init__(self, record: "ResolvedRecorderRecord") -> None:
+    def __init__(self, record: "ResolvedDomainCaptureRecord") -> None:
         self._rec = record
         self._times: list[float] = []
         # Pre-resolve canonical → (ops_fn, dof_or_None) per component.
@@ -783,7 +854,7 @@ class _GaussClassGroup:
 class _GaussCapturer:
     """Buffers ``ops.eleResponse(eid, "stresses"/"strains")`` for one record.
 
-    Each capturer holds one ``ResolvedRecorderRecord`` of category
+    Each capturer holds one ``ResolvedDomainCaptureRecord`` of category
     ``"gauss"``. Element classes are discovered from the live ops
     domain on the first ``step()`` call (``ops.eleType(eid)``);
     elements whose ``(class, int_rule, token)`` tuple is not
@@ -791,7 +862,7 @@ class _GaussCapturer:
     with a tracked reason.
     """
 
-    def __init__(self, record: "ResolvedRecorderRecord") -> None:
+    def __init__(self, record: "ResolvedDomainCaptureRecord") -> None:
         self._rec = record
         self._times: list[float] = []
         tokens = _gauss_record_tokens(record)
@@ -988,7 +1059,7 @@ class _LineStationCapturer:
 
     _GP_X_SIGNATURE_DECIMALS = 10
 
-    def __init__(self, record: "ResolvedRecorderRecord") -> None:
+    def __init__(self, record: "ResolvedDomainCaptureRecord") -> None:
         self._rec = record
         self._times: list[float] = []
         # Built on first step; key is (class_name, gp_x_sig, section_codes).
@@ -1302,7 +1373,7 @@ class _NodalForcesCapturer:
     are tracked in ``skipped_elements``.
     """
 
-    def __init__(self, record: "ResolvedRecorderRecord") -> None:
+    def __init__(self, record: "ResolvedDomainCaptureRecord") -> None:
         self._rec = record
         self._times: list[float] = []
         # Derive (ops_keyword, catalog_token) once from the record's
@@ -1478,7 +1549,7 @@ class _FiberCapturer:
     classes are tracked in ``skipped_elements``.
     """
 
-    def __init__(self, record: "ResolvedRecorderRecord") -> None:
+    def __init__(self, record: "ResolvedDomainCaptureRecord") -> None:
         self._rec = record
         self._times: list[float] = []
         comps = set(record.components)
@@ -1722,7 +1793,7 @@ class _LayerCapturer:
 
     def __init__(
         self,
-        record: "ResolvedRecorderRecord",
+        record: "ResolvedDomainCaptureRecord",
         fem: "FEMData",
     ) -> None:
         meta = record.layer_section_metadata

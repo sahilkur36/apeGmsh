@@ -23,9 +23,9 @@ from apeGmsh.opensees._response_catalog import (
     flatten,
     lookup,
 )
-from apeGmsh.results.spec._resolved import (
-    ResolvedRecorderRecord,
-    ResolvedRecorderSpec,
+from apeGmsh.results.capture.spec import (
+    ResolvedDomainCaptureRecord,
+    ResolvedDomainCaptureSpec,
 )
 
 
@@ -88,10 +88,12 @@ class _MockFem:
         group.create_group("elements")
 
 
-def _make_spec(*records, snapshot_id):
-    return ResolvedRecorderSpec(
+def _make_spec(*records, snapshot_id, ndm=3, ndf=6):
+    return ResolvedDomainCaptureSpec(
         fem_snapshot_id=snapshot_id,
         records=tuple(records),
+        ndm=ndm,
+        ndf=ndf,
     )
 
 
@@ -104,7 +106,7 @@ class TestFourNodeTetCapture:
         layout = lookup("FourNodeTetrahedron", IntRule.Tet_GL_1, "stress")
         fem = _MockFem([1, 2, 3, 4])
         spec = _make_spec(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="gauss", name="solid_stress",
                 components=tuple(layout.component_layout),
                 dt=None, n_steps=None,
@@ -122,7 +124,7 @@ class TestFourNodeTetCapture:
         # We push values via per-step priming below.
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ndm=3, ndf=3, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops) as cap:
             cap.begin_stage("static", kind="static")
             for t in (0.0, 1.0):
                 offset = int(t) * 10
@@ -160,7 +162,7 @@ class TestFourNodeTetCapture:
     def test_natural_coords_match_catalog(self, tmp_path: Path) -> None:
         fem = _MockFem([1])
         spec = _make_spec(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="gauss", name="r",
                 components=("stress_xx",),
                 dt=None, n_steps=None,
@@ -195,7 +197,7 @@ class TestMixedClassCapture:
         """One record over a mixed-class PG: each class gets its own group."""
         fem = _MockFem([1, 2, 3, 4])
         spec = _make_spec(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="gauss", name="all_solid",
                 components=("stress_xx", "stress_yy", "stress_zz",
                             "stress_xy", "stress_yz", "stress_xz"),
@@ -244,7 +246,7 @@ class TestCatalogFiltering:
     def test_uncatalogued_class_is_skipped(self, tmp_path: Path) -> None:
         fem = _MockFem([1])
         spec = _make_spec(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="gauss", name="mixed",
                 components=("stress_xx",),
                 dt=None, n_steps=None,
@@ -282,7 +284,7 @@ class TestErrorPaths:
     def test_mixed_stress_and_strain_raises(self, tmp_path: Path) -> None:
         fem = _MockFem([1])
         spec = _make_spec(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="gauss", name="mixed",
                 components=("stress_xx", "strain_xx"),
                 dt=None, n_steps=None,
@@ -299,7 +301,7 @@ class TestErrorPaths:
     def test_response_size_mismatch_raises(self, tmp_path: Path) -> None:
         fem = _MockFem([1])
         spec = _make_spec(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="gauss", name="r",
                 components=("stress_xx",),
                 dt=None, n_steps=None,
