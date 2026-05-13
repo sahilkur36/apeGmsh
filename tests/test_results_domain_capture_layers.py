@@ -18,11 +18,11 @@ import pytest
 
 from apeGmsh.results import Results
 from apeGmsh.results.capture._domain import DomainCapture
-from apeGmsh.results.spec._resolved import (
+from apeGmsh.results.capture.spec import (
     LayerSectionDef,
     LayerSectionMetadata,
-    ResolvedRecorderRecord,
-    ResolvedRecorderSpec,
+    ResolvedDomainCaptureRecord,
+    ResolvedDomainCaptureSpec,
 )
 
 
@@ -97,8 +97,8 @@ class _MockFem:
         group.create_group("elements")
 
 
-def _spec_with(*records, snapshot_id) -> ResolvedRecorderSpec:
-    return ResolvedRecorderSpec(
+def _spec_with(*records, snapshot_id) -> ResolvedDomainCaptureSpec:
+    return ResolvedDomainCaptureSpec(
         fem_snapshot_id=snapshot_id,
         records=tuple(records),
     )
@@ -129,7 +129,7 @@ class TestSingleASDShellQ4:
         )
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="layers", name="slab_layers",
                 components=("fiber_stress",),
                 dt=None, n_steps=None,
@@ -157,7 +157,7 @@ class TestSingleASDShellQ4:
                     )
 
         path = tmp_path / "layers.h5"
-        with DomainCapture(spec, path, fem, ndm=3, ndf=6, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops) as cap:
             cap.begin_stage("static", kind="static")
             for step_idx in range(2):
                 # Re-arm tables so step values reflect step_idx.
@@ -238,7 +238,7 @@ class TestMultiComponentPerLayer:
         )
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="layers", name="multi",
                 components=("fiber_stress",),
                 dt=None, n_steps=None,
@@ -265,7 +265,7 @@ class TestMultiComponentPerLayer:
                 )
 
         path = tmp_path / "multi.h5"
-        with DomainCapture(spec, path, fem, ndm=3, ndf=6, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -314,7 +314,7 @@ class TestSkippedNoSection:
             element_to_section={200: 1},
         )
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="layers", name="r",
                 components=("fiber_stress",),
                 dt=None, n_steps=None,
@@ -338,7 +338,7 @@ class TestSkippedNoSection:
         ops.layer_response[(200, 4, 1, "stress")] = np.array([4.0])
 
         path = tmp_path / "skip.h5"
-        with DomainCapture(spec, path, fem, ndm=3, ndf=6, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops) as cap:
             cap.begin_stage("g", kind="static")
             cap.step(t=0.0)
             cap.end_stage()
@@ -368,7 +368,7 @@ class TestValidation:
             element_to_section={1: 1},
         )
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="layers", name="bad",
                 components=("displacement_x",),
                 dt=None, n_steps=None,

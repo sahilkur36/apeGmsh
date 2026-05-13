@@ -88,21 +88,21 @@ def test_single_tet_static_capture(tmp_path: Path) -> None:
 
     # ── Declare a recorder spec by hand and capture ─────────────────
     from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
     )
 
-    spec = ResolvedRecorderSpec(
+    spec = ResolvedDomainCaptureSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="nodes", name="apex",
                 components=("displacement_x", "displacement_y", "displacement_z"),
                 dt=None, n_steps=None,
                 node_ids=np.array([4]),
             ),
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="nodes", name="base_rxn",
                 components=("reaction_force_z",),
                 dt=None, n_steps=None,
@@ -112,7 +112,7 @@ def test_single_tet_static_capture(tmp_path: Path) -> None:
     )
 
     capture_path = tmp_path / "tet.h5"
-    with DomainCapture(spec, capture_path, fem, ndm=3, ndf=3) as cap:
+    with DomainCapture(spec, capture_path, fem) as cap:
         cap.begin_stage("static_load", kind="static")
         ok = ops.analyze(1)
         assert ok == 0, f"analyze() returned {ok}"
@@ -182,14 +182,14 @@ def test_single_tet_gauss_capture(tmp_path: Path) -> None:
     fem = _MinimalFem(node_ids=node_ids, coords=coords)
 
     from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
     )
-    spec = ResolvedRecorderSpec(
+    spec = ResolvedDomainCaptureSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="gauss", name="solid_stress",
                 components=(
                     "stress_xx", "stress_yy", "stress_zz",
@@ -202,7 +202,7 @@ def test_single_tet_gauss_capture(tmp_path: Path) -> None:
     )
 
     capture_path = tmp_path / "tet_gauss.h5"
-    with DomainCapture(spec, capture_path, fem, ndm=3, ndf=3) as cap:
+    with DomainCapture(spec, capture_path, fem) as cap:
         cap.begin_stage("static_load", kind="static")
         ok = ops.analyze(1)
         assert ok == 0

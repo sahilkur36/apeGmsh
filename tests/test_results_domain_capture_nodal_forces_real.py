@@ -85,15 +85,15 @@ def test_elastic_beam_3d_global_and_local(tmp_path: Path) -> None:
 
     from apeGmsh.results import Results
     from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
     )
 
-    spec = ResolvedRecorderSpec(
+    spec = ResolvedDomainCaptureSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="elements", name="beam_global",
                 components=(
                     "nodal_resisting_force_x",
@@ -103,7 +103,7 @@ def test_elastic_beam_3d_global_and_local(tmp_path: Path) -> None:
                 dt=None, n_steps=None,
                 element_ids=np.array([1], dtype=np.int64),
             ),
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="elements", name="beam_local",
                 components=(
                     "nodal_resisting_force_local_x",
@@ -117,7 +117,7 @@ def test_elastic_beam_3d_global_and_local(tmp_path: Path) -> None:
     )
 
     path = tmp_path / "cap.h5"
-    with DomainCapture(spec, path, fem, ndm=3, ndf=6, ops=ops) as cap:
+    with DomainCapture(spec, path, fem, ops=ops) as cap:
         cap.begin_stage("static", kind="static")
         ops.analyze(1)
         cap.step(t=ops.getTime())

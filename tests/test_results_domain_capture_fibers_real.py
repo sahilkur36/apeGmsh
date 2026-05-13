@@ -150,15 +150,15 @@ def test_force_beam_fiber_capture(tmp_path: Path) -> None:
     fem = _MinimalFem(node_ids=node_ids, coords=coords)
 
     from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
     )
 
-    spec = ResolvedRecorderSpec(
+    spec = ResolvedDomainCaptureSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="fibers", name="fbc_fibers",
                 components=("fiber_stress", "fiber_strain"),
                 dt=None, n_steps=None,
@@ -168,7 +168,7 @@ def test_force_beam_fiber_capture(tmp_path: Path) -> None:
     )
 
     cap_path = tmp_path / "fbc.h5"
-    with DomainCapture(spec, cap_path, fem, ndm=3, ndf=6) as cap:
+    with DomainCapture(spec, cap_path, fem) as cap:
         cap.begin_stage("push", kind="static")
         for _ in range(3):
             assert ops.analyze(1) == 0
@@ -235,15 +235,15 @@ def test_disp_beam_fiber_capture(tmp_path: Path) -> None:
     fem = _MinimalFem(node_ids=node_ids, coords=coords)
 
     from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
     )
 
-    spec = ResolvedRecorderSpec(
+    spec = ResolvedDomainCaptureSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="fibers", name="dbc_fibers",
                 components=("fiber_stress",),
                 dt=None, n_steps=None,
@@ -253,7 +253,7 @@ def test_disp_beam_fiber_capture(tmp_path: Path) -> None:
     )
 
     cap_path = tmp_path / "dbc.h5"
-    with DomainCapture(spec, cap_path, fem, ndm=3, ndf=6) as cap:
+    with DomainCapture(spec, cap_path, fem) as cap:
         cap.begin_stage("push", kind="static")
         for _ in range(2):
             assert ops.analyze(1) == 0
@@ -294,15 +294,15 @@ def test_geometry_matches_section_definition(tmp_path: Path) -> None:
     fem = _MinimalFem(node_ids=node_ids, coords=coords)
 
     from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
     )
 
-    spec = ResolvedRecorderSpec(
+    spec = ResolvedDomainCaptureSpec(
         fem_snapshot_id=fem.snapshot_id,
         records=(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="fibers", name="r",
                 components=("fiber_stress",),
                 dt=None, n_steps=None,
@@ -312,7 +312,7 @@ def test_geometry_matches_section_definition(tmp_path: Path) -> None:
     )
 
     cap_path = tmp_path / "geom.h5"
-    with DomainCapture(spec, cap_path, fem, ndm=3, ndf=6) as cap:
+    with DomainCapture(spec, cap_path, fem) as cap:
         cap.begin_stage("g", kind="static")
         ops.analyze(1)
         cap.step(t=ops.getTime())

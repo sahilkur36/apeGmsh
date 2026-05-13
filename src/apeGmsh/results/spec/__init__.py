@@ -1,66 +1,40 @@
-"""apeGmsh.results.spec — recorder declaration + resolved spec + emit helpers.
+"""apeGmsh.results.spec — resolved recorder spec + emit helpers.
 
 Phase 8.3b relocated the recorder cluster out of ``apeGmsh.solvers``
-into this sub-package:
+into this sub-package. Phase 9 then unified recorder declaration on
+the bridge:
+
+- :func:`apeGmsh.opensees.ops.recorder.declare` is the canonical
+  declaration entry point. It produces a typed
+  :class:`apeGmsh.opensees.recorder.RecorderDeclaration` that drives
+  the file-emit path through the bridge build pipeline.
+- :class:`apeGmsh.results.capture.DomainCaptureSpec` (Phase 9
+  commit 5) is the in-process capture counterpart, paired with
+  ``ops.domain_capture(...)`` / ``DomainCapture.from_h5(...)``.
+
+What lives in this sub-package post commit 5:
 
 - :mod:`apeGmsh.results.spec._resolved` — resolved containers
   (:class:`ResolvedRecorderSpec`, :class:`ResolvedRecorderRecord`)
-  consumed by the results-side capture / live / transcoder / writer
-  machinery.
+  consumed by the legacy file-emit / live-recorder / transcoder
+  pipeline. New code paths construct these directly when needed.
 - :mod:`apeGmsh.results.spec._emit` — emission helpers
   (:func:`emit_logical`, :func:`to_ops_args`, :func:`mpco_ops_args`,
   :func:`line_station_gpx_path`, …) that translate a resolved spec
   into OpenSees-native recorder commands.
 
-Phase 9 commit 4 relocates the :class:`Recorders` fluent helper to
-the bridge package (``apeGmsh.opensees.recorder``). This package
-continues to re-export ``Recorders`` for one release cycle via a
-lazy ``__getattr__`` (avoiding the cycle that an eager import would
-create with the bridge-side
-:mod:`apeGmsh.opensees._recorders_builder` module's transitional
-``_resolved`` dependency).
-
-Canonical user import after commit 4::
-
-    from apeGmsh.opensees.recorder import Recorders
-
-The ``apeGmsh.results.spec.Recorders`` and
-``apeGmsh.results.spec.declaration.Recorders`` paths continue to
-work; the latter fires a one-shot :class:`DeprecationWarning`.
+The Phase 9 commit 4 ``Recorders`` fluent helper relocation was
+reverted in commit 5: the transitional helper was deleted entirely
+because the canonical Phase 9 path
+(:func:`ops.recorder.declare`) plus the new
+:class:`DomainCaptureSpec` cover the same surface without an
+opensees → results layering inversion.
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
-
 from ._resolved import ResolvedRecorderRecord, ResolvedRecorderSpec
 
-if TYPE_CHECKING:
-    from ...opensees.recorder import Recorders  # noqa: F401
-
-# ``Recorders`` is exposed via ``__getattr__`` below (lazy re-export
-# from the bridge). Ruff's F822 check doesn't follow module-level
-# ``__getattr__``, so the entry is annotated explicitly.
-__all__ = [  # noqa: F822
-    "Recorders",
+__all__ = [
     "ResolvedRecorderRecord",
     "ResolvedRecorderSpec",
 ]
-
-
-def __getattr__(name: str) -> Any:
-    """Lazy re-export of ``Recorders`` from the bridge.
-
-    Avoids the eager import cycle between ``apeGmsh.opensees.recorder``
-    (which transitively imports
-    :mod:`apeGmsh.results.spec._resolved`) and this package's
-    ``__init__``. No DeprecationWarning is fired for
-    ``apeGmsh.results.spec.Recorders`` — the deprecation envelope is
-    only attached to the legacy module path
-    :mod:`apeGmsh.results.spec.declaration`.
-    """
-    if name == "Recorders":
-        from ...opensees.recorder import Recorders
-        return Recorders
-    raise AttributeError(
-        f"module {__name__!r} has no attribute {name!r}"
-    )

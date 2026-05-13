@@ -272,35 +272,6 @@ class ResolvedRecorderSpec:
                 if r.element_ids is not None:
                     sub.create_dataset("element_ids", data=r.element_ids)
 
-    # ---------- Domain capture (Phase 7) ----------
-
-    def capture(
-        self,
-        path,
-        fem,
-        *,
-        ndm: int = 3,
-        ndf: int = 6,
-        ops=None,
-    ):
-        """Open a :class:`DomainCapture` for in-process recording.
-
-        Returns a context manager that wraps the openseespy domain.
-        Use as::
-
-            with spec.capture(path="run.h5", fem=fem) as cap:
-                cap.begin_stage("gravity", kind="static")
-                for _ in range(n):
-                    ops.analyze(1, 1.0)
-                    cap.step(t=ops.getTime())
-                cap.end_stage()
-                cap.capture_modes()
-        """
-        from ..capture._domain import DomainCapture
-        return DomainCapture(
-            self, path, fem, ndm=ndm, ndf=ndf, ops=ops,
-        )
-
     # ---------- Live recorder emission ----------
 
     def emit_recorders(

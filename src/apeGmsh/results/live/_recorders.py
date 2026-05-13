@@ -25,10 +25,18 @@ Usage
 -----
 ::
 
-    from apeGmsh.opensees.recorder import Recorders
-    recorders = Recorders(opensees=ops)
-    recorders.nodes(components=["displacement"])
-    spec = recorders.resolve(fem)
+    from apeGmsh.results.spec import (
+        ResolvedRecorderRecord, ResolvedRecorderSpec,
+    )
+    spec = ResolvedRecorderSpec(
+        fem_snapshot_id=fem.snapshot_id,
+        records=(ResolvedRecorderRecord(
+            category="nodes", name="top",
+            components=("displacement_x", "displacement_y", "displacement_z"),
+            dt=None, n_steps=None,
+            node_ids=top_node_ids,
+        ),),
+    )
 
     with spec.emit_recorders("out/") as live:
         live.begin_stage("gravity", kind="static")

@@ -23,9 +23,9 @@ import pytest
 
 from apeGmsh.results import Results
 from apeGmsh.results.capture._domain import DomainCapture
-from apeGmsh.results.spec._resolved import (
-    ResolvedRecorderRecord,
-    ResolvedRecorderSpec,
+from apeGmsh.results.capture.spec import (
+    ResolvedDomainCaptureRecord,
+    ResolvedDomainCaptureSpec,
 )
 
 
@@ -100,8 +100,8 @@ class _MockFem:
         group.create_group("elements")
 
 
-def _spec_with(*records, snapshot_id) -> ResolvedRecorderSpec:
-    return ResolvedRecorderSpec(
+def _spec_with(*records, snapshot_id) -> ResolvedDomainCaptureSpec:
+    return ResolvedDomainCaptureSpec(
         fem_snapshot_id=snapshot_id,
         records=tuple(records),
     )
@@ -121,7 +121,7 @@ class TestSingleBeamSingleSection:
         """One ForceBeamColumn3d, 2 sections, 3 fibers each, 2 time steps."""
         fem = _MockFem([1, 2])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="fibers", name="rebar",
                 components=("fiber_stress", "fiber_strain"),
                 dt=None, n_steps=None,
@@ -150,7 +150,7 @@ class TestSingleBeamSingleSection:
         ]
 
         path = tmp_path / "cap.h5"
-        with DomainCapture(spec, path, fem, ndm=3, ndf=6, ops=ops) as cap:
+        with DomainCapture(spec, path, fem, ops=ops) as cap:
             cap.begin_stage("static", kind="static")
             for t_idx, t in enumerate((0.0, 1.0)):
                 # Stress = 100*step + 10*sec + fiberIdx; strain = stress/1000
@@ -219,7 +219,7 @@ class TestStressOnlyFilter:
     ) -> None:
         fem = _MockFem([1])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="fibers", name="stress_only",
                 components=("fiber_stress",),       # no strain
                 dt=None, n_steps=None,
@@ -260,7 +260,7 @@ class TestMultiClassFiberCapture:
     ) -> None:
         fem = _MockFem([1])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="fibers", name="all_beams",
                 components=("fiber_stress",),
                 dt=None, n_steps=None,
@@ -311,7 +311,7 @@ class TestSkippedUncatalogued:
     ) -> None:
         fem = _MockFem([1])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="fibers", name="r",
                 components=("fiber_stress",),
                 dt=None, n_steps=None,
@@ -353,7 +353,7 @@ class TestValidation:
     ) -> None:
         fem = _MockFem([1])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="fibers", name="bad",
                 components=("displacement_x",),       # not a fiber comp
                 dt=None, n_steps=None,
@@ -371,7 +371,7 @@ class TestValidation:
     ) -> None:
         fem = _MockFem([1])
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="fibers", name="r",
                 components=("fiber_stress",),
                 dt=None, n_steps=None,

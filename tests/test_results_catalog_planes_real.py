@@ -212,13 +212,13 @@ def test_real_2d_capture_for_class(
     )
 
     from apeGmsh.results.capture._domain import DomainCapture
-    from apeGmsh.results.spec._resolved import (
-        ResolvedRecorderRecord,
-        ResolvedRecorderSpec,
+    from apeGmsh.results.capture.spec import (
+        ResolvedDomainCaptureRecord,
+        ResolvedDomainCaptureSpec,
     )
-    spec = ResolvedRecorderSpec(
+    spec = ResolvedDomainCaptureSpec(
         fem_snapshot_id=fem.snapshot_id,
-        records=(ResolvedRecorderRecord(
+        records=(ResolvedDomainCaptureRecord(
             category="gauss", name="rec",
             components=tuple(layout.component_layout),
             dt=None, n_steps=None,
@@ -227,7 +227,7 @@ def test_real_2d_capture_for_class(
     )
 
     capture_path = tmp_path / "cap.h5"
-    with DomainCapture(spec, capture_path, fem, ndm=2, ndf=2) as cap:
+    with DomainCapture(spec, capture_path, fem) as cap:
         cap.begin_stage("static_load", kind="static")
         cap.step(t=ops.getTime())
         cap.end_stage()

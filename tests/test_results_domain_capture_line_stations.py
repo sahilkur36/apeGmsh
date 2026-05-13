@@ -27,9 +27,9 @@ from apeGmsh.results.capture._domain import (
 from apeGmsh.opensees._response_catalog import (
     ELE_TAG_ForceBeamColumn3d,
 )
-from apeGmsh.results.spec._resolved import (
-    ResolvedRecorderRecord,
-    ResolvedRecorderSpec,
+from apeGmsh.results.capture.spec import (
+    ResolvedDomainCaptureRecord,
+    ResolvedDomainCaptureSpec,
 )
 
 
@@ -109,8 +109,8 @@ class _MockFem:
         group.create_group("elements")
 
 
-def _spec_with(*records, snapshot_id) -> ResolvedRecorderSpec:
-    return ResolvedRecorderSpec(
+def _spec_with(*records, snapshot_id) -> ResolvedDomainCaptureSpec:
+    return ResolvedDomainCaptureSpec(
         fem_snapshot_id=snapshot_id,
         records=tuple(records),
     )
@@ -211,7 +211,7 @@ class TestForceBeamColumn3dCapture:
         ops = self._build_ops(eid, gp_x, L)
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="beam_forces",
                 components=(
                     "axial_force", "bending_moment_z",
@@ -272,7 +272,7 @@ class TestForceBeamColumn3dCapture:
         ops = self._build_ops(eid, gp_x, L)
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="r",
                 components=(
                     "axial_force", "bending_moment_z",
@@ -313,7 +313,7 @@ class TestForceBeamColumn3dCapture:
         ops = self._build_ops(eid, gp_x, L)
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="r",
                 components=("axial_force",),
                 dt=None, n_steps=None,
@@ -364,7 +364,7 @@ class TestMultiBucketCapture:
                 )
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="r",
                 components=("axial_force",),
                 dt=None, n_steps=None,
@@ -405,7 +405,7 @@ class TestSkipBehaviours:
         ops.no_integration_points.add(5)
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="r",
                 components=("axial_force",),
                 dt=None, n_steps=None,
@@ -438,7 +438,7 @@ class TestSkipBehaviours:
         ops.node_coords[2] = np.array([3.0, 0.0, 0.0])
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="r",
                 components=("axial_force",),
                 dt=None, n_steps=None,
@@ -486,13 +486,13 @@ class TestMixedCategories:
         ops.ele_response[(10, "stresses")] = np.arange(6, dtype=np.float64)
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="beam",
                 components=("axial_force",),
                 dt=None, n_steps=None,
                 element_ids=np.array([7]),
             ),
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="gauss", name="solid",
                 components=("stress_xx",),
                 dt=None, n_steps=None,
@@ -553,7 +553,7 @@ class TestElasticBeamSynthesis:
         ops = self._build_ops_3d(eid, local_force)
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="r",
                 components=(
                     "axial_force", "shear_y", "shear_z",
@@ -611,7 +611,7 @@ class TestElasticBeamSynthesis:
         ops.ele_response[(eid, "localForce")] = local_force
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="r",
                 components=("axial_force", "shear_y", "bending_moment_z"),
                 dt=None, n_steps=None,
@@ -651,7 +651,7 @@ class TestElasticBeamSynthesis:
         ops.no_integration_points.add(5)
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="r",
                 components=("axial_force",),
                 dt=None, n_steps=None,
@@ -686,7 +686,7 @@ class TestElasticBeamSynthesis:
             )
 
         spec = _spec_with(
-            ResolvedRecorderRecord(
+            ResolvedDomainCaptureRecord(
                 category="line_stations", name="r",
                 components=("axial_force",),
                 dt=None, n_steps=None,
