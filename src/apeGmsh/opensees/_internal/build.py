@@ -701,18 +701,18 @@ def _emit_recorder_declaration(
     end-to-end. Other categories raise :class:`NotImplementedError`
     pointing at the follow-up commits.
     """
-    from .._recorder_translate import group_node_components_by_ops_token
+    from .._recorder_translate import (
+        element_record_response_tokens,
+        group_node_components_by_ops_token,
+    )
 
     for record in decl.records:
         if record.category == "nodes":
             _emit_nodes_record(record, decl, emitter, fem,
                                group_node_components_by_ops_token)
         elif record.category in ("elements", "line_stations", "gauss"):
-            raise NotImplementedError(
-                f"RecorderDeclaration record(category={record.category!r}) "
-                "emit-time translation lands in Phase 9 commit 3b. For "
-                "now, declare these via the typed primitives "
-                "(ops.recorder.Element / MPCO) or wait for 3b."
+            _emit_element_level_record(
+                record, decl, emitter, fem, element_record_response_tokens,
             )
         elif record.category in ("fibers", "layers", "modal"):
             raise NotImplementedError(
@@ -792,7 +792,7 @@ def _resolve_node_targets(
     a flat tuple of node tags.
 
     Phase 9 commit 3a supports ``pg=`` and ``ids=``; ``label=`` and
-    ``selection=`` land in commit 3b.
+    ``selection=`` land in commit 3c.
     """
     if record.ids is not None:
         return tuple(int(i) for i in record.ids)
@@ -808,7 +808,90 @@ def _resolve_node_targets(
     if record.label or record.selection:
         raise NotImplementedError(
             "RecorderRecord label= / selection= selectors land in Phase 9 "
-            "commit 3b."
+            "commit 3c."
         )
-    # No selectors → empty (caller handles silent skip).
+    return ()
+
+
+# ---------------------------------------------------------------------------
+# Element-level emit (Phase 9 commit 3b)
+# ---------------------------------------------------------------------------
+
+
+def _emit_element_level_record(
+    record: RecorderRecord,
+    decl: RecorderDeclaration,
+    emitter: "Emitter",
+    fem: "FEMData",
+    response_tokens: object,  # callable; passed in to keep imports local
+) -> None:
+    """Emit one element-level :class:`RecorderRecord` (elements / gauss /
+    line_stations).
+
+    Resolves selectors to element IDs, picks the OpenSees response
+    phrase based on the record's components (via the catalog-driven
+    ``element_record_response_tokens`` helper), and issues one
+    ``emitter.recorder("Element", ...)`` call.
+
+    Per Phase 9 commit 3b: ``label=``/``selection=``/``raw=``
+    selectors and the paired ``integrationPoints`` recorder for
+    ``line_stations`` land in commit 3c.
+    """
+    if record.raw:
+        raise NotImplementedError(
+            "RecorderRecord raw= escape hatch fan-out lands in Phase 9 "
+            "commit 3c."
+        )
+
+    elem_ids = _resolve_element_targets(record, fem)
+    if not elem_ids:
+        return
+
+    tokens = response_tokens(  # type: ignore[operator]
+        record.category, record.components, record_name=record.name,
+    )
+    if tokens is None:
+        # No components routed through this topology — nothing to emit.
+        return
+
+    record_name = record.name or "default"
+    file_root = "."  # Phase 9 commit 3c will surface this kwarg.
+
+    file_path = (
+        f"{file_root}/{decl.name}__{record_name}__{record.category}.out"
+    )
+    args: list[int | float | str] = ["-file", file_path]
+    if record.dt is not None:
+        args += ["-dT", record.dt]
+    args += ["-time"]
+    args += ["-ele", *elem_ids]
+    args += list(tokens)
+    emitter.recorder("Element", *args)
+
+
+def _resolve_element_targets(
+    record: RecorderRecord, fem: "FEMData",
+) -> tuple[int, ...]:
+    """Resolve an element-level :class:`RecorderRecord`'s selectors to
+    a flat tuple of element tags.
+
+    Phase 9 commit 3b supports ``pg=`` and ``ids=``; ``label=`` and
+    ``selection=`` land in commit 3c.
+    """
+    if record.ids is not None:
+        return tuple(int(i) for i in record.ids)
+    if record.pg:
+        out: list[int] = []
+        seen: set[int] = set()
+        for pg_name in record.pg:
+            for eid, _conn in expand_pg_to_elements(fem, pg_name):
+                if eid not in seen:
+                    seen.add(eid)
+                    out.append(eid)
+        return tuple(out)
+    if record.label or record.selection:
+        raise NotImplementedError(
+            "RecorderRecord label= / selection= selectors land in Phase 9 "
+            "commit 3c."
+        )
     return ()

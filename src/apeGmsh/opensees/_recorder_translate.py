@@ -152,3 +152,84 @@ def group_node_components_by_ops_token(
     return {
         token: tuple(dict.fromkeys(dofs)) for token, dofs in grouped.items()
     }
+
+
+# =====================================================================
+# Element-level keyword resolution (Phase 9 commit 3b)
+# =====================================================================
+#
+# Element-level recorders (``recorder Element ...``) take a *single*
+# response token (or multi-token phrase like ``section force``) that
+# applies to the whole record. The token depends on which component
+# family the record carries:
+#
+#   - ``"stress_*"`` / shell membrane/curvature etc. → ``"stresses"``
+#   - ``"strain_*"`` / shell strain etc.            → ``"strains"``
+#   - ``"axial_force"`` etc. (line-stations)        → ``"section"`` + ``"force"``
+#   - ``"nodal_resisting_force_*"`` (global frame)  → ``"globalForce"``
+#   - ``"nodal_resisting_force_local_*"`` (local)   → ``"localForce"``
+#
+# The work-conjugate check rejects records that mix families
+# (e.g. ``stress_xx`` + ``strain_yy`` in one ``gauss`` record) — those
+# can't share a single ``ops.eleResponse`` call.
+
+
+_ELEMENT_LEVEL_CATEGORIES: frozenset[str] = frozenset({
+    "elements", "line_stations", "gauss",
+})
+
+
+def element_record_response_tokens(
+    category: str,
+    components: tuple[str, ...],
+    *,
+    record_name: str | None = None,
+) -> Optional[tuple[str, ...]]:
+    """Resolve the ``recorder Element`` response phrase for a record.
+
+    Returns the response tokens as a tuple — usually one token
+    (``("stresses",)``) but occasionally two (``("section", "force")``)
+    that OpenSees parses as a multi-word response phrase. Returns
+    ``None`` when no components route through the category's
+    topology (caller skips silently).
+
+    Raises ``ValueError`` if components mix work-conjugate families
+    (stress + strain in one gauss record, global + local frame in one
+    elements record).
+    """
+    if category not in _ELEMENT_LEVEL_CATEGORIES:
+        raise ValueError(
+            f"_recorder_translate.element_record_response_tokens: "
+            f"category {category!r} is not element-level."
+        )
+    topology = {
+        "gauss":         None,
+        "line_stations": "line_stations",
+        "elements":      "nodal_forces",
+    }[category]
+
+    # Lazy import to avoid a top-level cycle with the response catalog
+    # module.
+    from ._response_catalog import gauss_keyword_for_canonical
+
+    keywords: set[str] = set()
+    for comp in components:
+        kw = gauss_keyword_for_canonical(comp, topology=topology)
+        if kw is not None:
+            keywords.add(kw)
+    if not keywords:
+        return None
+    if len(keywords) > 1:
+        rec_label = f"record {record_name!r}" if record_name else "record"
+        raise ValueError(
+            f"_recorder_translate.element_record_response_tokens: "
+            f"{rec_label} (category={category!r}) mixes work-conjugate "
+            f"families ({sorted(keywords)}); split into separate records "
+            "(one per ops keyword)."
+        )
+    keyword = next(iter(keywords))
+    # The line_stations keyword "section.force" is OpenSees-emitted as
+    # two tokens ("section" "force"); same for ``section.deformation``.
+    if "." in keyword:
+        return tuple(keyword.split("."))
+    return (keyword,)

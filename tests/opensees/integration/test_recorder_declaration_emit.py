@@ -246,32 +246,168 @@ class TestDeclareEmit:
 # ---------------------------------------------------------------------------
 
 
-class TestDeclareDeferredCategories:
-    def test_element_record_emit_raises(self) -> None:
-        # Constructing the record bypasses the namespace
-        # (which only exposes nodes= in 3a). This proves the
-        # build.py dispatch handles unsupported categories
-        # gracefully with a useful error.
+class TestDeclareElementsCategory:
+    def test_elements_pg_emit(self) -> None:
+        """``elements`` category emits one ``recorder Element ...
+        globalForce`` line."""
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
         ops.model(ndm=3, ndf=6)
-
-        decl = RecorderDeclaration(
-            records=(
-                RecorderRecord(
-                    category="elements",
-                    components=("nodal_resisting_force_x",),
-                    ids=(1,),
-                ),
-            ),
+        ops.recorder.declare(
+            elements=("nodal_resisting_force_x",),
+            pg="Cols",
+            dt=0.01,
         )
-        ops.register(decl)
 
         bm = ops.build()
         rec = RecordingEmitter()
-        with pytest.raises(NotImplementedError, match="commit 3b"):
+        bm.emit(rec)
+
+        recorder_calls = [c for c in rec.calls if c[0] == "recorder"]
+        assert len(recorder_calls) == 1
+        _, args, _ = recorder_calls[0]
+        assert args[0] == "Element"
+        assert "-ele" in args
+        ele_idx = args.index("-ele")
+        # PG "Cols" = element 1
+        assert args[ele_idx + 1] == 1
+        # globalForce token at the end (matches the canonical's
+        # routing in _response_catalog).
+        assert args[-1] == "globalForce"
+
+    def test_elements_local_frame_token(self) -> None:
+        """``nodal_resisting_force_local_x`` routes through
+        ``localForce`` instead of ``globalForce``."""
+        fem = make_two_node_beam()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        ops.recorder.declare(
+            elements=("nodal_resisting_force_local_x",),
+            pg="Cols",
+        )
+
+        bm = ops.build()
+        rec = RecordingEmitter()
+        bm.emit(rec)
+
+        recorder_calls = [c for c in rec.calls if c[0] == "recorder"]
+        assert len(recorder_calls) == 1
+        _, args, _ = recorder_calls[0]
+        assert args[-1] == "localForce"
+
+
+class TestDeclareGaussCategory:
+    def test_gauss_stress_emit(self) -> None:
+        fem = make_two_node_beam()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        ops.recorder.declare(
+            gauss=("stress_xx", "stress_yy"),
+            pg="Cols",
+        )
+
+        bm = ops.build()
+        rec = RecordingEmitter()
+        bm.emit(rec)
+
+        recorder_calls = [c for c in rec.calls if c[0] == "recorder"]
+        assert len(recorder_calls) == 1
+        _, args, _ = recorder_calls[0]
+        assert args[0] == "Element"
+        assert args[-1] == "stresses"
+
+    def test_gauss_strain_emit(self) -> None:
+        fem = make_two_node_beam()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        ops.recorder.declare(
+            gauss=("strain_xx",),
+            pg="Cols",
+        )
+
+        bm = ops.build()
+        rec = RecordingEmitter()
+        bm.emit(rec)
+
+        recorder_calls = [c for c in rec.calls if c[0] == "recorder"]
+        assert len(recorder_calls) == 1
+        _, args, _ = recorder_calls[0]
+        assert args[-1] == "strains"
+
+    def test_gauss_work_conjugate_mix_raises(self) -> None:
+        """``stress_*`` + ``strain_*`` in one gauss record can't share
+        a single ops.eleResponse call — must split."""
+        fem = make_two_node_beam()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        ops.recorder.declare(
+            gauss=("stress_xx", "strain_yy"),
+            pg="Cols",
+            record_name="mixed",
+        )
+
+        bm = ops.build()
+        rec = RecordingEmitter()
+        with pytest.raises(ValueError, match="work-conjugate families"):
             bm.emit(rec)
 
+
+class TestDeclareLineStationsCategory:
+    def test_line_stations_emit(self) -> None:
+        """``line_stations`` category emits ``recorder Element ...
+        section force`` (multi-token response phrase)."""
+        fem = make_two_node_beam()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        ops.recorder.declare(
+            line_stations=("axial_force", "bending_moment_y"),
+            pg="Cols",
+        )
+
+        bm = ops.build()
+        rec = RecordingEmitter()
+        bm.emit(rec)
+
+        recorder_calls = [c for c in rec.calls if c[0] == "recorder"]
+        assert len(recorder_calls) == 1
+        _, args, _ = recorder_calls[0]
+        assert args[0] == "Element"
+        # section force is a two-token response phrase
+        assert args[-2:] == ("section", "force")
+
+
+class TestDeclareCrossCategory:
+    def test_separate_declarations_per_category(self) -> None:
+        fem = make_two_node_beam()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+        # ids=(1,) for nodes is node tag 1; for elements it's
+        # element tag 1. Use the per-category pg= would be cleaner
+        # in practice, but for testing equivalence ids= matches.
+        # (Cross-category records sharing one selector is a
+        # commit-3c polish; for now we test one category at a time
+        # in the multi-record case.)
+        ops.recorder.declare(
+            nodes=("displacement_x",),
+            ids=(1,),
+        )
+        ops.recorder.declare(
+            elements=("nodal_resisting_force_x",),
+            ids=(1,),
+            name="elem_decl",
+        )
+
+        bm = ops.build()
+        rec = RecordingEmitter()
+        bm.emit(rec)
+
+        recorder_calls = [c for c in rec.calls if c[0] == "recorder"]
+        # One Node call + one Element call
+        kinds = sorted(args[0] for _, args, _ in recorder_calls)
+        assert kinds == ["Element", "Node"]
+
+
+class TestDeclareDeferredCategories:
     def test_fiber_record_emit_raises_with_domain_capture_hint(self) -> None:
         fem = make_two_node_beam()
         ops = apeSees(cast("object", fem))
@@ -284,6 +420,44 @@ class TestDeclareDeferredCategories:
                     components=("fiber_stress",),
                     ids=(1,),
                 ),
+            ),
+        )
+        ops.register(decl)
+
+        bm = ops.build()
+        rec = RecordingEmitter()
+        with pytest.raises(NotImplementedError, match="DomainCapture"):
+            bm.emit(rec)
+
+    def test_layer_record_emit_raises_with_domain_capture_hint(self) -> None:
+        fem = make_two_node_beam()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+
+        decl = RecorderDeclaration(
+            records=(
+                RecorderRecord(
+                    category="layers",
+                    components=("fiber_stress",),
+                    ids=(1,),
+                ),
+            ),
+        )
+        ops.register(decl)
+
+        bm = ops.build()
+        rec = RecordingEmitter()
+        with pytest.raises(NotImplementedError, match="DomainCapture"):
+            bm.emit(rec)
+
+    def test_modal_record_emit_raises_with_domain_capture_hint(self) -> None:
+        fem = make_two_node_beam()
+        ops = apeSees(cast("object", fem))
+        ops.model(ndm=3, ndf=6)
+
+        decl = RecorderDeclaration(
+            records=(
+                RecorderRecord(category="modal", n_modes=5),
             ),
         )
         ops.register(decl)
