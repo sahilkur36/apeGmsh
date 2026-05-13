@@ -369,18 +369,18 @@ are attribute-only, like materials.
 ```
 /opensees/transforms/Cols/
 ├── attrs: type="PDelta", tag=5,
-│         csys_kind="Cylindrical",        ← optional, present if csys was used
-│         csys_origin=[0.0, 0.0, 0.0],
-│         csys_axis=[0.0, 0.0, 1.0],
+│         orientation_kind="Cylindrical",   ← optional, present if orientation was used
+│         orientation_origin=[0.0, 0.0, 0.0],
+│         orientation_axis=[0.0, 0.0, 1.0],
 │         roll_deg=0.0
 ├── per_element_vecxz       float dataset (n_elements, 3)
 │                            row i corresponds to /elements/Cols/ids[i]
 └── per_element_emitted_tag int dataset (n_elements,)
                              which OpenSees geomTransf tag was assigned
-                             (multiple if csys fan-out)
+                             (multiple if orientation fan-out)
 ```
 
-When the user supplied an explicit `vecxz=` (no csys), `per_element_vecxz`
+When the user supplied an explicit `vecxz=` (no orientation), `per_element_vecxz`
 is still present — every row holds the same vector — so the viewer
 can read uniformly.
 
@@ -648,8 +648,8 @@ column.h5
     │   └── /fibers   → 8 rows of (y, z, area,
     │                              material_ref="/opensees/materials/uniaxial/Steel")
     ├── /transforms/Col/
-    │   ├── attrs: type="PDelta", tag=1, csys_kind="Cartesian",
-    │   │          csys_origin=[0,0,0], csys_axis=[0,0,1], roll_deg=0.0
+    │   ├── attrs: type="PDelta", tag=1, orientation_kind="Cartesian",
+    │   │          orientation_origin=[0,0,0], orientation_axis=[0,0,1], roll_deg=0.0
     │   ├── per_element_vecxz       (1, 3) = [[1, 0, 0]]
     │   └── per_element_emitted_tag (1,)   = [1]
     ├── /element_meta/forceBeamColumn/        ← bridge keying (OpenSees type)

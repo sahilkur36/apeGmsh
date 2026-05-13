@@ -5,8 +5,8 @@ Every concrete ``geomTransf`` primitive must satisfy:
   * inherits from :class:`GeomTransf`
   * is a frozen, kw-only, slotted dataclass (per P12 / api-design.md)
   * defines ``_emit`` and ``dependencies``
-  * has the standard ``csys`` / ``vecxz`` / ``roll_deg`` parameter
-    surface (Phase 1D contract from ADR 0010)
+  * has the standard ``orientation`` / ``vecxz`` / ``roll_deg``
+    parameter surface (Phase 1D contract from ADR 0010)
   * ``__repr__`` includes the class name
 
 When Phase 1+ slices add new transforms they append to
@@ -65,14 +65,14 @@ class TestGeomTransfContract:
     def test_has_dependencies(self, cls: type[GeomTransf]) -> None:
         assert hasattr(cls, "dependencies") and callable(cls.dependencies)
 
-    def test_field_surface_csys_vecxz_roll_deg(
+    def test_field_surface_orientation_vecxz_roll_deg(
         self, cls: type[GeomTransf]
     ) -> None:
         names = {f.name for f in fields(cls)}
         # Phase 1D contract: every transform exposes the same three
         # construction parameters. New transforms (e.g. PDeltaJoint
         # offsets) may add fields but cannot drop these.
-        assert {"csys", "vecxz", "roll_deg"} <= names
+        assert {"orientation", "vecxz", "roll_deg"} <= names
 
     def test_dependencies_returns_empty_tuple_for_leaves(
         self, cls: type[GeomTransf]
@@ -87,8 +87,8 @@ class TestGeomTransfContract:
         instance = cast(Any, cls)(vecxz=(0.0, 0.0, 1.0))
         assert cls.__name__ in repr(instance)
 
-    def test_construction_with_both_csys_and_vecxz_raises(
+    def test_construction_with_both_orientation_and_vecxz_raises(
         self, cls: type[GeomTransf]
     ) -> None:
         with pytest.raises(ValueError, match="supply either"):
-            cast(Any, cls)(csys=Cartesian(), vecxz=(0.0, 0.0, 1.0))
+            cast(Any, cls)(orientation=Cartesian(), vecxz=(0.0, 0.0, 1.0))

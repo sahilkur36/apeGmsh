@@ -26,7 +26,7 @@ from apeGmsh.opensees.emitter.h5 import H5Emitter
 __all__ = [
     "FIXTURE_BUILDERS",
     "FIXTURE_EXPECTATIONS",
-    "build_arch_csys",
+    "build_arch_orientation",
     "build_dome_spherical",
     "build_frame_3d",
     "build_incomplete",
@@ -109,12 +109,13 @@ def build_frame_3d() -> H5Emitter:
     return e
 
 
-def _build_csys_arch_like(model_name: str, n_ribs: int) -> H5Emitter:
-    """Shared backbone for csys-bearing fixtures.
+def _build_orientation_arch_like(model_name: str, n_ribs: int) -> H5Emitter:
+    """Shared backbone for orientation-bearing fixtures.
 
     Generates ``n_ribs`` ribs, each with a slightly different vecxz —
     emitting one ``geomTransf`` per distinct vecxz (post-fan-out shape
-    the bridge would produce for cylindrical / spherical / arch CSs).
+    the bridge would produce for cylindrical / spherical / arch
+    orientations).
     """
     import math
     e = H5Emitter(model_name=model_name)
@@ -123,7 +124,7 @@ def _build_csys_arch_like(model_name: str, n_ribs: int) -> H5Emitter:
     e.section("Elastic", 1, 200.0e9, 0.01, 1.0e-4, 1.0e-4, 80.0e9, 5.0e-5)
     e.beamIntegration("Lobatto", 1, 1, 3)
     # One geomTransf line per rib — distinct vecxz, sharing the same
-    # type token. This mirrors the bridge's csys-driven fan-out.
+    # type token. This mirrors the bridge's orientation-driven fan-out.
     for i in range(n_ribs):
         theta = 2.0 * math.pi * i / n_ribs
         vx = math.cos(theta)
@@ -142,14 +143,14 @@ def _build_csys_arch_like(model_name: str, n_ribs: int) -> H5Emitter:
     return e
 
 
-def build_arch_csys() -> H5Emitter:
-    """Arch with cylindrical CS — six distinct vecxz."""
-    return _build_csys_arch_like("arch_cylindrical", n_ribs=6)
+def build_arch_orientation() -> H5Emitter:
+    """Arch with cylindrical orientation — six distinct vecxz."""
+    return _build_orientation_arch_like("arch_cylindrical", n_ribs=6)
 
 
 def build_dome_spherical() -> H5Emitter:
-    """Dome with spherical CS — eight distinct vecxz."""
-    return _build_csys_arch_like("dome_spherical", n_ribs=8)
+    """Dome with spherical orientation — eight distinct vecxz."""
+    return _build_orientation_arch_like("dome_spherical", n_ribs=8)
 
 
 def build_tank_cylindrical() -> H5Emitter:
@@ -202,7 +203,7 @@ def build_wrong_major() -> H5Emitter:
 FIXTURE_BUILDERS: dict[str, Callable[[], H5Emitter]] = {
     "minimal": build_minimal,
     "frame_3d": build_frame_3d,
-    "arch_csys": build_arch_csys,
+    "arch_orientation": build_arch_orientation,
     "dome_spherical": build_dome_spherical,
     "tank_cylindrical": build_tank_cylindrical,
     "incomplete": build_incomplete,
@@ -253,7 +254,7 @@ FIXTURE_EXPECTATIONS: dict[str, dict[str, Any]] = {
         "pattern_count": 2,
         "recorder_count": 1,
     },
-    "arch_csys": {
+    "arch_orientation": {
         "should_validate": True,
         "expected_groups": [
             "meta", "opensees/transforms",

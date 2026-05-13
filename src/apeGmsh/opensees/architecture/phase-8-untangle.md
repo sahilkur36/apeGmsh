@@ -172,7 +172,7 @@ These are bridge-side concerns:
 
 | Solvers file | New home | Notes |
 |---|---|---|
-| `_opensees_csys.py` | `opensees/_csys.py` | `Cartesian` / `Cylindrical` / `Spherical` / `resolve_vecxz`.  Landed in PR #121 (Phase 8.2). |
+| `_opensees_csys.py` | `opensees/_orientation.py` | `Cartesian` / `Cylindrical` / `Spherical` / `resolve_vecxz`.  Landed in PR #121 (Phase 8.2) as `opensees/_csys.py`; later renamed to `_orientation.py` (and the kwarg from `csys=` to `orientation=`) — see ADR 0010 amendment. |
 | `_opensees_build.py` | DELETED | Phase 4 rebuild superseded it.  Removed in PR γ (#130). |
 | `_opensees_constraints.py` | DELETED | Bridge fan-out lives in `opensees/_internal/build.py` now.  Removed in PR γ (#130). |
 | `_opensees_elements.py` | DELETED | Phase 2 typed elements replaced this.  Removed in PR γ (#130). |

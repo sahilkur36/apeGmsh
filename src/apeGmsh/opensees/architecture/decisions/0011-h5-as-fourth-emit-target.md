@@ -11,7 +11,7 @@ the apeGmsh stack:
 |---|---|---|---|
 | Material constitutive parameters | ❌ | ❌ | ✅ |
 | Section fiber/patch geometry | ❌ | ❌ | ✅ |
-| GeomTransf vecxz (per element when csys is used) | ❌ | ❌ | ✅ |
+| GeomTransf vecxz (per element when orientation is used) | ❌ | ❌ | ✅ |
 | TimeSeries values | ❌ | ❌ | ✅ |
 | Pattern membership (load → series) | ❌ | ❌ | ✅ |
 | Element → section / material / transf refs | ❌ | ❌ | ✅ |

@@ -58,12 +58,12 @@ def _build_simple_cantilever() -> apeSees:
 
 
 def _build_two_column_frame() -> apeSees:
-    """Two parallel columns sharing a base PG, with pattern & csys."""
+    """Two parallel columns sharing a base PG, with pattern & orientation."""
     from apeGmsh.opensees.transform import Cartesian
     fem = make_two_column_frame()
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=3, ndf=6)
-    transf = ops.geomTransf.Linear(csys=Cartesian())
+    transf = ops.geomTransf.Linear(orientation=Cartesian())
     ops.element.elasticBeamColumn(
         pg="Cols",
         transf=transf,
@@ -234,7 +234,7 @@ def test_parity_simple_cantilever() -> None:
 
 
 def test_parity_two_column_frame() -> None:
-    """Same parity invariant on the two-column frame with csys and PG load."""
+    """Same parity invariant on the two-column frame with orientation and PG load."""
     rec_cmds, tcl_cmds, py_cmds = _drive_through_all(_build_two_column_frame())
 
     assert len(rec_cmds) == len(tcl_cmds) == len(py_cmds), (

@@ -65,8 +65,9 @@ apeGmsh/opensees/
 │     h5_reader.py          reference reader for model.h5
 │     recording.py          RecordingEmitter (test fixture)
 │
-├── _csys.py                Cartesian, Cylindrical, Spherical (re-exported through
-│                           __init__.py; relocated from solvers in Phase 8.2)
+├── _orientation.py         Cartesian, Cylindrical, Spherical (re-exported through
+│                           __init__.py; relocated from solvers in Phase 8.2,
+│                           renamed from _csys.py)
 ├── _response_catalog.py    OpenSees element → response-class map; also consumed
 │                           by apeGmsh.results (one-way dep, Phase 8.3a)
 ├── _element_capabilities.py  per-element capability metadata (Phase 8.3b)
@@ -162,7 +163,7 @@ with two deliberate departures:
   - `apeSees` and its method namespaces
   - typed primitive classes (constructable standalone, see P11)
   - `recipes/`
-  - `transform` (csys re-exports)
+  - `transform` (orientation re-exports)
 
 ## Where to add a new thing
 

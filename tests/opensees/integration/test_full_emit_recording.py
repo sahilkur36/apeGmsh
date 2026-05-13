@@ -19,7 +19,7 @@ from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.section.fiber import FiberPoint, RectPatch
 
 from tests.opensees.fixtures.fem_stub import (
-    make_arch_with_csys_fan_out,
+    make_arch_with_orientation_fan_out,
     make_two_column_frame,
     make_two_node_beam,
 )
@@ -300,19 +300,20 @@ def test_recorder_pg_nodes_fans_to_explicit_list() -> None:
     assert 4 in args
 
 
-def test_csys_transform_fans_one_geomtransf_per_distinct_vecxz() -> None:
-    """ADR 0010: a csys-bearing GeomTransf emits one ``geomTransf`` line
-    per distinct per-element vecxz across the elements that reference
-    it. Curved members (arch) produce multiple geomTransf lines under
-    a Spherical CS (the radial direction varies along the arch)."""
+def test_orientation_transform_fans_one_geomtransf_per_distinct_vecxz() -> None:
+    """ADR 0010: an orientation-bearing GeomTransf emits one
+    ``geomTransf`` line per distinct per-element vecxz across the
+    elements that reference it. Curved members (arch) produce multiple
+    geomTransf lines under a Spherical orientation (the radial
+    direction varies along the arch)."""
     from apeGmsh.opensees.transform import Spherical
 
-    fem = make_arch_with_csys_fan_out()
+    fem = make_arch_with_orientation_fan_out()
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=3, ndf=6)
 
-    csys = Spherical(origin=(0.0, 0.0, 0.0))
-    transf = ops.geomTransf.Linear(csys=csys)
+    orientation = Spherical(origin=(0.0, 0.0, 0.0))
+    transf = ops.geomTransf.Linear(orientation=orientation)
     ops.element.elasticBeamColumn(
         pg="Arch",
         transf=transf,
@@ -325,26 +326,89 @@ def test_csys_transform_fans_one_geomtransf_per_distinct_vecxz() -> None:
 
     geomtransf_calls = [c for c in rec.calls if c[0] == "geomTransf"]
     # Three arch segments at distinct angles -> three distinct vecxz
-    # under spherical CS (e_r varies with position) -> three geomTransf
-    # lines, one per distinct vecxz.
+    # under spherical orientation (e_r varies with position) -> three
+    # geomTransf lines, one per distinct vecxz.
     assert len(geomtransf_calls) == 3
     distinct_vecxzs = {tuple(c[1][2:5]) for c in geomtransf_calls}
     assert len(distinct_vecxzs) == 3
 
 
-def test_csys_transform_collinear_elements_share_one_geomtransf() -> None:
-    """When multiple elements share the same vecxz under a CS, only
-    one ``geomTransf`` line is emitted and reused across them."""
+def test_alongbeam_orientation_is_bound_by_bridge_fan_out() -> None:
+    """AlongBeam declares a bind_fem hook; the bridge calls it before
+    per-element vecxz fan-out so triad_at(p) can query the cached
+    reference-curve tangents."""
+    from apeGmsh.opensees import AlongBeam
+    from tests.opensees.fixtures.fem_stub import (
+        FEMStub, _ElementGroupView, _ElementsStub, _NodesStub,
+    )
+    # FEM: two collinear PGs. "MainBar" is the reference curve along
+    # +X; "Stirrups" is a single short stirrup perpendicular to it.
+    nodes = _NodesStub(
+        ids=[1, 2, 3, 4, 5, 6],
+        coords=[
+            (0.0, 0.0, 0.0),   # MainBar node 1
+            (1.0, 0.0, 0.0),   # MainBar node 2 (also stirrup midpoint sits near here)
+            (2.0, 0.0, 0.0),   # MainBar node 3
+            (3.0, 0.0, 0.0),   # MainBar node 4
+            (1.5, -0.5, 0.0),  # Stirrup node 1
+            (1.5,  0.5, 0.0),  # Stirrup node 2
+        ],
+        node_pgs={"Base": [1]},
+    )
+    elements = _ElementsStub(
+        elem_pgs={
+            "MainBar": _ElementGroupView(
+                ids=(1, 2, 3),
+                connectivity=((1, 2), (2, 3), (3, 4)),
+            ),
+            "Stirrups": _ElementGroupView(
+                ids=(4,), connectivity=((5, 6),),
+            ),
+        },
+    )
+    fem = FEMStub(nodes=nodes, elements=elements)
+
+    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    orient = AlongBeam(reference_pg="MainBar")
+    # Before build, the orientation is unbound.
+    assert orient._p_a is None
+
+    transf = ops.geomTransf.Linear(orientation=orient)
+    ops.element.elasticBeamColumn(
+        pg="Stirrups",
+        transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+
+    bm = ops.build()
+    rec = RecordingEmitter()
+    bm.emit(rec)
+
+    # After emit, AlongBeam.bind_fem was called: segments are cached.
+    assert orient._p_a is not None
+    assert orient._p_a.shape == (3, 3)   # 3 reference segments
+
+    # One geomTransf line per distinct stirrup vecxz; with a single
+    # stirrup we expect exactly one.
+    geomtransf_calls = [c for c in rec.calls if c[0] == "geomTransf"]
+    assert len(geomtransf_calls) == 1
+
+
+def test_orientation_transform_collinear_elements_share_one_geomtransf() -> None:
+    """When multiple elements share the same vecxz under an
+    orientation, only one ``geomTransf`` line is emitted and reused
+    across them."""
     from apeGmsh.opensees.transform import Cartesian
 
     fem = make_two_column_frame()
     ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
     ops.model(ndm=3, ndf=6)
 
-    # Both columns are vertical and parallel — Cartesian CS yields one
-    # vecxz for both.
-    csys = Cartesian()
-    transf = ops.geomTransf.Linear(csys=csys)
+    # Both columns are vertical and parallel — Cartesian orientation
+    # yields one vecxz for both.
+    orientation = Cartesian()
+    transf = ops.geomTransf.Linear(orientation=orientation)
     ops.element.elasticBeamColumn(
         pg="Cols",
         transf=transf,

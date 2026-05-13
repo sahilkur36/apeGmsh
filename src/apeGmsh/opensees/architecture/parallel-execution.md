@@ -213,13 +213,12 @@ test: a Fiber section's `dependencies()` returns its materials.
 ### 1D — `transform.py`
 
 **Classes:** `Linear`, `PDelta`, `Corotational`. Re-export
-`Cartesian`, `Cylindrical`, `Spherical` from
-`solvers/_opensees_csys.py` (already shipped — see
-[ADR 0010](decisions/0010-csys-for-frame-orientation.md)).
+`Cartesian`, `Cylindrical`, `Spherical` from `_orientation.py`
+(see [ADR 0010](decisions/0010-csys-for-frame-orientation.md)).
 
 **Namespace:** `_GeomTransfNS`.
 
-**Tests:** verify CS rule integration produces correct vecxz for
+**Tests:** verify the orientation rule produces correct vecxz for
 horizontal beams, columns, the shoe-buckle arch case.
 
 ### 1D-extra — `time_series/time_series.py`
