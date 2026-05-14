@@ -94,6 +94,8 @@ class ResultsViewer:
         self._settings_tab: "DiagramSettingsTab | None" = None
         self._color_editor: Any = None
         self._registry_unsub: "Optional[Callable[[], None]]" = None
+        self._step_unsub: "Optional[Callable[[], None]]" = None
+        self._stage_unsub: "Optional[Callable[[], None]]" = None
         # Output dock + log router. Constructed lazily in _show_impl
         # so headless usage (Results.from_native + queries) doesn't
         # pull Qt. Lifecycle:
@@ -391,6 +393,20 @@ class ResultsViewer:
         # composition. The composition-default path stays as the
         # fallback for plain navigation.
         settings_tab.on_layer_focused(self._active.set_active_layer)
+        # Plan 04 step 2 cont. — director step + stage observers route
+        # through ActiveObjects so every panel that needs to react to
+        # time-scrubber or stage-tab changes can subscribe to the
+        # corresponding ``active*Changed`` signal instead of wiring a
+        # bespoke director subscription. The bridge callbacks are
+        # registered as direct director subscribers so they fire
+        # synchronously after the director's own update fan-out,
+        # preserving ordering relative to existing observers.
+        self._step_unsub = director.subscribe_step(
+            lambda step: self._active.set_active_step(int(step)),
+        )
+        self._stage_unsub = director.subscribe_stage(
+            lambda stage_id: self._active.set_active_stage(stage_id),
+        )
         # Two-way binding (B++ §7): the Plots group in the outline
         # tree mirrors the plot pane's tab list; clicking a plot row
         # activates the corresponding tab and vice versa.
@@ -1331,6 +1347,18 @@ class ResultsViewer:
             except Exception:
                 pass
             self._registry_unsub = None
+        # Drop director step / stage bridges (plan 04 step 2 cont.).
+        # Without this, a final step/stage fire during director
+        # teardown would emit an active*Changed signal at a moment
+        # when subscribers may already be partially destructed.
+        for attr in ("_step_unsub", "_stage_unsub"):
+            u = getattr(self, attr, None)
+            if u is not None:
+                try:
+                    u()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
         if self._director is not None:
             try:
                 self._director.unbind_plotter()
