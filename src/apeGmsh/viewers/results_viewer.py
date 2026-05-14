@@ -20,7 +20,7 @@ Usage::
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Optional, Sequence
 
 if TYPE_CHECKING:
     from apeGmsh.cuts import SectionCutDef
@@ -92,6 +92,8 @@ class ResultsViewer:
         self._win: Any = None
         self._plotter: Any = None
         self._settings_tab: "DiagramSettingsTab | None" = None
+        self._color_editor: Any = None
+        self._registry_unsub: "Optional[Callable[[], None]]" = None
         # Output dock + log router. Constructed lazily in _show_impl
         # so headless usage (Results.from_native + queries) doesn't
         # pull Qt. Lifecycle:
@@ -260,12 +262,21 @@ class ResultsViewer:
         output_dock, output_spec = make_output_dock(log_router)
         self._output_dock = output_dock
 
+        # ── Plan 06 step 4 — Color Map Editor extension dock ────────
+        # Constructed up-front so the spec can be passed alongside the
+        # Output spec to ``ResultsWindow``. Hidden by default — surfaced
+        # via the View menu. Binding to the active layer happens after
+        # ``self._active`` is constructed (below).
+        from .ui._color_map_editor import make_color_map_editor_dock
+        color_editor, color_editor_spec = make_color_map_editor_dock()
+        self._color_editor = color_editor
+
         # ── Window (creates QApplication) ───────────────────────────
         title = self._title or self._default_title()
         win = ResultsWindow(
             title=title,
             on_close=self._on_close,
-            extension_docks=[output_spec],
+            extension_docks=[output_spec, color_editor_spec],
         )
         self._win = win
 
@@ -362,6 +373,17 @@ class ResultsViewer:
         )
         self._active.activeGeometryChanged.connect(
             self._on_active_geometry_changed,
+        )
+        # ── Plan 06 step 4 — Color Map Editor follows the active layer ──
+        # When the active layer changes (driven from the composition
+        # handler below), the editor rebinds. ``set_active_layer(None)``
+        # collapses the editor to the empty state.
+        self._active.activeLayerChanged.connect(self._color_editor.bind_layer)
+        # Registry changes (layer added / removed / visibility) may
+        # invalidate the currently-active layer or surface a new
+        # default one. Re-evaluate when the registry fires.
+        self._registry_unsub = director.registry.subscribe(
+            self._refresh_active_layer,
         )
         # Two-way binding (B++ §7): the Plots group in the outline
         # tree mirrors the plot pane's tab list; clicking a plot row
@@ -1293,6 +1315,16 @@ class ResultsViewer:
                 self._log_router.uninstall()
             except Exception:
                 pass
+        # Drop the registry observer (plan 06 step 4) so subsequent
+        # registry mutations during director shutdown don't poke a
+        # half-dismantled editor.
+        unsub = getattr(self, "_registry_unsub", None)
+        if unsub is not None:
+            try:
+                unsub()
+            except Exception:
+                pass
+            self._registry_unsub = None
         if self._director is not None:
             try:
                 self._director.unbind_plotter()
@@ -2284,8 +2316,15 @@ class ResultsViewer:
         this lived as ``_on_outline_composition_selected`` directly
         wired from the outline's callback registry; now it's just one
         of N possible subscribers.
+
+        Plan 06 step 4: also resolves a default active layer for the
+        Color Map Editor (first LUT-bearing layer in the composition,
+        or ``None``).
         """
         if key is None:
+            # Composition cleared — drop the active layer too so the
+            # editor collapses to its empty state.
+            self._active.set_active_layer(None)
             return
         try:
             self._settings_tab.show_stack()
@@ -2294,6 +2333,38 @@ class ResultsViewer:
         win = self._win
         if win is not None:
             win.raise_diagram_dock()
+        self._refresh_active_layer()
+
+    def _refresh_active_layer(self) -> None:
+        """Pick a sensible default active layer and broadcast.
+
+        The first layer in the active composition that exposes a
+        non-None ``lut`` attribute wins (only ContourDiagram qualifies
+        in v1; other diagram types stay on the legacy ``style.cmap``
+        path). If nothing matches, the active layer is cleared so the
+        editor goes into its empty state.
+
+        Called from the composition handler and from the registry
+        observer — adding / removing layers should keep the editor's
+        binding fresh without requiring the user to re-click the
+        outline.
+        """
+        if self._director is None:
+            return
+        try:
+            comp = self._director.compositions.active
+        except Exception:
+            comp = None
+        layers = list(getattr(comp, "layers", []) or [])
+        chosen = None
+        for layer in layers:
+            if getattr(layer, "lut", None) is not None:
+                chosen = layer
+                break
+        # set_active_layer's identity-based no-op short-circuits when
+        # nothing changed, so repeated calls during refresh storms are
+        # cheap.
+        self._active.set_active_layer(chosen)
 
     def _on_active_geometry_changed(self, geom_id) -> None:
         """ActiveObjects → geometry selection changed.

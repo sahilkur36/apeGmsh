@@ -242,3 +242,33 @@ def test_results_viewer_show_close_lifecycle(small_results):
     # Director unbound on close
     assert viewer.director is not None
     assert not viewer.director.registry.is_bound
+
+
+@pytest.mark.qt
+def test_color_map_editor_dock_registered(small_results):
+    """Plan 06 step 4 — the editor is mounted as an extension dock and
+    accessible via the window's dock registry."""
+    pytest.importorskip("pytestqt", reason="needs pytest-qt")
+    pytest.importorskip("pyvistaqt")
+    qapp = pytest.importorskip("qtpy.QtWidgets").QApplication.instance() \
+        or pytest.importorskip("qtpy.QtWidgets").QApplication([])
+    from qtpy import QtCore
+
+    viewer = ResultsViewer(small_results, title="color-editor-smoke")
+    seen: dict = {}
+
+    def _check_then_close():
+        try:
+            seen["editor"] = viewer._color_editor
+            seen["dock"] = viewer._win.extension_dock(
+                "dock_color_map_editor",
+            )
+        finally:
+            viewer._win.window.close()
+
+    QtCore.QTimer.singleShot(250, _check_then_close)
+    viewer.show()
+
+    assert seen.get("editor") is not None
+    # ``extension_dock`` returns the QDockWidget — it should exist.
+    assert seen.get("dock") is not None
