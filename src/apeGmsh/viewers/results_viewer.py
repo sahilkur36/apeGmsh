@@ -92,6 +92,20 @@ class ResultsViewer:
         self._win: Any = None
         self._plotter: Any = None
         self._settings_tab: "DiagramSettingsTab | None" = None
+        # Output dock + log router. Constructed lazily in _show_impl
+        # so headless usage (Results.from_native + queries) doesn't
+        # pull Qt. Lifecycle:
+        # - router.install() before window construction
+        # - dock mounted via extension_docks=[spec]
+        # - router.uninstall() in _on_close
+        self._log_router: Any = None
+        self._output_dock: Any = None
+        self._output_badge: Any = None
+        # Plan 04 step 2 — per-viewer ActiveObjects coordinator.
+        # Initialised in _show_impl after the window so it can parent
+        # to win.window for Qt's GC. Panels subscribe to its signals
+        # rather than wiring direct callbacks to each other.
+        self._active: Any = None
         self._time_scrubber: Any = None
         self._substrate_actor: Any = None
         self._wireframe_actor: Any = None
@@ -232,10 +246,52 @@ class ResultsViewer:
         from .core.element_visibility import ElementVisibility as _ElementVis
         scene.element_visibility = _ElementVis(scene.grid)
 
+        # ── Output dock + log router (before the window so the
+        #    LogRouter can capture exceptions raised during window
+        #    construction itself — e.g. a Qt error inside
+        #    _build_layout). The dock is mounted as an extension dock
+        #    so it picks up the View menu toggle + layout persistence
+        #    machinery added by plan 08 step 2.
+        from .ui._log_router import LogRouter
+        from .ui._output_dock import make_output_dock
+        log_router = LogRouter()
+        log_router.install()
+        self._log_router = log_router
+        output_dock, output_spec = make_output_dock(log_router)
+        self._output_dock = output_dock
+
         # ── Window (creates QApplication) ───────────────────────────
         title = self._title or self._default_title()
-        win = ResultsWindow(title=title, on_close=self._on_close)
+        win = ResultsWindow(
+            title=title,
+            on_close=self._on_close,
+            extension_docks=[output_spec],
+        )
         self._win = win
+
+        # ── Plan 04 step 2 — ActiveObjects coordinator ──────────────
+        # Single source of truth for "which composition / geometry /
+        # layer is currently active." Panels subscribe to its signals
+        # instead of wiring direct callbacks. Parented to win.window
+        # so Qt's parent-tracked GC keeps it alive for the viewer's
+        # lifetime.
+        from .core._active_objects import ActiveObjects
+        self._active = ActiveObjects(parent=win.window)
+
+        # ── Status-bar Output badge ─────────────────────────────────
+        # Surfaces warning/error counts before the user opens the
+        # dock; clicking it raises the dock. Lives in the status bar
+        # as a permanent widget. Hidden when counts are zero.
+        try:
+            from .ui._output_badge import OutputBadge
+            output_dock_widget = win.extension_dock("dock_output")
+            badge = OutputBadge(output_dock, output_dock_widget)
+            self._output_badge = badge
+            win.window.statusBar().addPermanentWidget(badge.widget)
+        except Exception:
+            # Badge is purely peripheral — never let it block viewer
+            # startup. The dock + log router work fine without it.
+            self._output_badge = None
 
         # ProbeOverlay needs the plotter, which doesn't exist until
         # ``win`` is constructed below. We initialise to None here so
@@ -286,8 +342,27 @@ class ResultsViewer:
         # node readouts, …). The diagram / geometry editors live in
         # their own dedicated docks.
         details = DetailsPanel(settings_tab, geometry_panel)
-        outline.on_composition_selected(self._on_outline_composition_selected)
-        outline.on_geometry_selected(self._on_outline_geometry_selected)
+        # ── Outline tree → ActiveObjects (plan 04 step 2) ────────────
+        # The outline's row-clicked callbacks now feed ActiveObjects
+        # state instead of invoking panel methods directly. Multiple
+        # subscribers (settings tab, geometry panel, status indicators,
+        # future overlays) can react to the same state change.
+        #
+        # Pattern: outline → set_active_X → activeXChanged signal →
+        # whatever's subscribed. The handlers below mirror the old
+        # behaviour exactly so this is a transparent refactor.
+        outline.on_composition_selected(
+            lambda key: self._active.set_active_composition(key),
+        )
+        outline.on_geometry_selected(
+            lambda gid: self._active.set_active_geometry(gid),
+        )
+        self._active.activeCompositionChanged.connect(
+            self._on_active_composition_changed,
+        )
+        self._active.activeGeometryChanged.connect(
+            self._on_active_geometry_changed,
+        )
         # Two-way binding (B++ §7): the Plots group in the outline
         # tree mirrors the plot pane's tab list; clicking a plot row
         # activates the corresponding tab and vice versa.
@@ -1204,6 +1279,20 @@ class ResultsViewer:
         # still hold their specs at this point.
         if self._save_session:
             self._save_session_to_disk()
+        # Tear down the log router BEFORE the director / plotter shut
+        # down, so any teardown-time exceptions get captured (or at
+        # least don't fire into a half-disconnected signal). Then sever
+        # the output dock's connection to the router.
+        if self._output_dock is not None:
+            try:
+                self._output_dock.close()
+            except Exception:
+                pass
+        if self._log_router is not None:
+            try:
+                self._log_router.uninstall()
+            except Exception:
+                pass
         if self._director is not None:
             try:
                 self._director.unbind_plotter()
@@ -2186,13 +2275,15 @@ class ResultsViewer:
         except Exception:
             pass
 
-    def _on_outline_composition_selected(self, key) -> None:
-        """Outline tree → composition row selected (or off-row).
+    def _on_active_composition_changed(self, key) -> None:
+        """ActiveObjects → composition selection changed.
 
-        The outline only fires this with a non-None key when a
-        composition row becomes the current item; ``None`` only
-        arrives via :meth:`_outline._fire_idle` (off any row).
-        Routes the layer-stack view into the dedicated Diagram dock.
+        Subscribed in :meth:`_show_impl`. ``key`` is the composition
+        id from the outline (or ``None`` when cleared). Routes the
+        layer-stack view into the dedicated Diagram dock. Pre-plan-04
+        this lived as ``_on_outline_composition_selected`` directly
+        wired from the outline's callback registry; now it's just one
+        of N possible subscribers.
         """
         if key is None:
             return
@@ -2204,8 +2295,8 @@ class ResultsViewer:
         if win is not None:
             win.raise_diagram_dock()
 
-    def _on_outline_geometry_selected(self, geom_id) -> None:
-        """Outline tree → Geometry row selected (or off-row).
+    def _on_active_geometry_changed(self, geom_id) -> None:
+        """ActiveObjects → geometry selection changed.
 
         Routes the geometry settings view into the dedicated Geometry
         dock.
