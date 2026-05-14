@@ -40,6 +40,7 @@ def test_initial_state_is_empty(active):
     assert active.selection is None
     assert active.active_view is None
     assert active.active_layer is None
+    assert active.active_composition is None
     assert active.active_geometry is None
     assert active.active_stage is None
     assert active.active_step == -1
@@ -52,6 +53,7 @@ def test_snapshot_returns_initial_state(active):
         "selection": None,
         "active_view": None,
         "active_layer": None,
+        "active_composition": None,
         "active_geometry": None,
         "active_stage": None,
         "active_step": -1,
@@ -108,6 +110,28 @@ def test_set_active_layer_no_op_on_same(active):
     active.set_active_layer(layer)
     active.set_active_layer(layer)
     assert len(bucket) == 1
+
+
+def test_set_active_composition_emits(active):
+    bucket = _collect(active.activeCompositionChanged)
+    comp = "diagram-1"   # composition IDs are often strings
+    active.set_active_composition(comp)
+    assert bucket == [comp]
+    assert active.active_composition == comp
+
+
+def test_set_active_composition_no_op_on_same(active):
+    bucket = _collect(active.activeCompositionChanged)
+    active.set_active_composition("diagram-1")
+    active.set_active_composition("diagram-1")
+    assert len(bucket) == 1
+
+
+def test_set_active_composition_emits_on_clear(active):
+    bucket = _collect(active.activeCompositionChanged)
+    active.set_active_composition("diagram-1")
+    active.set_active_composition(None)
+    assert bucket == ["diagram-1", None]
 
 
 def test_set_active_geometry_emits(active):
@@ -221,12 +245,14 @@ def test_snapshot_reflects_full_state_after_multiple_sets(active):
     active.set_active_step(7)
     active.set_active_pick_mode("element")
 
+    active.set_active_composition("comp-A")
     snap = active.snapshot()
-    assert snap["selection"]       is sel
-    assert snap["active_layer"]    is layer
-    assert snap["active_geometry"] is geom
-    assert snap["active_step"]     == 7
-    assert snap["active_pick_mode"] == "element"
+    assert snap["selection"]          is sel
+    assert snap["active_layer"]       is layer
+    assert snap["active_composition"] == "comp-A"
+    assert snap["active_geometry"]    is geom
+    assert snap["active_step"]        == 7
+    assert snap["active_pick_mode"]   == "element"
 
 
 # =====================================================================

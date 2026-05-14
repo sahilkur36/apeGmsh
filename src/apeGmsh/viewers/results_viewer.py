@@ -102,6 +102,11 @@ class ResultsViewer:
         self._log_router: Any = None
         self._output_dock: Any = None
         self._output_badge: Any = None
+        # Plan 04 step 2 — per-viewer ActiveObjects coordinator.
+        # Initialised in _show_impl after the window so it can parent
+        # to win.window for Qt's GC. Panels subscribe to its signals
+        # rather than wiring direct callbacks to each other.
+        self._active: Any = None
         self._time_scrubber: Any = None
         self._substrate_actor: Any = None
         self._wireframe_actor: Any = None
@@ -264,6 +269,15 @@ class ResultsViewer:
         )
         self._win = win
 
+        # ── Plan 04 step 2 — ActiveObjects coordinator ──────────────
+        # Single source of truth for "which composition / geometry /
+        # layer is currently active." Panels subscribe to its signals
+        # instead of wiring direct callbacks. Parented to win.window
+        # so Qt's parent-tracked GC keeps it alive for the viewer's
+        # lifetime.
+        from .core._active_objects import ActiveObjects
+        self._active = ActiveObjects(parent=win.window)
+
         # ── Status-bar Output badge ─────────────────────────────────
         # Surfaces warning/error counts before the user opens the
         # dock; clicking it raises the dock. Lives in the status bar
@@ -328,8 +342,27 @@ class ResultsViewer:
         # node readouts, …). The diagram / geometry editors live in
         # their own dedicated docks.
         details = DetailsPanel(settings_tab, geometry_panel)
-        outline.on_composition_selected(self._on_outline_composition_selected)
-        outline.on_geometry_selected(self._on_outline_geometry_selected)
+        # ── Outline tree → ActiveObjects (plan 04 step 2) ────────────
+        # The outline's row-clicked callbacks now feed ActiveObjects
+        # state instead of invoking panel methods directly. Multiple
+        # subscribers (settings tab, geometry panel, status indicators,
+        # future overlays) can react to the same state change.
+        #
+        # Pattern: outline → set_active_X → activeXChanged signal →
+        # whatever's subscribed. The handlers below mirror the old
+        # behaviour exactly so this is a transparent refactor.
+        outline.on_composition_selected(
+            lambda key: self._active.set_active_composition(key),
+        )
+        outline.on_geometry_selected(
+            lambda gid: self._active.set_active_geometry(gid),
+        )
+        self._active.activeCompositionChanged.connect(
+            self._on_active_composition_changed,
+        )
+        self._active.activeGeometryChanged.connect(
+            self._on_active_geometry_changed,
+        )
         # Two-way binding (B++ §7): the Plots group in the outline
         # tree mirrors the plot pane's tab list; clicking a plot row
         # activates the corresponding tab and vice versa.
@@ -2221,13 +2254,15 @@ class ResultsViewer:
         except Exception:
             pass
 
-    def _on_outline_composition_selected(self, key) -> None:
-        """Outline tree → composition row selected (or off-row).
+    def _on_active_composition_changed(self, key) -> None:
+        """ActiveObjects → composition selection changed.
 
-        The outline only fires this with a non-None key when a
-        composition row becomes the current item; ``None`` only
-        arrives via :meth:`_outline._fire_idle` (off any row).
-        Routes the layer-stack view into the dedicated Diagram dock.
+        Subscribed in :meth:`_show_impl`. ``key`` is the composition
+        id from the outline (or ``None`` when cleared). Routes the
+        layer-stack view into the dedicated Diagram dock. Pre-plan-04
+        this lived as ``_on_outline_composition_selected`` directly
+        wired from the outline's callback registry; now it's just one
+        of N possible subscribers.
         """
         if key is None:
             return
@@ -2239,8 +2274,8 @@ class ResultsViewer:
         if win is not None:
             win.raise_diagram_dock()
 
-    def _on_outline_geometry_selected(self, geom_id) -> None:
-        """Outline tree → Geometry row selected (or off-row).
+    def _on_active_geometry_changed(self, geom_id) -> None:
+        """ActiveObjects → geometry selection changed.
 
         Routes the geometry settings view into the dedicated Geometry
         dock.

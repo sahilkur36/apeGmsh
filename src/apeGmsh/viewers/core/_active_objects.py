@@ -61,10 +61,11 @@ def _build_class():
         activeViewChanged      = QtCore.Signal(object)
 
         # ── Results-viewer signals ───────────────────────────────
-        activeLayerChanged     = QtCore.Signal(object)
-        activeGeometryChanged  = QtCore.Signal(object)
-        activeStageChanged     = QtCore.Signal(object)
-        activeStepChanged      = QtCore.Signal(int)
+        activeLayerChanged       = QtCore.Signal(object)
+        activeCompositionChanged = QtCore.Signal(object)
+        activeGeometryChanged    = QtCore.Signal(object)
+        activeStageChanged       = QtCore.Signal(object)
+        activeStepChanged        = QtCore.Signal(int)
 
         # ── Mesh-viewer signals ──────────────────────────────────
         activePickModeChanged  = QtCore.Signal(str)
@@ -74,6 +75,7 @@ def _build_class():
             self._selection: Any = None
             self._active_view: Any = None
             self._active_layer: Any = None
+            self._active_composition: Any = None
             self._active_geometry: Any = None
             self._active_stage: Any = None
             self._active_step: int = -1
@@ -117,6 +119,21 @@ def _build_class():
                 return
             self._active_layer = layer
             self.activeLayerChanged.emit(layer)
+
+        @property
+        def active_composition(self) -> Any:
+            return self._active_composition
+
+        def set_active_composition(self, composition: Any) -> None:
+            """Update the active composition (a.k.a. "Diagram" group)
+            and emit if it changed.
+
+            Identity comparison so opaque ids (strings, ints, refs)
+            all work. ``None`` clears the active composition."""
+            if composition is self._active_composition:
+                return
+            self._active_composition = composition
+            self.activeCompositionChanged.emit(composition)
 
         @property
         def active_geometry(self) -> Any:
@@ -176,13 +193,14 @@ def _build_class():
             individual getters.
             """
             return {
-                "selection":       self._selection,
-                "active_view":     self._active_view,
-                "active_layer":    self._active_layer,
-                "active_geometry": self._active_geometry,
-                "active_stage":    self._active_stage,
-                "active_step":     self._active_step,
-                "active_pick_mode": self._active_pick_mode,
+                "selection":          self._selection,
+                "active_view":        self._active_view,
+                "active_layer":       self._active_layer,
+                "active_composition": self._active_composition,
+                "active_geometry":    self._active_geometry,
+                "active_stage":       self._active_stage,
+                "active_step":        self._active_step,
+                "active_pick_mode":   self._active_pick_mode,
             }
 
     return ActiveObjects
