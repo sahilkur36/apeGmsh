@@ -36,8 +36,14 @@ Public API consumed by :class:`ResultsViewer`:
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Sequence
 
+from ._dock_registry import (
+    DockSpec,
+    add_view_menu_toggle,
+    build_view_menu,
+    mount_dock_spec,
+)
 from ._layout_metrics import LAYOUT
 from .viewer_window import ViewerWindow
 
@@ -56,6 +62,16 @@ class ResultsWindow:
         Window title (shown in the OS title bar).
     on_close
         Optional callback invoked when the window is closed.
+    extension_docks
+        Optional sequence of :class:`DockSpec` registrations mounted
+        alongside the seven built-in docks. Useful for the Output
+        dock (plan 01) and other panels that want to ride the same
+        persistence + View-menu machinery without editing this file.
+        ``tabify_with`` may reference any built-in dock by its
+        ``objectName`` (``dock_results_outline``, ``dock_results_right``,
+        ``dock_results_diagram``, ``dock_results_geometry``,
+        ``dock_results_details``, ``dock_results_session``,
+        ``dock_results_scrubber``) or another extension dock_id.
     """
 
     # Layout schema — bumped whenever the dock set changes (added /
@@ -64,11 +80,23 @@ class ResultsWindow:
     # don't get a half-broken arrangement after a structural change.
     _LAYOUT_SCHEMA_VERSION = 5
 
+    # objectNames of the seven built-in docks — exposed so extension
+    # specs can tabify with them by name without reaching into private
+    # attributes.
+    DOCK_OUTLINE  = "dock_results_outline"
+    DOCK_PLOTS    = "dock_results_right"
+    DOCK_DIAGRAM  = "dock_results_diagram"
+    DOCK_GEOMETRY = "dock_results_geometry"
+    DOCK_DETAILS  = "dock_results_details"
+    DOCK_SESSION  = "dock_results_session"
+    DOCK_SCRUBBER = "dock_results_scrubber"
+
     def __init__(
         self,
         *,
         title: str = "Results",
         on_close: Optional[Callable[[], None]] = None,
+        extension_docks: Optional[Sequence[DockSpec]] = None,
     ) -> None:
         # Wrap user-supplied on_close so we always persist layout on shutdown.
         # ViewerWindow's _MainWindow.closeEvent calls on_close *before* tearing
@@ -111,8 +139,21 @@ class ResultsWindow:
         # GC doesn't reap them.
         self._focus_shortcut: Any = None
         self._close_shortcut: Any = None
+        # Extension docks: registered via __init__ or add_extension_dock.
+        # Keyed by spec.dock_id (== Qt objectName). Stored so
+        # add_extension_dock can validate uniqueness and so the View
+        # menu can iterate them.
+        self._extension_specs: list[DockSpec] = (
+            list(extension_docks) if extension_docks else []
+        )
+        self._extension_docks: dict[str, Any] = {}
+        # View menu + handle to the extensions-section separator so
+        # add_extension_dock can insert above "Reset Layout".
+        self._view_menu: Any = None
+        self._view_menu_reset_separator: Any = None
 
         self._build_layout()
+        self._build_view_menu()
 
     # ------------------------------------------------------------------
     # Public API (forwards / new)
@@ -387,6 +428,13 @@ class ResultsWindow:
 
         win.addDockWidget(QtCore.Qt.BottomDockWidgetArea, self._dock_bottom)
 
+        # ── Extension docks ─────────────────────────────────────────
+        # Mounted BEFORE the default-layout snapshot so they participate
+        # in saveState/restoreState. Specs are validated for uniqueness
+        # against built-in objectNames + each other.
+        for spec in self._extension_specs:
+            self._mount_extension_dock(spec)
+
         # Initial widths from LayoutMetrics.
         try:
             win.resizeDocks(
@@ -408,6 +456,137 @@ class ResultsWindow:
 
         # ── Focus-mode shortcut (Ctrl+H) ────────────────────────────
         self._install_focus_shortcut()
+
+    # ------------------------------------------------------------------
+    # Extension docks (plan 08 — registry-driven extras alongside the
+    # seven built-in docks)
+    # ------------------------------------------------------------------
+
+    _BUILTIN_DOCK_IDS = frozenset({
+        DOCK_OUTLINE, DOCK_PLOTS, DOCK_DIAGRAM, DOCK_GEOMETRY,
+        DOCK_DETAILS, DOCK_SESSION, DOCK_SCRUBBER,
+    })
+
+    def add_extension_dock(self, spec: DockSpec) -> Any:
+        """Register and mount an additional dock at runtime.
+
+        Used by overlays / plugins / plan-01 output dock to add a
+        panel without editing this file. Returns the mounted
+        ``QDockWidget``.
+
+        Docks registered this way participate in :meth:`_save_layout`
+        on close. To round-trip through :meth:`_restore_layout` on a
+        cold start, register the spec via the ``extension_docks``
+        constructor argument instead — anything added post-construction
+        is restored at its default position on the next launch (the
+        saved-state entry for it is still emitted; the dock just
+        hasn't been built yet by the time restoreState runs).
+
+        Raises
+        ------
+        ValueError
+            If ``spec.dock_id`` collides with a built-in dock or a
+            previously-registered extension, or if
+            ``spec.tabify_with`` doesn't resolve.
+        """
+        dock = self._mount_extension_dock(spec)
+        self._extension_specs.append(spec)
+        # If the View menu already exists, append a toggle for the new
+        # dock. (Will be a no-op if __init__ hasn't finished yet.)
+        if self._view_menu is not None:
+            self._add_view_menu_toggle(spec.dock_id, dock)
+        return dock
+
+    def _mount_extension_dock(self, spec: DockSpec) -> Any:
+        """Build a QDockWidget from ``spec`` and dock it onto the window.
+
+        Internal: shared by the constructor's extension-mount loop and
+        :meth:`add_extension_dock`. Validates against built-in
+        ``objectName`` collisions, then delegates to
+        :func:`mount_dock_spec`. Does NOT touch ``_extension_specs``
+        or the View menu — callers handle those.
+        """
+        # Reserve all known ids (built-ins + previously-mounted
+        # extensions) so mount_dock_spec rejects collisions with a
+        # message that points at this method.
+        reserved = self._BUILTIN_DOCK_IDS | set(self._extension_docks)
+        if spec.dock_id in self._BUILTIN_DOCK_IDS:
+            raise ValueError(
+                f"DockSpec.dock_id={spec.dock_id!r} collides with a "
+                f"built-in ResultsWindow dock — pick a different id"
+            )
+        dock = mount_dock_spec(
+            self._vw.window, spec, reserved_ids=reserved,
+        )
+        self._extension_docks[spec.dock_id] = dock
+        return dock
+
+    def extension_dock(self, dock_id: str) -> Any:
+        """Return the QDockWidget for the given extension ``dock_id``.
+
+        Raises ``KeyError`` if no extension is registered under that id.
+        """
+        return self._extension_docks[dock_id]
+
+    # ------------------------------------------------------------------
+    # View menu (auto-populated toggle actions for every dock + Reset Layout)
+    # ------------------------------------------------------------------
+
+    def _all_docks(self) -> list[tuple[str, Any]]:
+        """Iterate ``(dock_id, QDockWidget)`` for every dock — built-in
+        first in their built-in order, then extensions in registration
+        order."""
+        builtins = [
+            (self.DOCK_OUTLINE,  self._dock_left),
+            (self.DOCK_PLOTS,    self._dock_right),
+            (self.DOCK_DIAGRAM,  self._dock_diagram),
+            (self.DOCK_GEOMETRY, self._dock_geometry),
+            (self.DOCK_DETAILS,  self._dock_details),
+            (self.DOCK_SESSION,  self._dock_session),
+            (self.DOCK_SCRUBBER, self._dock_bottom),
+        ]
+        out: list[tuple[str, Any]] = [
+            (i, d) for (i, d) in builtins if d is not None
+        ]
+        for spec in self._extension_specs:
+            dock = self._extension_docks.get(spec.dock_id)
+            if dock is not None:
+                out.append((spec.dock_id, dock))
+        return out
+
+    def _build_view_menu(self) -> None:
+        """Build the View menu — toggle action per dock + Reset Layout.
+
+        Delegates to :func:`build_view_menu`. Idempotent: replaces any
+        prior View menu on the window's menu bar. ViewerWindow's own
+        conditional view-menu population is not triggered for
+        ResultsWindow (no console_dock, no extra_docks), so this method
+        owns the View menu exclusively.
+        """
+        menu_bar = self._vw.window.menuBar()
+        if menu_bar is None:
+            return
+        docks_in_order = [dock for (_id, dock) in self._all_docks()]
+        self._view_menu, self._view_menu_reset_separator = build_view_menu(
+            menu_bar,
+            docks=docks_in_order,
+            on_reset_layout=self.reset_layout,
+        )
+
+    def _add_view_menu_toggle(self, dock_id: str, dock: Any) -> None:
+        """Append a toggle action for ``dock`` to the View menu.
+
+        Delegates to :func:`add_view_menu_toggle`. Inserts above the
+        Reset Layout separator (if present) so Reset Layout stays
+        pinned at the bottom.
+        """
+        if self._view_menu is None:
+            return
+        add_view_menu_toggle(
+            self._view_menu,
+            self._view_menu_reset_separator,
+            dock,
+        )
 
     def _make_dock(
         self,
