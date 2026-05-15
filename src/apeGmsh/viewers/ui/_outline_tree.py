@@ -475,18 +475,17 @@ class OutlineTree:
         Dispatches by row type:
 
         * Composition row → bulk-toggle every child layer's visibility.
-        * Geometry row → bulk-toggle every layer in every composition.
-
-        The new state is the *opposite* of the derived visibility: if
-        anything was visible, hide all; otherwise show all. This
-        matches the typical "toggle group" expectation and is simple
-        to reason about. No per-layer state is preserved across
-        toggles — v1 scope (see commit body).
+          Hiding snapshots each layer's prior state onto
+          ``comp.saved_visibility``; un-hiding restores from that
+          snapshot (default True for any layer added in the meantime
+          — invalidation already nulls the snapshot on layer
+          add/remove, so this only kicks in for in-flight churn).
+        * Geometry row → cascade into each composition, reusing the
+          same snapshot/restore on each child composition.
         """
         if item is None:
             return
         from .._log import log_action
-        registry = self._director.registry
         geom_mgr = self._director.geometries
 
         comp_id = item.data(0, _ROLE_COMPOSITION_KEY)
@@ -502,11 +501,7 @@ class OutlineTree:
                 "ui.outline", "eye_toggled",
                 comp=comp_id, new_state=new_state,
             )
-            for layer in list(getattr(comp, "layers", []) or []):
-                try:
-                    registry.set_visible(layer, bool(new_state))
-                except Exception:
-                    pass
+            self._apply_composition_visibility(comp, new_state)
             self._fire_render()
             self._refresh_diagrams()
             return
@@ -522,14 +517,49 @@ class OutlineTree:
                 geom=geom_id, new_state=new_state,
             )
             for comp in list(geom.compositions.compositions):
-                for layer in list(getattr(comp, "layers", []) or []):
-                    try:
-                        registry.set_visible(layer, bool(new_state))
-                    except Exception:
-                        pass
+                self._apply_composition_visibility(comp, new_state)
             self._fire_render()
             self._refresh_diagrams()
             return
+
+    def _apply_composition_visibility(
+        self, comp: Any, new_state: bool,
+    ) -> None:
+        """Bulk-toggle a composition's layers with snapshot preservation.
+
+        ``new_state=False``: snapshot each layer's current
+        ``is_visible`` onto ``comp.saved_visibility`` (only if no
+        snapshot is already active — back-to-back hides shouldn't
+        overwrite a real prior state with an all-hidden one), then
+        flip every layer to hidden.
+
+        ``new_state=True``: if a snapshot is active, restore each
+        layer to its snapshotted state (layers not in the snapshot —
+        only possible if invalidation missed a churn — default to
+        visible). Otherwise show every layer. Clears the snapshot.
+        """
+        registry = self._director.registry
+        layers = list(getattr(comp, "layers", []) or [])
+        if not new_state:
+            if comp.saved_visibility is None:
+                comp.saved_visibility = {
+                    layer: bool(getattr(layer, "is_visible", True))
+                    for layer in layers
+                }
+            for layer in layers:
+                try:
+                    registry.set_visible(layer, False)
+                except Exception:
+                    pass
+            return
+        snap = comp.saved_visibility
+        for layer in layers:
+            target = True if snap is None else bool(snap.get(layer, True))
+            try:
+                registry.set_visible(layer, target)
+            except Exception:
+                pass
+        comp.saved_visibility = None
 
     def _fire_render(self) -> None:
         """Push a render through the Director's bound plotter so the
