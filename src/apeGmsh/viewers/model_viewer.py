@@ -181,10 +181,13 @@ class ModelViewer:
                 print(f"[viewer] closed — {n} physical group(s) written, "
                       f"{len(sel.picks)} picks in working set")
 
-        # Create window FIRST so QApplication exists for Qt widgets
+        # Create window FIRST so QApplication exists for Qt widgets.
+        # ``window_key`` opts into layout persistence under
+        # ``QSettings("apeGmsh", "ModelViewer")`` (plan 08 follow-up).
         win = ViewerWindow(
             title=title or default_title,
             on_close=_on_close,
+            window_key="ModelViewer",
         )
 
         # ── Plan 04 step 4 — ActiveObjects coordinator ──────────────

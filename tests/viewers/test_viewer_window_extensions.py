@@ -99,7 +99,12 @@ def _make_stub_window(qapp):
     stub._extension_specs = []
     stub._extension_docks = {}
     stub._view_menu = None
-    # Mirror the class attribute the bound methods read via ``self``.
+    stub._view_menu_reset_separator = None
+    # ``_window_key=None`` selects the legacy non-persistent path so the
+    # menu's Reset Layout entry is disabled. Tests that exercise the
+    # persistent path override this attribute on the returned stub.
+    stub._window_key = None
+    # Mirror class attributes the bound methods read via ``self``.
     stub._BUILTIN_DOCK_IDS = ViewerWindow._BUILTIN_DOCK_IDS
 
     # Bind the real methods so any drift in production code surfaces
