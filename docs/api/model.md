@@ -76,7 +76,8 @@ m.model.queries.select_all_volumes().to_physical("solids")
 
 Symmetric helpers exist for each dimension:
 `select_all_points()`, `select_all_curves()`, `select_all_surfaces()`,
-`select_all_volumes()`.
+`select_all_volumes()`. Use `select_all()` (no args) to get **every**
+entity across all dimensions.
 
 ::: apeGmsh.core._selection.Selection
 
