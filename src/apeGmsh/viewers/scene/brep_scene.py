@@ -421,6 +421,15 @@ def build_brep_scene(
             colors = np.tile(_d2_rgb, (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
+            # Silhouette is created explicitly (not via the add_mesh
+            # ``silhouette=`` kwarg) so it can be tracked + torn down
+            # with the fill on hide — pyvista's auto silhouette is an
+            # untracked separate actor that would otherwise linger.
+            _d2_sil = dict(
+                color=_pal.outline_color,
+                line_width=_pal.outline_feature_px,
+                feature_angle=_pref.feature_angle,
+            )
             d2_kwargs: dict[str, Any] = dict(
                 scalars="colors", rgb=True,
                 opacity=surface_opacity,
@@ -429,11 +438,6 @@ def build_brep_scene(
                 line_width=0.5,
                 smooth_shading=_pref.smooth_shading,
                 diffuse=0.9, specular=0.0,
-                silhouette=dict(
-                    color=_pal.outline_color,
-                    line_width=_pal.outline_feature_px,
-                    feature_angle=_pref.feature_angle,
-                ),
                 pickable=True,
             )
             actor = plotter.add_mesh(poly, reset_camera=False, **d2_kwargs)
@@ -446,6 +450,11 @@ def build_brep_scene(
                 2, poly, actor, cell_to_dt_d2, centroids_d2, d2_bboxes,
                 add_mesh_kwargs=d2_kwargs,
             )
+            try:
+                _sil = plotter.add_silhouette(poly, **_d2_sil)
+                registry.set_silhouette(2, _sil, _d2_sil)
+            except Exception:
+                pass
     t_d2 = time.perf_counter() - t_dim
     n_entities += n_d2
 
@@ -521,16 +530,17 @@ def build_brep_scene(
             colors = np.tile(_d3_rgb, (len(etags), 1))
             poly.cell_data["entity_tag"] = np.array(etags, dtype=np.int64)
             poly.cell_data["colors"] = colors
+            # Explicit (tracked) silhouette — see the dim-2 note.
+            _d3_sil = dict(
+                color=_pal.outline_color,
+                line_width=_pal.outline_silhouette_px,
+                feature_angle=_pref.feature_angle,
+            )
             d3_kwargs: dict[str, Any] = dict(
                 scalars="colors", rgb=True,
                 opacity=vol_alpha,
                 smooth_shading=_pref.smooth_shading,
                 diffuse=0.9, specular=0.0,
-                silhouette=dict(
-                    color=_pal.outline_color,
-                    line_width=_pal.outline_silhouette_px,
-                    feature_angle=_pref.feature_angle,
-                ),
                 pickable=True,
             )
             actor = plotter.add_mesh(poly, reset_camera=False, **d3_kwargs)
@@ -543,6 +553,11 @@ def build_brep_scene(
                 3, poly, actor, cell_to_dt_d3, centroids_d3, d3_bboxes,
                 add_mesh_kwargs=d3_kwargs,
             )
+            try:
+                _sil = plotter.add_silhouette(poly, **_d3_sil)
+                registry.set_silhouette(3, _sil, _d3_sil)
+            except Exception:
+                pass
     t_d3 = time.perf_counter() - t_dim
     n_entities += n_d3
 

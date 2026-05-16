@@ -161,25 +161,76 @@ class VisibilityManager:
         for dt in self._selection._picks:
             self._color_mgr.set_entity_state(dt, picked=True)
 
+    def _expanded_hidden(self) -> set["DimTag"]:
+        """User-hidden entities + every lower-dim entity that *only*
+        bounds hidden entities.
+
+        The BRep scene draws a solid's faces twice — once as the
+        dim-2 surface mesh, once as the dim-3 volume-boundary mesh —
+        and again as dim-1 edges / dim-0 corner points. Masking only
+        the entity the user clicked leaves those duplicates on screen
+        ("doesn't disappear completely"). Cascading down the topology
+        makes a hidden body vanish entirely, while a face/edge shared
+        with a still-visible body stays — it has a parent that is not
+        hidden.
+
+        ``self._hidden`` stays the canonical record of what the user
+        explicitly hid (the outline eye state derives from it); this
+        expansion is used only for what gets drawn.
+        """
+        if not self._hidden:
+            return set()
+        import gmsh
+        hidden = set(self._hidden)
+        # Top-down so a surface added by the volume pass is itself
+        # considered when cascading into curves, etc.
+        for parent_dim in (3, 2, 1):
+            for _, ptag in gmsh.model.getEntities(parent_dim):
+                if (parent_dim, ptag) not in hidden:
+                    continue
+                try:
+                    _up, down = gmsh.model.getAdjacencies(parent_dim, ptag)
+                except Exception:
+                    continue
+                for child in down:
+                    cdt = (parent_dim - 1, int(child))
+                    if cdt in hidden:
+                        continue
+                    try:
+                        up, _d = gmsh.model.getAdjacencies(
+                            parent_dim - 1, int(child),
+                        )
+                    except Exception:
+                        up = []
+                    # Hide the child only when every higher-dim entity
+                    # it bounds is hidden too (shared boundary rule).
+                    if len(up) == 0 or all(
+                        (parent_dim, int(p)) in hidden for p in up
+                    ):
+                        hidden.add(cdt)
+        return hidden
+
     def _rebuild_actors(self) -> None:
         """Extract visible cells per dimension and swap actors.
 
         Only rebuilds dimensions that have hidden entities (or all
-        if revealing).
+        if revealing). Uses :meth:`_expanded_hidden` so a hidden body
+        disappears completely, not just its top-dimensional shell.
         """
         if self._verbose:
             import time
             _t0 = time.perf_counter()
         plotter = self._plotter
         reg = self._registry
+        effective = self._expanded_hidden()
 
         # Which dims are affected by hidden entities?
         affected_dims = set()
-        if not self._hidden:
+        if not effective:
             # Revealing all — rebuild every dim that was previously affected
             affected_dims = set(reg.dims)
         else:
-            for dt in self._hidden:
+            for dt in effective:
                 affected_dims.add(dt[0])
             # Also need dims that were previously hidden but now aren't
             for dim in reg.dims:
@@ -195,11 +246,23 @@ class VisibilityManager:
             if dim not in affected_dims:
                 continue
 
-            # Skip dim=0 (point glyphs) — they use a special rendering
-            # path (build_brep_point_glyphs) that can't be reconstructed
-            # by simple extract_cells + add_mesh.
+            # dim=0 is a glyph layer, not an extract_cells mesh — it
+            # needs its own filtered rebuild so hidden points vanish.
             if dim == 0:
+                self._rebuild_point_glyphs(effective)
                 continue
+
+            # Drop this dim's prior silhouette. pyvista's silhouette is
+            # a separate actor that ``remove_actor(fill)`` does NOT take
+            # down — leaving it makes a hidden body keep its outline.
+            # Recreated from the visible subset after the fill rebuild.
+            old_sil = reg.dim_silhouette_actors.get(dim)
+            if old_sil is not None:
+                try:
+                    plotter.remove_actor(old_sil)
+                except Exception:
+                    pass
+                reg.dim_silhouette_actors.pop(dim, None)
 
             full_mesh = reg._full_meshes.get(dim)
             if full_mesh is None:
@@ -216,7 +279,7 @@ class VisibilityManager:
                       reg._add_mesh_kwargs.get(dim, {}).items()
                       if k not in _INTERNAL_KEYS}
 
-            if not self._hidden:
+            if not effective:
                 # No hidden entities — restore full mesh
                 visible = full_mesh
             else:
@@ -224,7 +287,7 @@ class VisibilityManager:
                 entity_tags = full_mesh.cell_data.get("entity_tag")
                 if entity_tags is None:
                     continue
-                hidden_tags = {dt[1] for dt in self._hidden if dt[0] == dim}
+                hidden_tags = {dt[1] for dt in effective if dt[0] == dim}
                 if not hidden_tags:
                     visible = full_mesh
                 else:
@@ -271,10 +334,72 @@ class VisibilityManager:
             )
             reg.swap_dim(dim, visible, new_actor)
 
+            # Recreate the silhouette from the visible subset so the
+            # outline tracks the hide (only dims that had one — 2/3).
+            sil_kw = reg.dim_silhouette_kwargs.get(dim)
+            if sil_kw:
+                try:
+                    new_sil = plotter.add_silhouette(visible, **sil_kw)
+                    reg.set_silhouette(dim, new_sil, sil_kw)
+                except Exception:
+                    pass
+
         if self._verbose:
             import time as _time
             print(f"[visibility] _rebuild_actors: {(_time.perf_counter()-_t0)*1000:.1f}ms  "
-                  f"({len(affected_dims)} dims, {len(self._hidden)} hidden)")
+                  f"({len(affected_dims)} dims, {len(effective)} hidden)")
+
+    def _rebuild_point_glyphs(self, effective: set["DimTag"]) -> None:
+        """Rebuild the dim-0 glyph actor from the *visible* points.
+
+        Point entities render as sphere glyphs (a special path that
+        ``extract_cells`` can't touch), so to hide a point we rebuild
+        the glyph set from the subset whose tag is not in
+        *effective*. All points hidden → blank the existing actor but
+        keep the registry entry so ``reveal_all`` rebuilds it.
+        """
+        reg = self._registry
+        plotter = self._plotter
+        kw = reg._add_mesh_kwargs.get(0)
+        if not kw:
+            return
+        centers = kw.get("_centers_d0")
+        tags = kw.get("_tags_d0", [])
+        if centers is None or len(tags) == 0:
+            return
+        centers = np.asarray(centers)
+        tags_arr = np.asarray(tags)
+        hidden_pts = [dt[1] for dt in effective if dt[0] == 0]
+        keep = (
+            ~np.isin(tags_arr, hidden_pts)
+            if hidden_pts else np.ones(len(tags_arr), dtype=bool)
+        )
+        old = reg.dim_actors.get(0)
+        if not keep.any():
+            # Every point hidden — blanking the actor is enough; the
+            # registry keeps dim 0 so a later reveal rebuilds it.
+            if old is not None:
+                try:
+                    old.SetVisibility(False)
+                except Exception:
+                    pass
+            return
+        if old is not None:
+            try:
+                plotter.remove_actor(old)
+            except Exception:
+                pass
+        from ..scene.glyph_points import build_point_glyphs
+        from ..ui.theme import THEME
+        mesh, actor, _, _ = build_point_glyphs(
+            plotter,
+            centers[keep],
+            [int(t) for t, k in zip(tags, keep) if k],
+            model_diagonal=kw.get("model_diagonal", 1.0),
+            point_size=kw.get("point_size", 10.0),
+            idle_color=np.array(THEME.current.dim_pt, dtype=np.uint8),
+        )
+        reg.swap_dim(0, mesh, actor)
 
     def _fire(self) -> None:
         for cb in self.on_changed:
