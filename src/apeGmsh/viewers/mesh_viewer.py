@@ -372,12 +372,18 @@ class MeshViewer:
 
         # ── Left-rail outline tree — primary navigation ────────────
         # ParaView-style alternative to the right-side Browser tab.
-        # Lists Physical Groups + Element Types + Parts with eye-icon
-        # visibility. Browser tab still coexists; future PR may
-        # deprecate one.
+        # Lists Physical Groups + Element Types + Parts, plus optional
+        # Loads / Masses / Constraints sections when the matching
+        # composites are set on ``g``. Eye toggles on those rows fire
+        # the same rebuild callbacks the right-side tabs already use,
+        # so the overlay updates the same way regardless of which
+        # surface drove it.
         from .ui._mesh_outline_tree import MeshOutlineTree
         from .ui._dock_registry import DockSpec
         parts_reg = getattr(self._parent, 'parts', None)
+        loads_comp = getattr(self._parent, 'loads', None)
+        mass_comp = getattr(self._parent, 'masses', None)
+        constraints_comp = getattr(self._parent, 'constraints', None)
 
         # Map outline row kinds to the right-side tab names whose
         # contents serve as the property editor for that row type.
@@ -385,9 +391,12 @@ class MeshViewer:
         # tabified extension docks), so we identify tabs by their
         # text label.
         _OUTLINE_TAB_MAP = {
-            "group": "Browser",
-            "type":  "Browser",
-            "part":  "Browser",
+            "group":           "Browser",
+            "type":            "Browser",
+            "part":            "Browser",
+            "load_pattern":    "Loads",
+            "mass":            "Mass",
+            "constraint_kind": "Constraints",
         }
 
         def _on_outline_row_focused(kind: str, _payload) -> None:
@@ -400,6 +409,12 @@ class MeshViewer:
             selection=sel,
             vis_mgr=vis_mgr,
             parts_registry=parts_reg,
+            loads_composite=loads_comp,
+            mass_composite=mass_comp,
+            constraints_composite=constraints_comp,
+            on_load_patterns_changed=self._rebuild_loads_overlay,
+            on_mass_visibility_changed=self._rebuild_mass_overlay,
+            on_constraint_kinds_changed=self._rebuild_constraints_overlay,
             on_row_focused=_on_outline_row_focused,
         )
         win.add_extension_dock(DockSpec(
