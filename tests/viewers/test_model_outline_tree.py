@@ -101,6 +101,25 @@ def gmsh_two_groups():
         yield m
 
 
+@pytest.fixture
+def gmsh_group_and_label():
+    """One user PG ``"Body"`` (surf 1) + one internal label
+    ``"_label:shaft"`` (vol 3) — exercises the Labels section."""
+    with patch("apeGmsh.viewers.ui._model_outline_tree.gmsh") as m:
+        m.model.getPhysicalGroups.return_value = [(2, 1), (3, 7)]
+        def _name(dim, tag):
+            return {(2, 1): "Body", (3, 7): "_label:shaft"}[(dim, tag)]
+        m.model.getPhysicalName.side_effect = _name
+        def _ents(dim, tag):
+            if (dim, tag) == (2, 1):
+                return [1]
+            if (dim, tag) == (3, 7):
+                return [3]
+            return []
+        m.model.getEntitiesForPhysicalGroup.side_effect = _ents
+        yield m
+
+
 # =====================================================================
 # Construction + initial population
 # =====================================================================
@@ -290,3 +309,105 @@ def test_entity_click_fires_on_entity_toggled(qapp, gmsh_two_groups):
     entity_item = body_item.child(0)
     outline._on_item_clicked(entity_item, 0)
     assert received == [(2, 1)]
+
+
+# =====================================================================
+# ParaView-faithful 2-column layout
+# =====================================================================
+
+
+def test_tree_has_two_columns_with_eye_moved_first(qapp, gmsh_two_groups):
+    """Column 0 = name, column 1 = eye; the eye section is moved to
+    visual position 0 (ParaView pqPipelineModel + moveSection(1, 0))."""
+    from apeGmsh.viewers.ui._model_outline_tree import (
+        ModelOutlineTree,
+        _EYE_COL,
+    )
+    outline = ModelOutlineTree(
+        selection=_StubSelection(), vis_mgr=_StubVisManager(),
+    )
+    tree = outline._tree
+    assert tree.columnCount() == 2
+    # Eye is logical column 1 but rendered first (visual index 0).
+    assert tree.header().visualIndex(_EYE_COL) == 0
+    # Name lives in column 0; eye decoration in column 1.
+    body_item = outline._group_groups.child(0)
+    assert body_item.text(0) == "Body"
+    assert not body_item.icon(_EYE_COL).isNull()
+
+
+def test_eye_column_click_toggles_visibility_not_activation(
+    qapp, gmsh_two_groups,
+):
+    """A click in the eye column toggles visibility only — it must
+    NOT fire on_group_activated (ParaView handleIndexClicked parity)."""
+    from apeGmsh.viewers.ui._model_outline_tree import (
+        ModelOutlineTree,
+        _EYE_COL,
+    )
+
+    activated: list[str] = []
+    vis_mgr = _StubVisManager()
+    outline = ModelOutlineTree(
+        selection=_StubSelection(),
+        vis_mgr=vis_mgr,
+        on_group_activated=activated.append,
+    )
+    body_item = outline._group_groups.child(0)
+    outline._on_item_clicked(body_item, _EYE_COL)
+    assert activated == []                       # no activation
+    assert (2, 1) in vis_mgr.hidden              # visibility toggled
+    assert (2, 2) in vis_mgr.hidden
+
+
+# =====================================================================
+# Labels group
+# =====================================================================
+
+
+def test_labels_section_lists_internal_labels_stripped(
+    qapp, gmsh_group_and_label,
+):
+    from apeGmsh.viewers.ui._model_outline_tree import (
+        ModelOutlineTree,
+        _ROLE_KIND,
+        _ROLE_PAYLOAD,
+    )
+    outline = ModelOutlineTree(
+        selection=_StubSelection(), vis_mgr=_StubVisManager(),
+    )
+    # Physical Groups skips the _label: PG → only "Body".
+    assert outline._group_groups.childCount() == 1
+    assert outline._group_groups.child(0).data(0, _ROLE_PAYLOAD) == "Body"
+    # Labels section is visible and carries the prefix-stripped name.
+    assert outline._group_labels.isHidden() is False
+    assert outline._group_labels.childCount() == 1
+    label_item = outline._group_labels.child(0)
+    assert label_item.data(0, _ROLE_KIND) == "label"
+    assert label_item.data(0, _ROLE_PAYLOAD) == "shaft"
+    assert label_item.text(0) == "shaft"
+
+
+def test_labels_section_hidden_when_no_labels(qapp, gmsh_two_groups):
+    from apeGmsh.viewers.ui._model_outline_tree import ModelOutlineTree
+    outline = ModelOutlineTree(
+        selection=_StubSelection(), vis_mgr=_StubVisManager(),
+    )
+    assert outline._group_labels.isHidden() is True
+
+
+def test_label_eye_click_hides_all_label_entities(
+    qapp, gmsh_group_and_label,
+):
+    from apeGmsh.viewers.ui._eye_icon_delegate import ROLE_VISIBLE
+    from apeGmsh.viewers.ui._model_outline_tree import ModelOutlineTree
+
+    vis_mgr = _StubVisManager()
+    outline = ModelOutlineTree(
+        selection=_StubSelection(), vis_mgr=vis_mgr,
+    )
+    label_item = outline._group_labels.child(0)        # "shaft" (vol 3)
+    assert label_item.data(0, ROLE_VISIBLE) is True
+    outline._on_eye_clicked(label_item)
+    assert (3, 3) in vis_mgr.hidden
+    assert label_item.data(0, ROLE_VISIBLE) is False

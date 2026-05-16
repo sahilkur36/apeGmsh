@@ -957,6 +957,21 @@ def build_stylesheet(p: Palette, density: object = None) -> str:
     QTreeWidget#OutlineTreeWidget {{
         border: none;
     }}
+    /* model.viewer Outline — ParaView-compact rows. Scoped to this
+       tree only (id selector wins over the density ``QTreeWidget::item``
+       block regardless of order), so results.viewer and every other
+       panel keep the current density. Tight row + small font ≈ the
+       ParaView Pipeline Browser's ~20px rows. */
+    QTreeWidget#ModelOutlineTreeWidget {{
+        border: none;
+        font-size: 11px;
+    }}
+    QTreeWidget#ModelOutlineTreeWidget::item {{
+        min-height: 20px;
+        padding-top: 1px;
+        padding-bottom: 1px;
+        padding-left: 2px;
+    }}
 
     /* Plot pane (right rail, top) */
     QFrame#PlotPaneHeader, QFrame#PlotPaneNewPlot {{

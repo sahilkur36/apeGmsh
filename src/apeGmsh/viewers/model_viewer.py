@@ -123,7 +123,7 @@ class ModelViewer:
         from .ui.viewer_window import ViewerWindow
         from .ui.preferences import PreferencesTab
         from .ui.model_tabs import (
-            BrowserTab, FilterTab, ViewTab, SelectionTreePanel, PartsTreePanel,
+            FilterTab, ViewTab, SelectionTreePanel, PartsTreePanel,
         )
 
         # Ensure geometry is synced
@@ -204,20 +204,36 @@ class ModelViewer:
         # NOTE: PreferencesTab is created AFTER scene build (needs registry).
         # See "Preferences" block below build_brep_scene().
 
+        _DIM_NAMES = {0: "points", 1: "curves", 2: "surfaces", 3: "volumes"}
+
         def _on_new_group():
             from qtpy import QtWidgets
+            current_picks = list(sel._picks)
+            # A Gmsh physical group is dimension-scoped. A mixed-dim
+            # selection would be written as one PG per dimension under
+            # the same name (looks duplicated, wrong for FEM export),
+            # so reject it up front rather than silently splitting.
+            dims = sorted({dt[0] for dt in current_picks})
+            if len(dims) > 1:
+                QtWidgets.QMessageBox.warning(
+                    win.window,
+                    "Mixed-dimension selection",
+                    "A physical group must contain entities of a "
+                    "single dimension.\n\nThe current selection spans: "
+                    + ", ".join(_DIM_NAMES.get(d, str(d)) for d in dims)
+                    + ".\n\nRefine it to one dimension and try again.",
+                )
+                return
             name, ok = QtWidgets.QInputDialog.getText(
                 win.window, "New Physical Group",
                 "Group name:",
             )
             if ok and name.strip():
                 n = name.strip()
-                current_picks = list(sel._picks)
                 # Stage current picks as the new group directly
                 sel._staged_groups[n] = current_picks
                 # Switch to the new group (loads picks from staged)
                 sel.set_active_group(n)
-                browser.refresh()
                 outline.refresh()
                 if current_picks:
                     win.set_status(
@@ -225,6 +241,116 @@ class ModelViewer:
                     )
                 else:
                     win.set_status(f"Active group: {n} — pick entities to add")
+
+        def _on_new_label():
+            # The multi-dimensional counterpart to _on_new_group. A
+            # label IS allowed to span dimensions — it is backed by one
+            # ``_label:`` PG per dimension (PGs are dimension-scoped),
+            # which the outline merges into one row.
+            from qtpy import QtWidgets
+            picks = list(sel._picks)
+            if not picks:
+                QtWidgets.QMessageBox.information(
+                    win.window, "New Label",
+                    "Select one or more entities first — a label "
+                    "groups the current selection (any mix of "
+                    "dimensions).",
+                )
+                return
+            labels_api = getattr(self._parent, "labels", None)
+            if labels_api is None:
+                QtWidgets.QMessageBox.warning(
+                    win.window, "New Label",
+                    "This session exposes no labels API.",
+                )
+                return
+            name, ok = QtWidgets.QInputDialog.getText(
+                win.window, "New Label",
+                "Label name (groups the selection across all its "
+                "dimensions):",
+            )
+            if not (ok and name.strip()):
+                return
+            n = name.strip()
+            by_dim: dict[int, list[int]] = {}
+            for d, t in picks:
+                by_dim.setdefault(int(d), []).append(int(t))
+            try:
+                # ``labels.add`` warns about cross-dim "ambiguous
+                # lookups" when the same name spans dimensions — which
+                # is precisely the intent of a multi-dim label, so
+                # silence that one warning for this deliberate add.
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.filterwarnings(
+                        "ignore",
+                        message=r".*already exists at dim=.*",
+                    )
+                    for d, tags in sorted(by_dim.items()):
+                        labels_api.add(d, tags, n)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(
+                    win.window, "New Label",
+                    f"Could not create label '{n}':\n{exc}",
+                )
+                return
+            outline.refresh()
+            dims_txt = ", ".join(
+                _DIM_NAMES.get(d, str(d)) for d in sorted(by_dim)
+            )
+            win.set_status(
+                f"Label '{n}' created from {len(picks)} entities "
+                f"({dims_txt})"
+            )
+
+        def _on_rename_label(name: str):
+            from qtpy import QtWidgets
+            labels_api = getattr(self._parent, "labels", None)
+            if labels_api is None:
+                return
+            new_name, ok = QtWidgets.QInputDialog.getText(
+                win.window, "Rename Label",
+                "New label name:", text=name,
+            )
+            if not (ok and new_name.strip()):
+                return
+            nn = new_name.strip()
+            if nn == name:
+                return
+            try:
+                # dim=None → rename across every dimension the label
+                # spans (a label is multi-dimensional).
+                labels_api.rename(name, nn)
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(
+                    win.window, "Rename Label",
+                    f"Could not rename label '{name}':\n{exc}",
+                )
+                return
+            outline.refresh()
+            win.set_status(f"Label '{name}' renamed to '{nn}'")
+
+        def _on_delete_label(name: str):
+            from qtpy import QtWidgets
+            labels_api = getattr(self._parent, "labels", None)
+            if labels_api is None:
+                return
+            reply = QtWidgets.QMessageBox.question(
+                win.window, "Delete Label",
+                f"Delete label '{name}' (all dimensions)?",
+            )
+            if reply != QtWidgets.QMessageBox.StandardButton.Yes:
+                return
+            try:
+                labels_api.remove(name)        # dim=None → all dims
+            except Exception as exc:
+                QtWidgets.QMessageBox.warning(
+                    win.window, "Delete Label",
+                    f"Could not delete label '{name}':\n{exc}",
+                )
+                return
+            outline.refresh()
+            win.set_status(f"Deleted label: {name}")
 
         def _on_rename_group(old_name: str):
             from qtpy import QtWidgets
@@ -234,7 +360,6 @@ class ModelViewer:
             )
             if ok and new_name.strip():
                 sel.rename_group(old_name, new_name.strip())
-                browser.refresh()
                 outline.refresh()
 
         def _on_delete_group(name: str):
@@ -250,28 +375,18 @@ class ModelViewer:
                 sel.delete_group(name)
                 from .core.selection import _delete_group_by_name
                 _delete_group_by_name(name)
-                browser.refresh()
                 outline.refresh()
                 win.set_status(f"Deleted group: {name}")
 
         def _on_group_activated(name: str):
             sel.set_active_group(name)
-            browser.refresh()
-            outline.refresh()
+            # In-place active-row restyle only. A full refresh()
+            # (takeChildren + rebuild) would reset scroll/expansion
+            # and make rows visibly jump on every click; the
+            # structure is unchanged here, only which group is active.
+            outline.update_active()
             n = len(sel.picks)
             win.set_status(f"Active group: {name} ({n} entities)")
-
-        browser = BrowserTab(
-            sel,
-            on_group_activated=_on_group_activated,
-            on_entity_toggled=lambda dt: sel.toggle(dt),
-            on_new_group=_on_new_group,
-            on_rename_group=_on_rename_group,
-            on_delete_group=_on_delete_group,
-            on_hide=lambda dts: (vis_mgr.hide_dts(dts), plotter.render()),
-            on_isolate=lambda dts: (vis_mgr.isolate_dts(dts), plotter.render()),
-            on_reveal_all=lambda: (vis_mgr.reveal_all(), plotter.render()),
-        )
 
         # Filter -> pick engine + visual dim feedback. The closure references
         # plotter / registry / pick_engine which are bound later in this
@@ -519,11 +634,15 @@ class ModelViewer:
         # ``_FIRST_DOCK`` anchors the tabify chain so subsequent calls
         # land next to it instead of fanning out across dock areas.
         from .ui._dock_registry import DockSpec
-        from qtpy import QtCore, QtWidgets
-        _FIRST_DOCK = "dock_model_browser"
+        # Right-side tool group. ``_FIRST_DOCK`` anchors the tabify
+        # chain so the rest land as tabs next to it. View is the
+        # anchor now that the Browser is retired (Outline + Labels
+        # supersede it); Selection is no longer here — it lives in the
+        # left column under the Outline (see below).
+        _FIRST_DOCK = "dock_model_view"
 
         def _add_panel(dock_id: str, title: str, widget) -> Any:
-            win.add_extension_dock(DockSpec(
+            return win.add_extension_dock(DockSpec(
                 dock_id=dock_id,
                 title=title,
                 factory=lambda _p: widget,
@@ -532,29 +651,8 @@ class ModelViewer:
                 ),
             ))
 
-        _add_panel(_FIRST_DOCK, "Browser", browser.widget)
-        _add_panel("dock_model_view", "View", view_tab.widget)
+        _add_panel(_FIRST_DOCK, "View", view_tab.widget)
         _add_panel("dock_model_filter", "Filter", filter_tab.widget)
-
-        # Selection tree stays a separate dock BELOW the tabified
-        # panel group (its persistent "list of picks" role makes
-        # tabifying it with the navigators awkward — users want to see
-        # picks while browsing). Anchor the split against the first
-        # tabified dock instead of the (now-hidden) tabs dock.
-        sel_dock = win.add_extension_dock(DockSpec(
-            dock_id="dock_model_selection",
-            title="Selection",
-            factory=lambda _parent: sel_tree.widget,
-        ))
-        sel_dock.setTitleBarWidget(QtWidgets.QWidget())    # hide title bar
-        sel_dock.setFeatures(QtWidgets.QDockWidget.NoDockWidgetFeatures)
-        anchor = win.window.findChild(
-            QtWidgets.QDockWidget, _FIRST_DOCK,
-        )
-        if anchor is not None:
-            win.window.splitDockWidget(
-                anchor, sel_dock, QtCore.Qt.Vertical,
-            )
 
         plotter = win.plotter
 
@@ -605,9 +703,11 @@ class ModelViewer:
         _add_panel("dock_model_markers", "Markers", origin_panel.widget)
 
         # ── Model info panel (read-only diagnostics) ──────────────
+        # No longer a dock tab — surfaced via the top-level "Info"
+        # menu as a standalone non-modal window (wired further down,
+        # once ``win`` + the menu bar are available).
         from .ui._model_info_panel import ModelInfoPanel
         info_panel = ModelInfoPanel(parts_registry=getattr(self._parent, 'parts', None))
-        _add_panel("dock_model_info", "Info", info_panel.widget)
 
         # ── Section / clipping plane ────────────────────────────────
         from .overlays.clip_plane_overlay import ClipPlaneOverlay
@@ -730,7 +830,14 @@ class ModelViewer:
             lambda: open_theme_editor(win.window)
         )
         prefs.widget.layout().addWidget(_btn_theme)
-        _add_panel("dock_model_session", "Session", prefs.widget)
+        # Wrap in a scroll area so the (tall) Session panel never
+        # forces a minimum size on the shared right-side tab group —
+        # it scrolls instead of stretching its neighbours.
+        _sess_scroll = _QtW.QScrollArea()
+        _sess_scroll.setWidgetResizable(True)
+        _sess_scroll.setFrameShape(_QtW.QFrame.NoFrame)
+        _sess_scroll.setWidget(prefs.widget)
+        _add_panel("dock_model_session", "Session", _sess_scroll)
 
         # Set generous clipping range for shifted coords
         try:
@@ -743,39 +850,18 @@ class ModelViewer:
         # ── Core modules ────────────────────────────────────────────
         color_mgr = ColorManager(registry)
         vis_mgr = VisibilityManager(registry, color_mgr, sel, plotter, verbose=_verbose)
-        # Late-bind the eye-icon delegate on the Browser tab now that
-        # the visibility manager exists. (Browser is constructed early
-        # in show(); the manager needs the registry + plotter built
-        # below it.)
-        browser.bind_vis_mgr(vis_mgr)
         from .ui.preferences_manager import PREFERENCES as _PREF_DT
         pick_engine = PickEngine(
             plotter, registry, drag_threshold=_PREF_DT.current.drag_threshold,
         )
 
-        # ── Left-rail outline tree — primary navigation ────────────
-        # ParaView-style alternative to the right-side Browser tab.
-        # Lists Physical Groups + Parts with eye-icon visibility and
-        # ActiveObjects-aware row selection. The Browser tab still
-        # exists during this transition; users can compare and
-        # eventually we'll deprecate one.
+        # ── Left column — primary navigation ───────────────────────
+        # The outline (Physical Groups / Labels / Parts, ParaView-
+        # style) is the model navigator; the Browser panel it once
+        # mirrored has been retired. Selection sits directly below it
+        # (vertical split) so picks stay visible while you browse.
         parts_reg = getattr(self._parent, 'parts', None)
         from .ui._model_outline_tree import ModelOutlineTree
-
-        # Map outline row kinds to the extension-dock ids whose tabs
-        # serve as the property editor for that row type. ParaView
-        # pipeline-browser pattern: click a node → properties panel
-        # for that node comes forward.
-        _OUTLINE_TAB_MAP = {
-            "group":  "dock_model_browser",
-            "entity": "dock_model_browser",
-            "part":   "dock_model_browser",
-        }
-
-        def _on_outline_row_focused(kind: str, _payload) -> None:
-            tab_id = _OUTLINE_TAB_MAP.get(kind)
-            if tab_id is not None:
-                win.focus_tab(tab_id)
 
         outline = ModelOutlineTree(
             selection=sel,
@@ -784,16 +870,57 @@ class ModelViewer:
             on_group_activated=_on_group_activated,
             on_entity_toggled=lambda dt: sel.toggle(dt),
             on_new_group=_on_new_group,
+            on_new_label=_on_new_label,
+            on_rename_label=_on_rename_label,
+            on_delete_label=_on_delete_label,
             on_rename_group=_on_rename_group,
             on_delete_group=_on_delete_group,
-            on_row_focused=_on_outline_row_focused,
         )
-        win.add_extension_dock(DockSpec(
+        outline_dock = win.add_extension_dock(DockSpec(
             dock_id="dock_model_outline",
             title="Outline",
             factory=lambda _p: outline.widget,
             default_area="left",
         ))
+        sel_dock = win.add_extension_dock(DockSpec(
+            dock_id="dock_model_selection",
+            title="Selection",
+            factory=lambda _p: sel_tree.widget,
+            default_area="left",
+        ))
+        # Stack Selection under the Outline in the left column.
+        from qtpy import QtCore as _QtC_split
+        win.window.splitDockWidget(
+            outline_dock, sel_dock, _QtC_split.Qt.Vertical,
+        )
+
+        # ── Info menu — model diagnostics as a standalone window ────
+        # Replaces the old "Info" dock tab. Lazily builds one
+        # non-modal window the first time it's opened; reuses it
+        # afterwards. Parented to the main window so it closes with
+        # the viewer but never blocks it.
+        from qtpy import QtWidgets as _QtW_info, QtCore as _QtC_info
+        _model_name = getattr(self._parent, "model_name", None) or "model"
+        _info_window: list[Any] = []
+
+        def _open_model_info() -> None:
+            w = _info_window[0] if _info_window else None
+            if w is None:
+                w = _QtW_info.QMainWindow(win.window)
+                w.setWindowFlag(_QtC_info.Qt.Window, True)
+                w.setWindowTitle(f"Model info — {_model_name}")
+                w.setCentralWidget(info_panel.widget)
+                w.resize(420, 620)
+                _info_window.append(w)
+            info_panel.refresh()
+            w.show()
+            w.raise_()
+            w.activateWindow()
+
+        _info_menu = win.window.menuBar().addMenu("Info")
+        _act_model_info = _info_menu.addAction("Model info…")
+        _act_model_info.triggered.connect(_open_model_info)
+
         parts_tree = None
         if parts_reg is not None:
             def _parts_select_only(dts):
@@ -882,7 +1009,6 @@ class ModelViewer:
                 # Refresh UI panels
                 if parts_tree is not None:
                     parts_tree.refresh()
-                browser.refresh()
                 outline.refresh()
                 sel_tree.update(sel.picks)
                 info_panel.refresh()
@@ -978,7 +1104,6 @@ class ModelViewer:
         win.on_theme_changed(lambda _p: _on_sel_changed())
         win.on_theme_changed(lambda _p: tn_overlay.refresh_theme())
         sel.on_changed.append(lambda: sel_tree.update(sel.picks))
-        sel.on_changed.append(lambda: browser.update_active())
         sel.on_changed.append(lambda: outline.update_active())
         if parts_tree is not None:
             sel.on_changed.append(
@@ -1023,6 +1148,23 @@ class ModelViewer:
             plotter,
             get_orbit_pivot=lambda: sel.centroid(registry),
         )
+
+        # ── Motion LOD ──────────────────────────────────────────────
+        # The per-dim silhouette actors are ``vtkPolyDataSilhouette`` —
+        # view-dependent, so they re-execute every frame the camera
+        # moves (the dominant per-orbit cost on a complex CAD part,
+        # on top of what the navigation bounds-cache already removes).
+        # Hide them during any camera gesture and restore ~120 ms
+        # after it settles — same interactive-LOD trick mesh.viewer
+        # uses for its node cloud. The lambda is re-evaluated per
+        # gesture so it always targets the live silhouette actors
+        # (they're rebuilt by the visibility hide/show path).
+        from .core.motion_lod import MotionLOD
+        self._motion_lod = MotionLOD(
+            plotter,
+            lambda: list(registry.dim_silhouette_actors.values()),
+        )
+        self._motion_lod.install()
 
         # ── Install pick engine ─────────────────────────────────────
         pick_engine.install()

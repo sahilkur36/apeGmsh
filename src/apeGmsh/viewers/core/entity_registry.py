@@ -41,6 +41,8 @@ class EntityRegistry:
         "dim_wire_actors",
         "dim_node_clouds",
         "dim_node_actors",
+        "dim_silhouette_actors",
+        "dim_silhouette_kwargs",
         "_full_meshes",
         "_actor_id_to_dim",
         "_cell_to_dt",
@@ -66,6 +68,12 @@ class EntityRegistry:
         # node visibility (hide 1D → 1D-only nodes go away).
         self.dim_node_clouds: dict[int, Any] = {}      # dim -> PolyData
         self.dim_node_actors: dict[int, Any] = {}      # dim -> vtkActor
+        # Silhouette/outline layer (dim>=2). pyvista's ``silhouette=``
+        # actor is separate from the fill actor and is NOT torn down by
+        # ``remove_actor(fill)`` — we track it explicitly so the
+        # visibility rebuild can drop a hidden body's outline too.
+        self.dim_silhouette_actors: dict[int, Any] = {}   # dim -> vtkActor
+        self.dim_silhouette_kwargs: dict[int, dict] = {}  # dim -> add_silhouette kwargs
         self._full_meshes: dict[int, Any] = {}         # dim -> original (unfiltered) mesh
         self._actor_id_to_dim: dict[int, int] = {}     # id(actor) -> dim
         self._cell_to_dt: dict[int, dict[int, DimTag]] = {}   # dim -> {cell_idx: DimTag}
@@ -146,6 +154,14 @@ class EntityRegistry:
         """Register a per-dim node-glyph actor."""
         self.dim_node_clouds[dim] = cloud
         self.dim_node_actors[dim] = actor
+
+    def set_silhouette(self, dim: int, actor: Any, kwargs: dict) -> None:
+        """Track the explicit silhouette actor + its ``add_silhouette``
+        kwargs for *dim* so the visibility rebuild can remove and
+        recreate it from the visible subset (pyvista does not tear the
+        silhouette down with the fill actor)."""
+        self.dim_silhouette_actors[dim] = actor
+        self.dim_silhouette_kwargs[dim] = kwargs
 
     def swap_dim(self, dim: int, new_mesh: Any, new_actor: Any) -> None:
         """Replace the mesh+actor for *dim* after extract_cells.
