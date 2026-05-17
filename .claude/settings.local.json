@@ -455,7 +455,8 @@
       "Bash(\"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -c \"import apeGmsh; print\\(apeGmsh.__file__\\)\")",
       "Bash(PYTHONPATH=src \"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -m pytest tests/test_results_mpco_material_mock.py -x -q)",
       "Bash(PYTHONPATH=src \"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -m pytest tests/test_results_mpco_layer_mock.py -q)",
-      "Bash(PYTHONPATH=src \"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -m pytest tests/test_results_mpco_layer_real.py -v)"
+      "Bash(PYTHONPATH=src \"C:/Users/nmora/venv/opensees_venv/Scripts/python.exe\" -m pytest tests/test_results_mpco_layer_real.py -v)",
+      "Bash(cat > *)"
     ]
   }
 }

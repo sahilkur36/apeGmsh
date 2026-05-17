@@ -132,6 +132,24 @@ def _make_full_fem() -> FEMData:
         master_nodes=[2, 3], slave_nodes=[6, 7],
         dofs=[1, 2, 3],
         mortar_operator=np.array([[0.5, 0.5], [0.5, 0.5]]),
+        slave_records=[
+            InterpolationRecord(
+                kind=ConstraintKind.TIE,
+                slave_node=6, master_nodes=[2, 3],
+                weights=np.array([0.5, 0.5]),
+                dofs=[1, 2, 3],
+                projected_point=np.array([0.5, 0.0, 0.0]),
+                parametric_coords=np.array([0.5, 0.0]),
+            ),
+            InterpolationRecord(
+                kind=ConstraintKind.TIE,
+                slave_node=7, master_nodes=[2, 3],
+                weights=np.array([0.25, 0.75]),
+                dofs=[1, 2, 3],
+                projected_point=np.array([0.75, 0.0, 0.0]),
+                parametric_coords=np.array([0.75, 0.0]),
+            ),
+        ],
     )
 
     # -- Loads --
@@ -282,13 +300,40 @@ def test_round_trip_node_to_surface_record(tmp_path: Path) -> None:
         if r.kind == ConstraintKind.NODE_TO_SURFACE
     ]
     assert len(nts) == 1
-    assert nts[0].master_node == 6
-    assert nts[0].slave_nodes == [2, 3]
-    assert nts[0].phantom_nodes == [100, 101]
-    np.testing.assert_allclose(nts[0].phantom_coords, [
+    r = nts[0]
+    assert r.master_node == 6
+    assert r.slave_nodes == [2, 3]
+    assert r.phantom_nodes == [100, 101]
+    np.testing.assert_allclose(r.phantom_coords, [
         [1.0, 0.0, 0.0], [1.0, 1.0, 0.0],
     ])
-    assert nts[0].dofs == [1, 2, 3]
+    assert r.dofs == [1, 2, 3]
+
+    # The sub-records are NOT persisted but MUST be re-derived on
+    # decode — otherwise every emission iterator returns empty and the
+    # reloaded model is silently disconnected (the PR-A bug).
+    assert [(p.master_node, p.slave_node) for p in r.rigid_link_records] \
+        == [(6, 100), (6, 101)]
+    assert all(p.kind == ConstraintKind.RIGID_BEAM
+               for p in r.rigid_link_records)
+    # offset re-derived from node coords (node_xyz plumbing) — present,
+    # finite, shape (3,).
+    for p in r.rigid_link_records:
+        assert p.offset is not None and np.all(np.isfinite(p.offset))
+        assert np.asarray(p.offset).shape == (3,)
+    assert [(p.master_node, p.slave_node, tuple(p.dofs))
+            for p in r.equal_dof_records] \
+        == [(100, 2, (1, 2, 3)), (101, 3, (1, 2, 3))]
+    assert all(p.kind == ConstraintKind.EQUAL_DOF
+               for p in r.equal_dof_records)
+
+    # End-to-end: the iterators OpenSees emission consumes must be
+    # non-empty after reload (this is what was silently broken).
+    cons = rebuilt.nodes.constraints
+    rl = [(m, s) for m, slaves in cons.rigid_link_groups() for s in slaves]
+    assert (6, 100) in rl and (6, 101) in rl
+    ed = [(p.master_node, p.slave_node) for p in cons.equal_dofs()]
+    assert (100, 2) in ed and (101, 3) in ed
 
 
 def test_round_trip_interpolation_record(tmp_path: Path) -> None:
@@ -298,17 +343,20 @@ def test_round_trip_interpolation_record(tmp_path: Path) -> None:
     rebuilt = FEMData.from_h5(str(out))
 
     ties = list(rebuilt.elements.constraints.interpolations())
-    # Two interpolations: the standalone TIE + the mortar slave_records
-    # (but SurfaceCoupling's slave_records aren't round-tripped — see
-    # surface_coupling_payload_dtype docstring). So just one.
-    assert len(ties) == 1
-    rec = ties[0]
+    # Three: the standalone TIE + the SurfaceCoupling's two
+    # slave_records — which NOW round-trip (CSR sr_* payload fields).
+    assert len(ties) == 3
+    # The standalone TIE (slave_node=5) is identified by content, not
+    # position — ordering of standalone vs coupling-expanded
+    # interpolations is not part of the contract.
+    rec = next(r for r in ties if r.slave_node == 5)
     assert rec.kind == ConstraintKind.TIE
-    assert rec.slave_node == 5
     assert rec.master_nodes == [2, 3, 4]
     np.testing.assert_allclose(rec.weights, [0.4, 0.4, 0.2])
     np.testing.assert_allclose(rec.projected_point, [0.7, 0.7, 0.0])
     np.testing.assert_allclose(rec.parametric_coords, [0.3, 0.3])
+    # The coupling's slave_records also appear (lossless round-trip).
+    assert {r.slave_node for r in ties} == {5, 6, 7}
 
 
 def test_round_trip_surface_coupling_record(tmp_path: Path) -> None:
@@ -327,6 +375,16 @@ def test_round_trip_surface_coupling_record(tmp_path: Path) -> None:
     np.testing.assert_allclose(
         c.mortar_operator, [[0.5, 0.5], [0.5, 0.5]],
     )
+    # slave_records now round-trip losslessly (CSR sr_* fields).
+    assert len(c.slave_records) == 2
+    sr0, sr1 = c.slave_records
+    assert sr0.slave_node == 6 and sr0.master_nodes == [2, 3]
+    np.testing.assert_allclose(sr0.weights, [0.5, 0.5])
+    np.testing.assert_allclose(sr0.projected_point, [0.5, 0.0, 0.0])
+    np.testing.assert_allclose(sr0.parametric_coords, [0.5, 0.0])
+    assert sr1.slave_node == 7
+    np.testing.assert_allclose(sr1.weights, [0.25, 0.75])
+    assert [p.dofs for p in c.slave_records] == [[1, 2, 3], [1, 2, 3]]
 
 
 def test_round_trip_nodal_loads(tmp_path: Path) -> None:
