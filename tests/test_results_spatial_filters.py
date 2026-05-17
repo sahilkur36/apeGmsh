@@ -376,3 +376,83 @@ def test_nodes_nearest_to_empty_candidate_raises(tmp_path: Path) -> None:
             component="displacement_x",
             ids=[],   # explicit empty
         )
+
+
+# =====================================================================
+# Fail-loud: element centroid with a dangling node reference
+# =====================================================================
+
+def test_element_centroids_unknown_node_id_fails_loud(tmp_path: Path) -> None:
+    """A connectivity entry pointing at a node absent from the FEM must
+    raise, not silently substitute the last node's coordinates.
+
+    Regression for the old ``np.clip`` in ``_element_centroids`` that
+    mapped any unknown node ID onto ``sorted_node_ids[-1]``, corrupting
+    the centroid (and therefore every ``.in_box`` / ``.in_sphere`` /
+    ``.on_plane`` / ``.nearest_to`` element query) instead of failing.
+    """
+    r, _fem = _make_results_with_fem(tmp_path)
+    fem = r._fem
+
+    # Corrupt the single quad: node 4 → 999 (not in fem.nodes.ids,
+    # and larger than the max ID → exercises the out-of-range branch).
+    def _resolve_corrupt(*, element_type=None):
+        return (
+            np.array([10], dtype=np.int64),
+            np.array([[1, 2, 3, 999]], dtype=np.int64),
+        )
+
+    fem.elements.resolve = _resolve_corrupt
+
+    from apeGmsh.results._composites import (
+        _element_centroids,
+        _element_ids_in_box,
+        _element_ids_in_sphere,
+        _element_ids_on_plane,
+        _nearest_element_id,
+    )
+
+    # The core routine must point at the offending element + node.
+    with pytest.raises(
+        KeyError, match=r"element 10 references node 999 .*fail loud"
+    ):
+        _element_centroids(fem)
+
+    # Every spatial helper that funnels through it must propagate the
+    # failure rather than return a clipped (corrupt) centroid result.
+    with pytest.raises(KeyError, match="not in the FEM node set"):
+        _element_ids_in_box(fem, (-9.0, -9.0, -9.0), (9.0, 9.0, 9.0))
+    with pytest.raises(KeyError, match="not in the FEM node set"):
+        _element_ids_in_sphere(fem, (0.0, 0.0, 0.0), 100.0)
+    with pytest.raises(KeyError, match="not in the FEM node set"):
+        _element_ids_on_plane(fem, (0.0, 0.0, 0.0), (0.0, 0.0, 1.0), 1e-6)
+    with pytest.raises(KeyError, match="not in the FEM node set"):
+        _nearest_element_id(fem, (0.0, 0.0, 0.0))
+
+
+def test_element_centroids_in_range_missing_node_id_fails_loud(
+    tmp_path: Path,
+) -> None:
+    """An unknown ID that lands *inside* the sorted-ID range (so
+    ``searchsorted`` returns a valid slot) must also raise — the guard
+    cannot rely on the out-of-range sentinel alone.
+    """
+    r, _fem = _make_results_with_fem(tmp_path)
+    fem = r._fem
+
+    # node_ids are {1,2,3,4,5}; 0 is below the minimum so searchsorted
+    # returns slot 0 (in range) whose value (1) != 0 → must be caught.
+    def _resolve_corrupt(*, element_type=None):
+        return (
+            np.array([10], dtype=np.int64),
+            np.array([[1, 2, 0, 4]], dtype=np.int64),
+        )
+
+    fem.elements.resolve = _resolve_corrupt
+
+    from apeGmsh.results._composites import _element_centroids
+
+    with pytest.raises(
+        KeyError, match=r"element 10 references node 0 .*fail loud"
+    ):
+        _element_centroids(fem)
