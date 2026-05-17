@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from typing import cast
 
+from apeGmsh.mesh.records._loads import NodalLoadRecord
 from apeGmsh.opensees import apeSees
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.section.fiber import FiberPoint, RectPatch
@@ -393,6 +394,63 @@ def test_alongbeam_orientation_is_bound_by_bridge_fan_out() -> None:
     # stirrup we expect exactly one.
     geomtransf_calls = [c for c in rec.calls if c[0] == "geomTransf"]
     assert len(geomtransf_calls) == 1
+
+
+def test_broker_nodal_loads_emit_as_synth_plain_pattern() -> None:
+    """ADR 0001: ``fem.nodes.loads`` (from session-side g.loads) is
+    emitted by the bridge as a synthesized Linear timeSeries + Plain
+    pattern per pattern name, with the force mapped onto ndf."""
+    fem = make_two_column_frame()
+    fem.nodes.loads = [  # type: ignore[attr-defined]
+        NodalLoadRecord(node_id=1, force_xyz=(10.0, 20.0, 0.0),
+                        pattern="Pressure"),
+        NodalLoadRecord(node_id=3, force_xyz=(30.0, 40.0, 0.0),
+                        pattern="Pressure"),
+    ]
+    ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
+    ops.model(ndm=2, ndf=3)
+
+    bm = ops.build()
+    rec = RecordingEmitter()
+    bm.emit(rec)
+
+    names = [c[0] for c in rec.calls]
+    i_ts = names.index("timeSeries")
+    i_open = names.index("pattern_open")
+    i_close = names.index("pattern_close")
+    assert i_ts < i_open < i_close
+    assert rec.calls[i_ts][1][0] == "Linear"
+    ts_tag = rec.calls[i_ts][1][1]
+    assert rec.calls[i_open][1] == ("Plain", rec.calls[i_open][1][1], ts_tag)
+    load_calls = [c for c in rec.calls if c[0] == "load"]
+    # ndf=3 -> (node, fx, fy, mz); moment absent -> mz = 0.0
+    assert (1, 10.0, 20.0, 0.0) in [c[1] for c in load_calls]
+    assert (3, 30.0, 40.0, 0.0) in [c[1] for c in load_calls]
+
+
+def test_2d_geomtransf_emits_bare_form_without_vecxz() -> None:
+    """A 2-D model (ndm=2) with a vecxz-less, orientation-less Linear
+    transform emits the bare ``geomTransf Linear $tag`` — no vecxz
+    vector. Regression for the 2-D beam-column emit path."""
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem), default_orientation=None)  # type: ignore[arg-type]
+    ops.model(ndm=2, ndf=3)
+
+    transf = ops.geomTransf.Linear()  # no vecxz, no orientation
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf, A=0.01, E=200e9, Iz=1e-4,
+    )
+
+    bm = ops.build()
+    rec = RecordingEmitter()
+    bm.emit(rec)
+
+    geomtransf_calls = [c for c in rec.calls if c[0] == "geomTransf"]
+    assert len(geomtransf_calls) == 1
+    # Bare 2-D form: ("Linear", tag) only — no trailing vecxz floats.
+    args = geomtransf_calls[0][1]
+    assert args[0] == "Linear"
+    assert len(args) == 2, f"expected bare 2-D geomTransf, got {args!r}"
 
 
 def test_orientation_transform_collinear_elements_share_one_geomtransf() -> None:

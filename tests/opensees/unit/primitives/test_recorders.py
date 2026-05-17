@@ -528,7 +528,7 @@ class TestMPCOEmit:
                 (
                     "mpco", "run.mpco",
                     "-N", "displacement",
-                    "-T", 0.05,
+                    "-T", "dt", 0.05,
                 ),
                 {},
             )
@@ -548,7 +548,7 @@ class TestMPCOEmit:
                 (
                     "mpco", "run.mpco",
                     "-N", "displacement",
-                    "-T", 10,
+                    "-T", "nsteps", 10,
                 ),
                 {},
             )
