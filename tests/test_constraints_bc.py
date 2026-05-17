@@ -138,6 +138,17 @@ def test_bc_unknown_pattern_raises(g):
         g.mesh.queries.get_fem_data(dim=3)
 
 
+def test_bc_target_and_label_conflict_raises_at_declaration(g):
+    """``bc(target=..., label=...)`` is the canonical misuse: ``label=``
+    is a target specifier, not a friendly name. It must fail loudly at
+    declaration with a hint toward ``name=`` — not silently drop the
+    target= and surface as an opaque KeyError at get_fem_data."""
+    with pytest.raises(ValueError, match=r"Conflicting target specifiers"):
+        g.constraints.bc(target='base_left', label='bc_base_left')
+    with pytest.raises(ValueError, match=r"Did you mean name="):
+        g.constraints.bc(target='base_left', label='bc_base_left')
+
+
 # =====================================================================
 # Persistence
 # =====================================================================
