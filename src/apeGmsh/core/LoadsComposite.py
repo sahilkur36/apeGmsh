@@ -842,7 +842,24 @@ class LoadsComposite:
 
     @staticmethod
     def _coalesce_target(target, *, pg=None, label=None, tag=None):
-        """Resolve explicit pg=/label=/tag= into (target, source) pair."""
+        """Resolve explicit pg=/label=/tag= into (target, source) pair.
+
+        Exactly one of ``target``/``pg=``/``label=``/``tag=`` may be
+        given. Passing more than one is a hard error rather than a
+        silent precedence pick: an ignored target specifier otherwise
+        surfaces much later as an opaque resolution ``KeyError``.
+        """
+        specified = [n for n, v in (("target", target), ("pg", pg),
+                                     ("label", label), ("tag", tag))
+                     if v is not None]
+        if len(specified) > 1:
+            hint = (" (Did you mean name= for a friendly label?)"
+                    if "label" in specified else "")
+            raise ValueError(
+                f"Conflicting target specifiers: {', '.join(specified)}. "
+                f"Pass exactly one of target=, pg=, label=, or tag=. "
+                f"target= auto-resolves (label -> PG -> tag); "
+                f"pg=/label=/tag= force a single resolution path." + hint)
         if tag is not None:
             return tag, "tag"
         if pg is not None:
