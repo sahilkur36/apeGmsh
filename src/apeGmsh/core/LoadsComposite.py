@@ -292,18 +292,24 @@ class LoadsComposite:
         * ``q_xyz``: explicit ``(qx, qy, qz)`` force-per-length
           vector.
         * ``normal=True`` + ``away_from``: edge-by-edge in-plane
-          pressure. The in-plane normal is sign-flipped per edge so
-          it points away from ``away_from`` (a reference point that
-          represents the *source* of the load — e.g. the centre of
-          an arched cavity loaded by internal pressure). Positive
-          ``magnitude`` then pushes into the structure.
+          pressure. The pressure direction is the edge normal lying
+          in the plane of the loaded curves (any plane — XY, XZ, YZ,
+          or arbitrary; the plane is fitted from the curve geometry),
+          sign-flipped per edge so it points away from ``away_from``
+          (a reference point representing the *source* of the load —
+          e.g. the centre of an arched cavity loaded by internal
+          pressure). Positive ``magnitude`` then pushes into the
+          structure.
 
         For ``normal=True`` without ``away_from``, apeGmsh consults
-        the parent surface's Gmsh boundary orientation to decide
-        which side is "into the structure". If the curve has no
-        adjacent surface, or bounds more than one, the resolver
-        raises ``ValueError`` — disambiguate by passing
-        ``away_from``, or fall back to ``direction``/``q_xyz``.
+        the parent surface's Gmsh-oriented normal + boundary loop to
+        decide which side is "into the structure" (also plane-
+        general). If the curve has no adjacent surface, or bounds
+        more than one, the resolver raises ``ValueError`` —
+        disambiguate by passing ``away_from``, or fall back to
+        ``direction``/``q_xyz``. If the loaded curves are collinear
+        or non-planar the in-plane normal is undefined and the
+        resolver raises ``ValueError``.
 
         Reduction and emission form
         ---------------------------
@@ -335,8 +341,9 @@ class LoadsComposite:
             Explicit force-per-length vector — overrides
             ``magnitude`` × ``direction``.
         normal : bool, default False
-            If ``True``, treat the load as a 2-D pressure normal
-            to each edge in the xy-plane.
+            If ``True``, treat the load as a pressure normal to each
+            edge, acting in the plane of the loaded curves (fitted
+            from the curve geometry — any plane, not just XY).
         away_from : (x, y, z), optional
             Reference point for ``normal=True`` direction
             disambiguation.
@@ -1415,17 +1422,73 @@ class LoadsComposite:
     # Per-edge normal-pressure helpers
     # ------------------------------------------------------------------
 
-    def _curve_inplane_sign(self, curve_tag: int) -> int:
-        """Return ±1 from Gmsh's surface boundary orientation.
+    @staticmethod
+    def _fit_plane_normal(points: np.ndarray) -> np.ndarray:
+        """Unit normal of the plane the loaded curves lie in.
 
-        With sign ``+1`` (curve runs forward in the bounding loop), the
-        in-plane "into-structure" direction at an edge with chord
-        tangent ``T = (Tx, Ty, 0)`` is ``(-Ty, Tx, 0)``.  Sign ``-1``
-        flips it.
+        Least-squares (SVD) plane fit over the supplied points.  The
+        **sign** of the returned normal is arbitrary — callers that need
+        a definite orientation must disambiguate it themselves (via
+        ``away_from`` or an adjacent surface).
 
-        Raises ``ValueError`` when the curve has no adjacent 2-D
-        surface or bounds more than one — in those cases the user
-        should pass ``away_from=`` or use ``direction=``/``q_xyz=``.
+        Raises ``ValueError`` when the points are collinear (no unique
+        plane) or not coplanar (a genuinely 3-D space curve) — in those
+        cases an "in-plane normal" is undefined and the caller should
+        use ``direction=`` or ``q_xyz=``.
+        """
+        pts = np.asarray(points, dtype=float).reshape(-1, 3)
+        _, s, vt = np.linalg.svd(pts - pts.mean(axis=0))
+        scale = float(s[0]) if s[0] > 0.0 else 1.0
+        if float(s[1]) < 1e-7 * scale:
+            raise ValueError(
+                "line(normal=True): the loaded curve(s) are collinear, "
+                "so the in-plane pressure direction is undefined. Pass "
+                "an away_from= point off the line, or use "
+                "direction=/q_xyz=."
+            )
+        if float(s[2]) > 1e-4 * scale:
+            raise ValueError(
+                "line(normal=True): the loaded curve(s) are not planar "
+                "(a 3-D space curve); a single in-plane normal is "
+                "undefined. Use q_xyz=, or split into planar groups."
+            )
+        n = vt[2]
+        return n / float(np.linalg.norm(n))
+
+    @staticmethod
+    def _surface_unit_normal(surf_tag: int) -> np.ndarray:
+        """Gmsh-oriented unit normal of a (planar) surface.
+
+        Sampled at the parametric-domain midpoint.  For a planar face
+        the normal is constant so the sample point is irrelevant; the
+        orientation is Gmsh's, which is what the boundary-loop ``sign``
+        in :meth:`_curve_inplane_frame` is relative to.
+        """
+        import gmsh
+        (umin, vmin), (umax, vmax) = gmsh.model.getParametrizationBounds(
+            2, int(surf_tag))
+        nrm = gmsh.model.getNormal(
+            int(surf_tag),
+            [0.5 * (umin + umax), 0.5 * (vmin + vmax)],
+        )
+        n = np.asarray(nrm[:3], dtype=float)
+        L = float(np.linalg.norm(n))
+        return n / L if L > 1e-30 else np.array([0.0, 0.0, 1.0])
+
+    def _curve_inplane_frame(
+        self, curve_tag: int,
+    ) -> tuple[int, np.ndarray]:
+        """``(sign, surface_normal)`` from the curve's adjacent surface.
+
+        ``sign`` is ``+1`` when the curve runs forward in the bounding
+        loop, ``-1`` otherwise.  The in-plane "into-structure" direction
+        at an edge with chord tangent ``T`` is ``sign * (P x T)`` where
+        ``P`` is the Gmsh-oriented face normal — the plane-general form
+        of the historical XY-only ``sign * (-Ty, Tx, 0)``.
+
+        Raises ``ValueError`` when the curve has no adjacent 2-D surface
+        or bounds more than one — the user should pass ``away_from=`` or
+        use ``direction=``/``q_xyz=``.
         """
         import gmsh
         upward, _ = gmsh.model.getAdjacencies(1, int(curve_tag))
@@ -1441,46 +1504,62 @@ class LoadsComposite:
                 f"{len(surfaces)} surfaces — outward direction is "
                 f"ambiguous. Provide away_from= or split the load."
             )
+        p_surf = self._surface_unit_normal(surfaces[0])
+        sign = 1
         boundary = gmsh.model.getBoundary(
             [(2, surfaces[0])], oriented=True, recursive=False)
         for _, t in boundary:
             if int(abs(t)) == int(curve_tag):
-                return 1 if int(t) > 0 else -1
-        return 1
+                sign = 1 if int(t) > 0 else -1
+                break
+        return sign, p_surf
 
     @staticmethod
     def _edge_normal_q(magnitude: float,
                        p1: np.ndarray, p2: np.ndarray,
+                       plane_normal: np.ndarray,
                        sign: int | None,
                        away_from: np.ndarray | None) -> np.ndarray | None:
         """Force-per-length for normal pressure on one edge.
 
+        Plane-agnostic: the in-plane normal is ``T x P`` where ``T`` is
+        the chord tangent and ``P`` (``plane_normal``) is the plane the
+        loaded curves lie in.  For a model in the XY plane (``P = +z``)
+        this reduces **exactly** to the historical ``(Ty, -Tx, 0)``
+        formula.
+
         Convention: ``magnitude > 0`` pushes into the structure.
 
-        * ``away_from`` given → in-plane normal flipped to point away
-          from that reference point (which is treated as the load
-          source, on the *outside* of the structure).
-        * Otherwise → uses Gmsh boundary ``sign`` and chord tangent.
+        * ``away_from`` given → normal flipped to point away from that
+          reference point (the load source, outside the structure);
+          ``plane_normal``'s sign is irrelevant.
+        * Otherwise → ``plane_normal`` is the adjacent surface's
+          Gmsh-oriented normal and the into-structure direction is
+          ``sign * (P x T)``.
         """
         t = p2 - p1
         L = float(np.linalg.norm(t))
         if L < 1e-30:
             return None
         Tn = t / L
+        P = np.asarray(plane_normal, dtype=float)
         if away_from is not None:
-            n = np.array([Tn[1], -Tn[0], 0.0])
-            if float(np.linalg.norm(n)) < 1e-30:
+            n = np.cross(Tn, P)
+            ln = float(np.linalg.norm(n))
+            if ln < 1e-12:
                 return None
+            n /= ln
             mid = 0.5 * (p1 + p2)
             if float(np.dot(mid - away_from, n)) < 0.0:
                 n = -n
             return float(magnitude) * n
-        # Gmsh-orientation path: into-structure = sign * (-Ty, Tx, 0)
+        # Surface path: into-structure = sign * (P x T)
         s = float(sign if sign is not None else 1)
-        n = np.array([-s * Tn[1], s * Tn[0], 0.0])
-        if float(np.linalg.norm(n)) < 1e-30:
+        n = s * np.cross(P, Tn)
+        ln = float(np.linalg.norm(n))
+        if ln < 1e-12:
             return None
-        return float(magnitude) * n
+        return float(magnitude) * (n / ln)
 
     def _collect_line_normal_items(self, defn, src, resolver, *, full: bool):
         """Build per-edge ``(..., q_xyz)`` items for ``normal=True`` line loads.
@@ -1494,11 +1573,13 @@ class LoadsComposite:
         dts = self._resolve_target(defn.target, source=src, expected_dim=1)
         if dts and dts[0] and dts[0][0] == "__ms__":
             return []
-        items: list = []
+
+        # Pass 1 — gather every edge once (and its endpoints).
+        edges: list = []
+        pts: list = []
         for d, t in dts:
             if d != 1:
                 continue
-            sign = None if away is not None else self._curve_inplane_sign(int(t))
             try:
                 etypes, _, enodes_list = gmsh.model.mesh.getElements(d, t)
             except Exception:
@@ -1513,14 +1594,42 @@ class LoadsComposite:
                     n_first, n_last = int(row[0]), int(row[-1])
                     p1 = resolver.coords_of(n_first)
                     p2 = resolver.coords_of(n_last)
-                    q = self._edge_normal_q(
-                        defn.magnitude, p1, p2, sign, away)
-                    if q is None:
-                        continue
-                    if full:
-                        items.append(([int(n) for n in row], q))
-                    else:
-                        items.append((n_first, n_last, q))
+                    edges.append((row, n_first, n_last, p1, p2, int(t)))
+                    pts.append(p1)
+                    pts.append(p2)
+        if not edges:
+            return []
+
+        # Plane normal.  away path → one fit over all loaded points
+        # (falling back to include away_from when the curves are a
+        # single straight segment); surface path → per-curve from the
+        # adjacent face's Gmsh-oriented normal.
+        plane_global = None
+        surf_cache: dict[int, tuple[int, np.ndarray]] = {}
+        if away is not None:
+            fit_pts = np.asarray(pts, dtype=float)
+            try:
+                plane_global = self._fit_plane_normal(fit_pts)
+            except ValueError:
+                plane_global = self._fit_plane_normal(
+                    np.vstack([fit_pts, away.reshape(1, 3)]))
+
+        items: list = []
+        for row, n_first, n_last, p1, p2, ctag in edges:
+            if away is not None:
+                P, sign = plane_global, None
+            else:
+                if ctag not in surf_cache:
+                    surf_cache[ctag] = self._curve_inplane_frame(ctag)
+                sign, P = surf_cache[ctag]
+            q = self._edge_normal_q(
+                defn.magnitude, p1, p2, P, sign, away)
+            if q is None:
+                continue
+            if full:
+                items.append(([int(n) for n in row], q))
+            else:
+                items.append((n_first, n_last, q))
         return items
 
     def _resolve_line_element(self, resolver, defn, node_map, all_nodes):
