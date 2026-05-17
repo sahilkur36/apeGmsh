@@ -1,6 +1,22 @@
 # Selection / Resolution Unification — Hardened Plan
 
-Status: **approved, S0 starting**
+Status: **S3 DONE (S3a–S3e landed); S5 pending**
+
+Phase ledger (commit hashes):
+
+| Phase | Status | Commit |
+|-------|--------|--------|
+| plan  | DONE   | `58f2b58` |
+| S0a   | DONE   | `66b2e35` |
+| S0b   | DONE   | `7c235d3` |
+| S1    | DONE   | `f9af1a1` |
+| S2    | DONE   | `b93437e` |
+| S3a   | DONE   | `31ba990` |
+| S3b   | DONE   | `9045efb` |
+| S3c   | DONE   | `02aaf21` |
+| S3d   | DONE   | `26c507f` |
+| S3e   | DONE (pending commit) | _this change_ |
+| S5    | pending | — |
 Author: design + 4-wave red/blue adversarial exercise (Opus)
 Scope: unify selection / parsing / resolution across the four levels —
 Geometry, Mesh (`g.mesh_selection`), FEM Broker (`FEMData`), Results.
@@ -140,9 +156,11 @@ Selections untouched** (zero caller churn; facade preserved).
 - **R3 — GeometryChain is IN the family.** Same verb names, same set
   algebra, daisy-chainable with mesh/results. But it is the **entity
   family**: `in_box` → `gmsh.getEntitiesInBoundingBox` (BRep
-  bbox-intersect); it cannot honor the half-open/`inclusive=` knob and
-  **raises `TypeError` if `inclusive=` is passed**. Honest
-  family-typed spatial contract.
+  bbox-**CONTAINMENT** — the whole entity bounding box must lie inside
+  the query box, the box expanded by `Geometry.Tolerance`≈1e-8; this is
+  *closed*, **not** an intersect and **not** half-open); it cannot
+  honor the half-open/`inclusive=` knob and **raises `TypeError` if
+  `inclusive=` is passed**. Honest family-typed spatial contract.
 - **R2 — naming enforcement = `__init_subclass__` (definition-time)
   AND the CI contract test.** A chainable subclass missing/renaming a
   verb fails at import; the CI test additionally asserts per-family
@@ -270,12 +288,29 @@ contract test (never cross-family identity). Gate: S0a polarity guard
 green every commit; legacy Selection characterization unchanged; new
 chains daisy-chain across all 4 levels in a smoke test.
 
-### S5 — close the `selection=` silent-empty hole (S/M)
+### S5 — fail-loud sweep (S/M) — THREE distinct items
 
-Import-origin fem (`from_msh`/MPCO/native, `mesh_selection=None`) +
-`selection=` must **fail loud** (mirror the already-correct
-`results/capture/spec.py:936,971` pattern), never resolve empty. Add
-the guard once in the shared engine + a regression test.
+S0b/S3 characterization pinned three current silent-wrong paths; S5
+makes each fail loud (each its own pin-flip + regression test):
+
+1. **Results `selection=` on import-origin fem** — `from_msh`/MPCO/
+   native produce `mesh_selection=None` (`mesh/FEMData.py:1119,1124`).
+   `results/_composites.py:294-301` already raises `RuntimeError`
+   here — S5 keeps/locks it loud (regression test), mirroring the
+   already-correct `results/capture/spec.py:936,971` pattern.
+2. **Loads `__ms__` consumer** — `LoadsComposite._target_nodes`
+   (`~:1052-1053`) does `if info is None: return set()`, silently
+   binding a load to nothing. Convert to a raise. (This is the
+   `__ms__` *consumer*, distinct from the S1 `core/_resolution.py`
+   resolver — the guard belongs in `_target_nodes`, not the shared
+   resolver.)
+3. **Clip-silent element centroids** — `results/_composites.py`
+   `_element_centroids` uses `np.clip` to map a missing connectivity
+   node id to the last node (silent centroid corruption) and backs
+   the *existing* `results.elements.in_box/nearest_to/...` helpers.
+   Make it fail loud (the new chain centroids are already fail-loud;
+   this fixes the legacy helper). Flagged via a spawn-task chip
+   during S3c.
 
 ---
 
@@ -300,3 +335,33 @@ the guard once in the shared engine + a regression test.
 - `apeGmsh.__file__` under the worktree for every in-process gate
   (editable install otherwise resolves to the main repo).
 - Delivery is via PR onto `origin/main` (worktree → PR).
+
+---
+
+## 9. Deferred / follow-on (decisions for after S3)
+
+S3 delivered the full daisy-chainable family at all four levels with
+legacy terminals byte-unchanged. Three items were consciously deferred
+(flagged, never silently skipped) and need a product/scope decision:
+
+1. **Persistence parity — `.save_as(name)`.** A chained selection at
+   the broker/mesh/results levels is currently query-only; it cannot
+   be registered so it round-trips as a named `selection=` through the
+   FEMData snapshot. This was explicitly deferred to "S3 with real
+   usage"; real usage now exists. Decision: add a detached
+   `.save_as(name)` store (registers into the `mesh_selection`-style
+   store, round-trips via HDF5) vs leave the broker/results levels
+   query-only (named persistence stays a pre-mesh `g.mesh_selection`
+   author-time concern).
+2. **Results sub-composites `.select()`.** `results.nodes`/`elements`
+   have `.select()`; the five element sub-composites
+   (`gauss`/`fibers`/`layers`/`line_stations`/`springs`) do not — each
+   has a distinct reader/slab and `fibers`/`layers` carry extra
+   terminal kwargs (`gp_indices=`/`layer_indices=`). The pattern is
+   uniform/extensible; it needs per-terminal kwarg forwarding. Decide:
+   a follow-on sub-phase (S3f) vs a tracked task.
+3. **`g.mesh_selection.select()` name-seed.** S3d delivers `ids=`/
+   full-universe seeding + spatial daisy-chain; seeding by an existing
+   set name / gmsh PG / label was *not* delivered (would require
+   reimplementing resolution, which the contract forbids). Tied to (1)
+   and a shared resolver decision.
