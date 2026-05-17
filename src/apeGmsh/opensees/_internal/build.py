@@ -491,13 +491,17 @@ def emit_transform_specs(
     fem: "FEMData",
     tags: TagAllocator,
     spec_to_own_tag: dict[int, int],
+    ndm: int = 3,
 ) -> dict[tuple[int, int], int]:
     """Emit ``geomTransf`` lines for every transform spec.
 
     For non-orientation transforms (explicit ``vecxz=``), one line
     per spec using the spec's own allocated tag — that's the path
     :class:`Linear` / :class:`PDelta` / :class:`Corotational` already
-    handle in their ``_emit``.
+    handle in their ``_emit``. When ``ndm == 2`` and such a transform
+    has neither ``vecxz`` nor ``orientation``, the bare 2-D form
+    ``geomTransf <Type> $tag`` is emitted here instead (the primitive
+    ``_emit`` requires a ``vecxz`` and doesn't know ``ndm``).
 
     For orientation-bearing transforms, the bridge:
 
@@ -533,8 +537,21 @@ def emit_transform_specs(
     for transf in transforms:
         own_tag = spec_to_own_tag[id(transf)]
         if not is_orientation_transform(transf):
-            # Explicit vecxz path — drive the spec's own _emit once.
-            transf._emit(emitter, own_tag)
+            # No orientation fan-out. Either an explicit vecxz= (3D —
+            # one line, the spec's own _emit) or the bare 2D form
+            # (``geomTransf <Type> $tag`` with no vecxz vector, which
+            # is required in 2D and invalid in 3D). The primitive's
+            # _emit can't take this branch because it doesn't know ndm.
+            bare_2d = (
+                ndm == 2
+                and type(transf) in _TRANSF_TYPE_TOKEN
+                and getattr(transf, "vecxz", None) is None
+                and getattr(transf, "orientation", None) is None
+            )
+            if bare_2d:
+                emitter.geomTransf(_TRANSF_TYPE_TOKEN[type(transf)], own_tag)
+            else:
+                transf._emit(emitter, own_tag)
             continue
 
         # FEM-aware orientations (e.g. AlongBeam) declare a bind_fem

@@ -310,6 +310,7 @@ class BuiltModel:
             fem=self.fem,
             tags=tags,
             spec_to_own_tag=self.tag_for,
+            ndm=self.ndm,
         )
 
         # 6. Elements — fan out across PG with per-element-vecxz overrides
@@ -329,6 +330,15 @@ class BuiltModel:
         # the typical OpenSees deck order: model -> bcs -> patterns).
         self._emit_fixes(emitter)
         self._emit_masses(emitter)
+
+        # 7a. Broker nodal loads (ADR 0001 — the bridge reads
+        # ``fem.nodes.loads`` directly). These come from session-side
+        # ``g.loads.*`` declarations; the records carry a pattern name
+        # but no OpenSees timeSeries/pattern, so we synthesize one
+        # ``timeSeries Linear`` + ``pattern Plain`` per distinct
+        # pattern name. This lets a pure ``g.loads`` model drive a live
+        # run with no bridge ``ops.pattern`` primitive.
+        self._emit_broker_loads(emitter, tags)
 
         # 8. Patterns + recorders (post-element).
         for p in post_element:
@@ -361,6 +371,54 @@ class BuiltModel:
             return expand_pg_to_nodes(self.fem, pg)
         assert nodes is not None  # exactly-one-of validated at apeSees.fix
         return nodes
+
+    # -- Broker nodal-load fan-out (ADR 0001) -----------------------------
+
+    def _emit_broker_loads(
+        self, emitter: Emitter, tags: TagAllocator,
+    ) -> None:
+        """Emit ``fem.nodes.loads`` as synthesized Plain patterns.
+
+        No-op when the FEM snapshot exposes no ``nodes.loads`` (e.g.
+        hand-rolled test stubs) — broker loads are purely additive on
+        top of any registered bridge primitives.
+        """
+        nodes = getattr(self.fem, "nodes", None)
+        load_set = getattr(nodes, "loads", None)
+        if load_set is None:
+            return
+        by_pattern: dict[str, list[Any]] = {}
+        for rec in load_set:
+            by_pattern.setdefault(rec.pattern, []).append(rec)
+        for recs in by_pattern.values():
+            if not recs:
+                continue
+            ts_tag = tags.allocate("timeSeries")
+            pat_tag = tags.allocate("pattern")
+            emitter.timeSeries("Linear", ts_tag)
+            emitter.pattern_open("Plain", pat_tag, ts_tag)
+            for rec in recs:
+                emitter.load(
+                    int(rec.node_id), *self._broker_load_components(rec),
+                )
+            emitter.pattern_close()
+
+    def _broker_load_components(self, rec: Any) -> tuple[float, ...]:
+        """Map a DOF-agnostic ``NodalLoadRecord`` onto this model's ndf.
+
+        apeGmsh records store pure 3-D spatial force/moment vectors;
+        the bridge is the only layer that knows ``ndf``, so the DOF
+        mapping lives here (per the records' DOF-agnostic contract).
+        """
+        fx, fy, fz = rec.force_xyz or (0.0, 0.0, 0.0)
+        mx, my, mz = rec.moment_xyz or (0.0, 0.0, 0.0)
+        if self.ndf == 2:
+            return (fx, fy)
+        if self.ndf == 3:                 # planar frame: ux, uy, rz
+            return (fx, fy, mz)
+        if self.ndf == 6:
+            return (fx, fy, fz, mx, my, mz)
+        return (fx, fy, fz, mx, my, mz)[: self.ndf]
 
 
 # ---------------------------------------------------------------------------

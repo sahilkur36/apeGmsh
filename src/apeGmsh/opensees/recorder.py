@@ -33,7 +33,8 @@ OpenSees command shapes
     recorder Element -file fname [-time] [-dT dT] [-ele e...]
                                  response_tokens...
     recorder mpco    fname.mpco  [-N nodal_responses...]
-                                 [-E elem_responses...]  [-T dT_or_nsteps]
+                                 [-E elem_responses...]
+                                 [-T dt $dt | -T nsteps $n]
 
 The ``-time`` flag (when ``time_format="dt"``) instructs OpenSees to
 include the simulation-time column in the output file. The default
@@ -259,7 +260,7 @@ class MPCO(Recorder):
 
         recorder mpco fname.mpco [-N nodal_responses...]
                                  [-E elem_responses...]
-                                 [-T dT_or_nsteps]
+                                 [-T dt $dt | -T nsteps $n]
 
     The MPCO recorder captures the full response tensor for each
     requested token (no per-DOF selection at write time); STKO /
@@ -317,9 +318,9 @@ class MPCO(Recorder):
         if self.elem_responses:
             args += ["-E", *self.elem_responses]
         if self.dT is not None:
-            args += ["-T", self.dT]
+            args += ["-T", "dt", self.dT]
         elif self.nsteps is not None:
-            args += ["-T", self.nsteps]
+            args += ["-T", "nsteps", self.nsteps]
         emitter.recorder("mpco", *args)
 
 
