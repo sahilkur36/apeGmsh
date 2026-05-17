@@ -207,6 +207,7 @@ class MeshSelectionSet(_HasLogging):
         closest_to: tuple | None = None,
         count: int = 1,
         predicate: Callable[[np.ndarray], np.ndarray] | None = None,
+        inclusive: bool = False,
     ) -> int:
         """Create a node set (dim=0) from spatial queries.
 
@@ -215,11 +216,15 @@ class MeshSelectionSet(_HasLogging):
         name : label for the set
         tag : explicit tag (-1 = auto)
         on_plane : (axis, value, atol) — e.g. ("z", 0.0, 1e-3)
-        in_box : (xmin, ymin, zmin, xmax, ymax, zmax)
+        in_box : (xmin, ymin, zmin, xmax, ymax, zmax). Half-open on the
+            upper side by default (a node exactly on an upper face is
+            excluded, matching results-side box semantics).
         in_sphere : (cx, cy, cz, radius)
         closest_to : (x, y, z) — use *count* to select N nearest
         count : number of nearest nodes (used with closest_to)
         predicate : fn(coords(N,3)) -> bool mask(N,)
+        inclusive : if True, ``in_box`` uses a closed upper bound
+            (restores the pre-S2 closed-closed behavior).
 
         Returns
         -------
@@ -234,7 +239,7 @@ class MeshSelectionSet(_HasLogging):
             mask &= _flt.nodes_on_plane(all_coords, axis, value, atol)
 
         if in_box is not None:
-            mask &= _flt.nodes_in_box(all_coords, in_box)
+            mask &= _flt.nodes_in_box(all_coords, in_box, inclusive=inclusive)
 
         if in_sphere is not None:
             cx, cy, cz, r = in_sphere
@@ -260,6 +265,7 @@ class MeshSelectionSet(_HasLogging):
         in_box: tuple | list | None = None,
         on_plane: tuple | None = None,
         predicate: Callable[[np.ndarray], np.ndarray] | None = None,
+        inclusive: bool = False,
     ) -> int:
         """Create an element set from spatial queries.
 
@@ -268,9 +274,13 @@ class MeshSelectionSet(_HasLogging):
         dim : element dimension (1, 2, or 3)
         name : label
         tag : explicit tag (-1 = auto)
-        in_box : select elements whose centroid is inside box
+        in_box : select elements whose centroid is inside box. Half-open
+            on the upper side by default (a centroid exactly on an upper
+            face is excluded, matching results-side box semantics).
         on_plane : select elements with all nodes on plane
         predicate : fn(centroids(E,3)) -> bool mask(E,)
+        inclusive : if True, ``in_box`` uses a closed upper bound
+            (restores the pre-S2 closed-closed behavior).
 
         Returns
         -------
@@ -296,7 +306,7 @@ class MeshSelectionSet(_HasLogging):
 
         if in_box is not None:
             centroids = _flt.element_centroids(conn, id_to_idx, all_coords)
-            mask &= _flt.elements_in_box(centroids, in_box)
+            mask &= _flt.elements_in_box(centroids, in_box, inclusive=inclusive)
 
         if on_plane is not None:
             axis, value = on_plane[0], on_plane[1]
@@ -585,6 +595,7 @@ class MeshSelectionSet(_HasLogging):
         closest_to: tuple | None = None,
         count: int = 1,
         predicate: Callable[[np.ndarray], np.ndarray] | None = None,
+        inclusive: bool = False,
     ) -> int:
         """Refine an existing set with spatial filters -> create a new set.
 
@@ -597,7 +608,10 @@ class MeshSelectionSet(_HasLogging):
         dim, tag : source set identifier
         name, new_tag : identifier for the resulting set
         on_plane, in_box, in_sphere, closest_to, predicate :
-            same semantics as :meth:`add_nodes`
+            same semantics as :meth:`add_nodes` (``in_box`` is half-open
+            on the upper side by default)
+        inclusive : if True, ``in_box`` uses a closed upper bound
+            (restores the pre-S2 closed-closed behavior).
 
         Returns
         -------
@@ -628,7 +642,7 @@ class MeshSelectionSet(_HasLogging):
             atol = on_plane[2] if len(on_plane) > 2 else 1e-6
             mask &= _flt.nodes_on_plane(coords, axis, value, atol)
         if in_box is not None:
-            mask &= _flt.nodes_in_box(coords, in_box)
+            mask &= _flt.nodes_in_box(coords, in_box, inclusive=inclusive)
         if in_sphere is not None:
             cx, cy, cz, r = in_sphere
             mask &= _flt.nodes_in_sphere(coords, (cx, cy, cz), r)

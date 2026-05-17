@@ -173,11 +173,11 @@ def _selection_mixin(fem):
 # S2 flips the mesh side to half-open (+ an `inclusive=` escape) and
 # MUST update these two assertions in the same commit.
 
-def test_item1_mesh_box_is_closed_closed_includes_upper_face():
-    # pin: src/apeGmsh/mesh/_mesh_filters.py:62-66
-    #   nodes_in_box uses `<= xmax/ymax/zmax` (CLOSED upper).
-    # why pinned: S2 flips this to `< hi` (half-open). This assertion
-    #   is the before-side of that decided behavior change.
+def test_item1_mesh_box_is_half_open_excludes_upper_face():
+    # pin: src/apeGmsh/mesh/_mesh_filters.py nodes_in_box
+    #   S2: reconciled closed->half-open (was `<= xmax/ymax/zmax`,
+    #   now `< xmax/ymax/zmax`), matching results/_composites.py
+    #   _node_ids_in_box. inclusive=True restores the old closed upper.
     coords = np.array(
         [
             [0.0, 0.0, 0.0],   # interior corner (on lower bound)
@@ -189,21 +189,30 @@ def test_item1_mesh_box_is_closed_closed_includes_upper_face():
     )
     bbox = (0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
     mask = _flt.nodes_in_box(coords, bbox)
-    # CLOSED: every point, including the two on the upper face, is in.
-    assert mask.tolist() == [True, True, True, True]
+    # S2: reconciled closed->half-open (was [True, True, True, True]).
+    # HALF-OPEN: the two on-upper-face points are now EXCLUDED.
+    assert mask.tolist() == [True, True, False, False]
+    # inclusive=True reproduces the OLD closed-closed result.
+    mask_closed = _flt.nodes_in_box(coords, bbox, inclusive=True)
+    assert mask_closed.tolist() == [True, True, True, True]
 
 
-def test_item1_mesh_elements_in_box_inherits_closed():
-    # pin: src/apeGmsh/mesh/_mesh_filters.py:163
-    #   elements_in_box delegates straight to nodes_in_box, so element
-    #   centroids on the upper face are CLOSED-included too.
-    # why pinned: S2's mesh-box flip reaches elements via this exact
-    #   delegation; pin the inherited closed semantics.
+def test_item1_mesh_elements_in_box_inherits_half_open():
+    # pin: src/apeGmsh/mesh/_mesh_filters.py elements_in_box
+    #   elements_in_box delegates straight to nodes_in_box, so it
+    #   inherits S2's closed->half-open flip (and the inclusive= escape).
+    # S2: reconciled closed->half-open (was [True, True]).
     cent = np.array(
         [[0.5, 0.5, 0.5], [1.0, 1.0, 1.0]], dtype=np.float64
     )
     mask = _flt.elements_in_box(cent, (0.0, 0.0, 0.0, 1.0, 1.0, 1.0))
-    assert mask.tolist() == [True, True]
+    # HALF-OPEN: the on-upper-face centroid is now EXCLUDED.
+    assert mask.tolist() == [True, False]
+    # inclusive=True reproduces the OLD closed result via the delegation.
+    mask_closed = _flt.elements_in_box(
+        cent, (0.0, 0.0, 0.0, 1.0, 1.0, 1.0), inclusive=True
+    )
+    assert mask_closed.tolist() == [True, True]
 
 
 def test_item1_results_box_is_half_open_excludes_upper_face():
@@ -262,10 +271,14 @@ def test_item1_results_element_box_is_half_open():
     assert ids.tolist() == [100]
 
 
-def test_item1_mesh_and_results_box_diverge_on_main():
-    # The single load-bearing fact S2 reconciles: identical box,
-    # identical on-face point, OPPOSITE answers, on `main`, today.
-    # pin: _mesh_filters.py:62-66 (closed) vs _composites.py:82 (half-open)
+def test_item1_mesh_and_results_box_reconciled_in_s2():
+    # S2: reconciled closed->half-open. Pre-S2 this test asserted the
+    # DIVERGENCE (mesh CLOSED includes the on-face point, results
+    # HALF-OPEN excludes it -> mesh != results). After S2 the mesh box
+    # matches the results box: identical box, identical on-face point,
+    # SAME answer. Converted from divergence pin to a parity pin.
+    # ref: _mesh_filters.py nodes_in_box (now half-open, was closed)
+    #      == _composites.py:82 _node_ids_in_box (half-open reference).
     on_face = np.array([[1.0, 1.0, 1.0]], dtype=np.float64)
     bbox = (0.0, 0.0, 0.0, 1.0, 1.0, 1.0)
     mesh_in = bool(_flt.nodes_in_box(on_face, bbox)[0])
@@ -276,9 +289,15 @@ def test_item1_mesh_and_results_box_diverge_on_main():
     results_in = _rc._node_ids_in_box(
         fem, (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
     ).size > 0
-    assert mesh_in is True            # mesh: CLOSED includes it
-    assert results_in is False        # results: HALF-OPEN excludes it
-    assert mesh_in != results_in      # the divergence, asserted
+    assert mesh_in is False           # mesh: now HALF-OPEN (was True)
+    assert results_in is False        # results: HALF-OPEN (unchanged)
+    assert mesh_in == results_in      # PARITY (was the divergence)
+    # The inclusive= escape restores the OLD divergent mesh answer.
+    mesh_in_closed = bool(
+        _flt.nodes_in_box(on_face, bbox, inclusive=True)[0]
+    )
+    assert mesh_in_closed is True     # pre-S2 closed behavior, on demand
+    assert mesh_in_closed != results_in
 
 
 # =====================================================================
@@ -302,43 +321,118 @@ def test_item2_total_lattice_is_deterministic(box_fem):
     assert n_elems == 8
 
 
-def test_item2_add_nodes_in_box_closed_count(box_fem):
-    # pin: src/apeGmsh/mesh/MeshSelectionSet.py:237
-    #   add_nodes(in_box=) -> _flt.nodes_in_box (CLOSED).
-    # why pinned: S2 flips the underlying box; the upper-face plane of
-    #   9 nodes currently counts. Box (0,0,0)-(1,1,1) covers ALL 27.
+def test_item2_add_nodes_in_box_half_open_count(box_fem):
+    # pin: src/apeGmsh/mesh/MeshSelectionSet.py add_nodes(in_box=)
+    #   -> _flt.nodes_in_box. S2: reconciled closed->half-open (was 27).
+    # The box (0,0,0)-(1,1,1) under half-open keeps only nodes with
+    # x<1 & y<1 & z<1 -> each axis in {0.0, 0.5} -> 2*2*2 = 8.
+    # The three upper-face planes (x==1, y==1, z==1) are now excluded.
     ids = box_fem.mesh_selection.node_ids("allbox")
-    assert len(ids) == 27
+    assert len(ids) == 8     # S2: was 27 (closed included all faces)
+    # inclusive=True restores the OLD closed count (all 27 nodes).
+    g = apeGmsh(model_name="s2_recover_allbox", verbose=False)
+    g.begin()
+    try:
+        g.model.geometry.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+                                 label="box")
+        g.physical.add_volume("box", name="Body")
+        g.mesh.structured.set_transfinite_box("box", n=3)
+        g.mesh.generation.generate(dim=3)
+        g.mesh_selection.add_nodes(
+            in_box=(0, 0, 0, 1, 1, 1), name="closed", inclusive=True)
+        fem2 = g.mesh.queries.get_fem_data(dim=3)
+    finally:
+        g.end()
+    assert len(fem2.mesh_selection.node_ids("closed")) == 27
 
 
-def test_item2_add_elements_in_box_closed_count(box_fem):
-    # pin: src/apeGmsh/mesh/MeshSelectionSet.py:299
-    #   add_elements(in_box=) -> _flt.elements_in_box (CLOSED).
-    # why pinned: S2 flips the box; all 8 hex centroids are inside
-    #   (0,0,0)-(1,1,1) regardless, but pin the current count so a
-    #   half-open regression on an exactly-on-face centroid is caught.
+def test_item2_add_elements_in_box_half_open_count(box_fem):
+    # pin: src/apeGmsh/mesh/MeshSelectionSet.py add_elements(in_box=)
+    #   -> _flt.elements_in_box. S2: reconciled closed->half-open.
+    #   The 8 hex centroids sit at {0.25, 0.75} per axis -> all
+    #   strictly < 1, so the half-open box (0,0,0)-(1,1,1) still keeps
+    #   all 8 (no centroid lies exactly on a face). Count is unchanged
+    #   at 8; the value is pinned so an off-by-one half-open vs closed
+    #   regression on an on-face centroid is still caught.
     ids = box_fem.mesh_selection.element_ids("allelem")
-    assert len(ids) == 8
+    assert len(ids) == 8     # S2: unchanged (no on-face centroid)
+    # inclusive=True yields the same 8 here (no on-face centroid to
+    # discriminate) -> proves the escape is wired without changing this
+    # particular count.
+    g = apeGmsh(model_name="s2_recover_allelem", verbose=False)
+    g.begin()
+    try:
+        g.model.geometry.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+                                 label="box")
+        g.physical.add_volume("box", name="Body")
+        g.mesh.structured.set_transfinite_box("box", n=3)
+        g.mesh.generation.generate(dim=3)
+        g.mesh_selection.add_elements(
+            dim=3, in_box=(0, 0, 0, 1, 1, 1), name="closed",
+            inclusive=True)
+        fem2 = g.mesh.queries.get_fem_data(dim=3)
+    finally:
+        g.end()
+    assert len(fem2.mesh_selection.element_ids("closed")) == 8
 
 
-def test_item2_add_nodes_half_box_includes_split_plane(box_fem):
-    # pin: src/apeGmsh/mesh/MeshSelectionSet.py:237 (CLOSED upper)
-    #   Box x in [0, 0.5]: the x==0.5 plane (9 nodes) is INCLUDED
-    #   because the upper bound is closed -> 2 planes * 9 = 18 nodes.
-    # why pinned: THIS is the count S2 changes. Under half-open the
-    #   x==0.5 plane drops -> 9. The 18 here is the before-flip pin.
+def test_item2_add_nodes_half_box_excludes_split_plane(box_fem):
+    # pin: src/apeGmsh/mesh/MeshSelectionSet.py add_nodes(in_box=)
+    #   S2: reconciled closed->half-open (was 18).
+    #   Box (0,0,0)-(0.5,1,1): under half-open the x==0.5 split plane
+    #   is EXCLUDED (and the y==1, z==1 upper-face planes too), so only
+    #   nodes with x<0.5 & y<1 & z<1 survive: x in {0.0}, y in
+    #   {0.0,0.5}, z in {0.0,0.5} -> 1*2*2 = 4.
+    #   (Pre-S2 closed kept the x==0.5 plane: 2*9 = 18.)
     ids = box_fem.mesh_selection.node_ids("halfbox")
-    assert len(ids) == 18
+    assert len(ids) == 4     # S2: was 18 (closed kept the x==0.5 plane)
+    # inclusive=True restores the OLD closed count (18).
+    g = apeGmsh(model_name="s2_recover_halfbox", verbose=False)
+    g.begin()
+    try:
+        g.model.geometry.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+                                 label="box")
+        g.physical.add_volume("box", name="Body")
+        g.mesh.structured.set_transfinite_box("box", n=3)
+        g.mesh.generation.generate(dim=3)
+        g.mesh_selection.add_nodes(
+            in_box=(0, 0, 0, 0.5, 1, 1), name="closed", inclusive=True)
+        fem2 = g.mesh.queries.get_fem_data(dim=3)
+    finally:
+        g.end()
+    assert len(fem2.mesh_selection.node_ids("closed")) == 18
 
 
-def test_item2_filter_set_in_box_closed_count(box_fem):
-    # pin: src/apeGmsh/mesh/MeshSelectionSet.py:631
-    #   filter_set(in_box=) -> _flt.nodes_in_box (CLOSED).
-    # why pinned: filter_set is a third caller of the closed box; S2
-    #   must flip it too. Refining allbox to x in [0,0.5] keeps the
-    #   x==0.5 plane -> 18 (same as add_nodes half box).
+def test_item2_filter_set_in_box_half_open_count(box_fem):
+    # pin: src/apeGmsh/mesh/MeshSelectionSet.py filter_set(in_box=)
+    #   -> _flt.nodes_in_box. S2: reconciled closed->half-open (was 18).
+    #   filter_set is the third caller of the box. Here the effect is
+    #   CHAINED: `filtered` refines `allbox`, which is ITSELF now
+    #   half-open (8 nodes: x,y,z in {0.0,0.5}). Refining that by
+    #   (0,0,0)-(0.5,1,1) half-open keeps x<0.5 -> x in {0.0},
+    #   y in {0.0,0.5}, z in {0.0,0.5} -> 1*2*2 = 4.
+    #   (Pre-S2 both closed: allbox=27, refined to x==0.5 plane -> 18.)
     ids = box_fem.mesh_selection.node_ids("filtered")
-    assert len(ids) == 18
+    assert len(ids) == 4     # S2: was 18 (closed allbox + closed filter)
+    # inclusive=True on BOTH the source build and the filter restores
+    # the OLD closed count (allbox=27 -> filter keeps x<=0.5 -> 18).
+    g = apeGmsh(model_name="s2_recover_filtered", verbose=False)
+    g.begin()
+    try:
+        g.model.geometry.add_box(0.0, 0.0, 0.0, 1.0, 1.0, 1.0,
+                                 label="box")
+        g.physical.add_volume("box", name="Body")
+        g.mesh.structured.set_transfinite_box("box", n=3)
+        g.mesh.generation.generate(dim=3)
+        n_tag = g.mesh_selection.add_nodes(
+            in_box=(0, 0, 0, 1, 1, 1), name="allbox_c", inclusive=True)
+        g.mesh_selection.filter_set(
+            0, n_tag, in_box=(0, 0, 0, 0.5, 1, 1), name="filtered_c",
+            inclusive=True)
+        fem2 = g.mesh.queries.get_fem_data(dim=3)
+    finally:
+        g.end()
+    assert len(fem2.mesh_selection.node_ids("filtered_c")) == 18
 
 
 # =====================================================================
