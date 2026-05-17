@@ -604,12 +604,53 @@ def _encode_surface_coupling(rec: Any) -> tuple[Any, ...]:
         if len(op_shape) < 2:
             op_shape = (op_shape[0] if op_shape else 0, 0)
         op_arr = op_np.reshape(-1)
+    # slave_records (ragged list[InterpolationRecord]) — CSR-flatten so
+    # tied_contact (no mortar_operator) round-trips losslessly.
+    srs = list(getattr(rec, "slave_records", []) or [])
+    sr_slave_nodes: list[int] = []
+    sr_master_counts: list[int] = []
+    sr_master_nodes: list[int] = []
+    sr_weights: list[float] = []
+    sr_dof_counts: list[int] = []
+    sr_dofs: list[int] = []
+    sr_projected: list[float] = []
+    sr_parametric: list[float] = []
+    nan = float("nan")
+    for ir in srs:
+        m = [int(x) for x in np.asarray(ir.master_nodes).reshape(-1)]
+        if ir.weights is None:
+            w = [nan] * len(m)
+        else:
+            w = [float(x) for x in np.asarray(ir.weights).reshape(-1)]
+        d = [int(x) for x in np.asarray(ir.dofs).reshape(-1)]
+        sr_slave_nodes.append(int(ir.slave_node))
+        sr_master_counts.append(len(m))
+        sr_master_nodes.extend(m)
+        sr_weights.extend(w)
+        sr_dof_counts.append(len(d))
+        sr_dofs.extend(d)
+        pp = ir.projected_point
+        sr_projected.extend(
+            tuple(float(x) for x in np.asarray(pp).reshape(-1)[:3])
+            if pp is not None else (nan, nan, nan))
+        pc = ir.parametric_coords
+        sr_parametric.extend(
+            tuple(float(x) for x in np.asarray(pc).reshape(-1)[:2])
+            if pc is not None else (nan, nan))
     return (
         np.asarray(rec.master_nodes, dtype=np.int64),
         np.asarray(rec.slave_nodes, dtype=np.int64),
         np.asarray(rec.dofs, dtype=np.int64),
         op_shape,
         op_arr,
+        np.asarray(sr_slave_nodes, dtype=np.int64),
+        np.asarray(sr_master_counts, dtype=np.int64),
+        np.asarray(sr_master_nodes, dtype=np.int64),
+        np.asarray(sr_weights, dtype=np.float64),
+        np.asarray(sr_dof_counts, dtype=np.int64),
+        np.asarray(sr_dofs, dtype=np.int64),
+        np.asarray(sr_projected, dtype=np.float64),
+        np.asarray(sr_parametric, dtype=np.float64),
     )
 
 
@@ -858,8 +899,14 @@ def read_fem_h5(path: str) -> "FEMData":
         mesh_selection = _read_mesh_selections(f.get("mesh_selections"))
 
         # -- constraints (split node-side vs element-side by record type) --
+        # node_xyz lets _decode_node_to_surface re-derive the exact
+        # rigid-beam offsets (phantom_coord − master_coord).
+        node_xyz = {
+            int(t): node_coords[i]
+            for i, t in enumerate(node_ids.tolist())
+        }
         node_constraints, elem_constraints = _read_constraints(
-            f.get("constraints")
+            f.get("constraints"), node_xyz
         )
 
         # -- loads --
@@ -994,6 +1041,7 @@ def _read_mesh_selections(parent: Any):
 
 def _read_constraints(
     parent: Any,
+    node_xyz: dict[int, Any] | None = None,
 ) -> tuple[list[Any], list[Any]]:
     """Decode ``/constraints/{kind}`` datasets into node + element record lists.
 
@@ -1061,7 +1109,10 @@ def _read_constraints(
                 elem_records.append(
                     _decode_interpolation(row, InterpolationRecord)
                 )
-        elif payload_fields == SURFACE_COUPLING_FIELDS:
+        elif SURFACE_COUPLING_FIELDS <= payload_fields:
+            # Subset (not ==): newer files add sr_* slave_records
+            # fields; mortar_operator_shape is unique to this record so
+            # the subset match stays unambiguous and back-compatible.
             for row in rows:
                 elem_records.append(
                     _decode_surface_coupling(row, SurfaceCouplingRecord)
@@ -1069,7 +1120,8 @@ def _read_constraints(
         elif payload_fields == NODE_TO_SURFACE_FIELDS:
             for row in rows:
                 node_records.append(
-                    _decode_node_to_surface(row, NodeToSurfaceRecord)
+                    _decode_node_to_surface(
+                        row, NodeToSurfaceRecord, node_xyz)
                 )
         # else: unknown payload schema — skip silently (forward-compat)
 
@@ -1157,6 +1209,9 @@ def _decode_interpolation(row: Any, cls: type) -> Any:
 
 
 def _decode_surface_coupling(row: Any, cls: type) -> Any:
+    from .records._constraints import InterpolationRecord
+    from .records._kinds import ConstraintKind
+
     p = row["payload"]
     shape = tuple(int(x) for x in np.asarray(p["mortar_operator_shape"]))
     flat = np.asarray(p["mortar_operator"], dtype=np.float64).reshape(-1)
@@ -1164,6 +1219,47 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
         operator = None
     else:
         operator = flat.reshape(shape)
+
+    # slave_records: present only when the payload carries the sr_*
+    # fields.  Older files lack them → slave_records=[] (the historical
+    # behaviour, now explicit and detected structurally).
+    slave_records: list[Any] = []
+    names = set(p.dtype.names or ())
+    if "sr_slave_nodes" in names:
+        sn = np.asarray(p["sr_slave_nodes"], dtype=np.int64).reshape(-1)
+        mcount = np.asarray(p["sr_master_counts"], dtype=np.int64).reshape(-1)
+        mnodes = np.asarray(p["sr_master_nodes"], dtype=np.int64).reshape(-1)
+        wts = np.asarray(p["sr_weights"], dtype=np.float64).reshape(-1)
+        dcount = np.asarray(p["sr_dof_counts"], dtype=np.int64).reshape(-1)
+        dofs_flat = np.asarray(p["sr_dofs"], dtype=np.int64).reshape(-1)
+        proj = np.asarray(p["sr_projected"], dtype=np.float64).reshape(-1)
+        para = np.asarray(p["sr_parametric"], dtype=np.float64).reshape(-1)
+        m_off = 0
+        d_off = 0
+        for i in range(sn.size):
+            mc = int(mcount[i])
+            dc = int(dcount[i])
+            m = [int(x) for x in mnodes[m_off:m_off + mc]]
+            w_slice = wts[m_off:m_off + mc]
+            w = None if (w_slice.size and np.all(np.isnan(w_slice))) \
+                else [float(x) for x in w_slice]
+            d = [int(x) for x in dofs_flat[d_off:d_off + dc]]
+            m_off += mc
+            d_off += dc
+            pp = proj[3 * i:3 * i + 3]
+            pc = para[2 * i:2 * i + 2]
+            slave_records.append(InterpolationRecord(
+                kind=ConstraintKind.TIE,
+                slave_node=int(sn[i]),
+                master_nodes=m,
+                weights=w,
+                dofs=d,
+                projected_point=(None if np.all(np.isnan(pp))
+                                 else pp.astype(np.float64)),
+                parametric_coords=(None if np.all(np.isnan(pc))
+                                   else pc.astype(np.float64)),
+            ))
+
     return cls(
         kind=_kind(row),
         master_nodes=[
@@ -1174,26 +1270,63 @@ def _decode_surface_coupling(row: Any, cls: type) -> Any:
         ],
         dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
         mortar_operator=operator,
+        slave_records=slave_records,
     )
 
 
-def _decode_node_to_surface(row: Any, cls: type) -> Any:
+def _decode_node_to_surface(
+    row: Any, cls: type,
+    node_xyz: dict[int, Any] | None = None,
+) -> Any:
+    from .records._constraints import NodePairRecord
+    from .records._kinds import ConstraintKind
+
     p = row["payload"]
-    slaves = np.asarray(p["slave_nodes"], dtype=np.int64).reshape(-1)
+    slaves = [int(x) for x in
+              np.asarray(p["slave_nodes"], dtype=np.int64).reshape(-1)]
+    phantoms = [int(x) for x in
+                np.asarray(p["phantom_nodes"], dtype=np.int64).reshape(-1)]
+    dofs = [int(x) for x in np.asarray(p["dofs"], dtype=np.int64).reshape(-1)]
+    master = int(p["master_node"])
     coords_flat = np.asarray(p["phantom_coords"], dtype=np.float64).reshape(-1)
     if coords_flat.size and coords_flat.size == 3 * len(slaves):
         phantom_coords = coords_flat.reshape(-1, 3)
     else:
         phantom_coords = None
+
+    # Re-derive the sub-records exactly as resolve_node_to_surface does
+    # (rigid_beam master->phantom, equalDOF phantom->slave).  These are
+    # NOT persisted but are fully determined by the high-level fields;
+    # without this, every iterator (rigid_link_groups / equal_dofs /
+    # pairs / stiff_beam_groups) returns empty after from_h5 and the
+    # reloaded model is silently disconnected.
+    m_xyz = None
+    if node_xyz is not None and master in node_xyz:
+        m_xyz = np.asarray(node_xyz[master], dtype=np.float64)
+    rigid_records: list[Any] = []
+    edof_records: list[Any] = []
+    for i, (ph, sl) in enumerate(zip(phantoms, slaves)):
+        offset = None
+        if m_xyz is not None and phantom_coords is not None:
+            offset = phantom_coords[i] - m_xyz
+        rigid_records.append(NodePairRecord(
+            kind=ConstraintKind.RIGID_BEAM,
+            master_node=master, slave_node=ph, offset=offset,
+        ))
+        edof_records.append(NodePairRecord(
+            kind=ConstraintKind.EQUAL_DOF,
+            master_node=ph, slave_node=sl, dofs=list(dofs),
+        ))
+
     return cls(
         kind=_kind(row),
-        master_node=int(p["master_node"]),
-        slave_nodes=[int(x) for x in slaves],
-        phantom_nodes=[
-            int(x) for x in np.asarray(p["phantom_nodes"]).reshape(-1)
-        ],
+        master_node=master,
+        slave_nodes=slaves,
+        phantom_nodes=phantoms,
         phantom_coords=phantom_coords,
-        dofs=[int(x) for x in np.asarray(p["dofs"]).reshape(-1)],
+        rigid_link_records=rigid_records,
+        equal_dof_records=edof_records,
+        dofs=dofs,
     )
 
 

@@ -136,11 +136,17 @@ def surface_coupling_payload_dtype() -> np.dtype:
     ``mortar_operator`` matrix is stored as a flat
     ``vlen-float64`` whose row-major shape is recorded in
     ``mortar_operator_shape`` (``(rows, cols)``); ``(0, 0)`` and an
-    empty flat array signal "no mortar operator".  The
-    per-slave-node ``slave_records`` list is NOT stored in the
-    compound — it is reconstructible from the broker's resolver
-    side (kept on the resolved FEMData snapshot) if a downstream
-    consumer needs it.
+    empty flat array signal "no mortar operator".
+
+    The per-slave-node ``slave_records`` list (one
+    :class:`InterpolationRecord` per slave for ``tied_contact``;
+    also carried by ``mortar``) **is** persisted, CSR-flattened
+    across the ``sr_*`` fields, so a ``tied_contact`` (which has no
+    ``mortar_operator``) round-trips losslessly instead of decoding
+    to a hollow coupling.  Older files lack the ``sr_*`` fields; the
+    reader detects their absence structurally (by payload-field
+    signature, not schema version) and yields ``slave_records=[]``
+    (the legacy behaviour) for them.
     """
     return np.dtype([
         ("master_nodes", _vlen(np.int64)),
@@ -148,6 +154,16 @@ def surface_coupling_payload_dtype() -> np.dtype:
         ("dofs", _vlen(np.int64)),
         ("mortar_operator_shape", np.int64, (2,)),
         ("mortar_operator", _vlen(np.float64)),
+        # slave_records (per-slave InterpolationRecord) — CSR-flattened
+        # so the ragged list round-trips without a nested dtype.
+        ("sr_slave_nodes", _vlen(np.int64)),     # (n_sr,)
+        ("sr_master_counts", _vlen(np.int64)),   # (n_sr,) split sizes
+        ("sr_master_nodes", _vlen(np.int64)),    # concat, split by counts
+        ("sr_weights", _vlen(np.float64)),       # concat, same split
+        ("sr_dof_counts", _vlen(np.int64)),      # (n_sr,) split sizes
+        ("sr_dofs", _vlen(np.int64)),            # concat, split by dof_counts
+        ("sr_projected", _vlen(np.float64)),     # 3*n_sr (NaN per missing)
+        ("sr_parametric", _vlen(np.float64)),    # 2*n_sr (NaN per missing)
     ])
 
 

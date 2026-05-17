@@ -69,6 +69,11 @@ def test_surface_coupling_payload_fields() -> None:
     assert dt.names == (
         "master_nodes", "slave_nodes", "dofs",
         "mortar_operator_shape", "mortar_operator",
+        # slave_records, CSR-flattened (tied_contact/mortar lossless
+        # round-trip); older files lack these and decode to [].
+        "sr_slave_nodes", "sr_master_counts", "sr_master_nodes",
+        "sr_weights", "sr_dof_counts", "sr_dofs",
+        "sr_projected", "sr_parametric",
     )
     assert dt["mortar_operator_shape"].shape == (2,)
 
