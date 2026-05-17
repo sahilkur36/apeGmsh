@@ -141,9 +141,24 @@ def _element_centroids(fem) -> tuple[ndarray, ndarray]:
             continue
         flat = np.asarray(conn, dtype=np.int64).ravel()
         loc = np.searchsorted(sorted_node_ids, flat)
-        # Guard against any node IDs not in the FEM (shouldn't happen,
-        # but if it does, np.searchsorted returns len(sorted_node_ids)).
-        loc = np.clip(loc, 0, len(sorted_node_ids) - 1)
+        # Fail loud on any connectivity entry pointing at a node ID
+        # absent from the FEM. searchsorted returns len(sorted_node_ids)
+        # for an ID past the maximum; for any other missing ID it lands
+        # on an in-range slot whose value does not equal the requested
+        # ID. Either way the centroid would be silently corrupted.
+        in_range = loc < sorted_node_ids.size
+        known = np.zeros(flat.shape, dtype=bool)
+        known[in_range] = sorted_node_ids[loc[in_range]] == flat[in_range]
+        if not known.all():
+            bad_flat = int(np.flatnonzero(~known)[0])
+            elem_idx = int(np.unravel_index(bad_flat, conn.shape)[0])
+            bad_elem = int(np.asarray(ids, dtype=np.int64)[elem_idx])
+            bad_node = int(flat[bad_flat])
+            raise KeyError(
+                f"element {bad_elem} references node {bad_node} which is "
+                f"not in the FEM node set — refusing to compute a "
+                f"corrupted centroid (fail loud)"
+            )
         orig = inverse_perm[loc]
         node_xyz = coords[orig].reshape(conn.shape + (3,))
         cent = node_xyz.mean(axis=1)
