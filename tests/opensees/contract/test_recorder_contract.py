@@ -75,7 +75,7 @@ class TestRecorderContract:
         assert is_dataclass(cls), f"{cls.__name__} is not a dataclass"
         params: Any = cast(Any, cls).__dataclass_params__
         assert params.frozen, f"{cls.__name__} dataclass is not frozen"
-        assert params.kw_only, f"{cls.__name__} dataclass is not kw_only"
+        assert all(f.kw_only for f in fields(cls)), f"{cls.__name__} dataclass is not kw_only"
 
     def test_has_slots(self, cls: type[Recorder]) -> None:
         # @dataclass(slots=True) sets __slots__ on the class.

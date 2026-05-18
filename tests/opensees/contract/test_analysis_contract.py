@@ -19,7 +19,7 @@ the contract suite picks them up automatically.
 """
 from __future__ import annotations
 
-from dataclasses import is_dataclass
+from dataclasses import fields, is_dataclass
 from typing import Any
 
 import pytest
@@ -274,7 +274,7 @@ class TestAnalysisComponentContract:
         assert is_dataclass(cls), f"{cls.__name__} is not a dataclass"
         params = cls.__dataclass_params__  # type: ignore[attr-defined]
         assert params.frozen, f"{cls.__name__} dataclass is not frozen"
-        assert params.kw_only, f"{cls.__name__} dataclass is not kw_only"
+        assert all(f.kw_only for f in fields(cls)), f"{cls.__name__} dataclass is not kw_only"
 
     def test_has_slots(self, cls: type[Primitive]) -> None:
         assert hasattr(cls, "__slots__"), (

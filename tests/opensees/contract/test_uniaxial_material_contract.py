@@ -17,7 +17,7 @@ emit covers them automatically.
 """
 from __future__ import annotations
 
-from dataclasses import is_dataclass
+from dataclasses import fields, is_dataclass
 from typing import Any
 
 import pytest
@@ -97,7 +97,7 @@ class TestUniaxialMaterialContract:
         assert is_dataclass(cls)
         params = cls.__dataclass_params__  # type: ignore[attr-defined]
         assert params.frozen
-        assert params.kw_only
+        assert all(f.kw_only for f in fields(cls))
 
     def test_implements_emit(self, cls: type[UniaxialMaterial]) -> None:
         assert "_emit" in cls.__dict__

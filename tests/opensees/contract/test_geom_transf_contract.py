@@ -51,7 +51,7 @@ class TestGeomTransfContract:
         assert is_dataclass(cls)
         params = cls.__dataclass_params__  # type: ignore[attr-defined]
         assert params.frozen, f"{cls.__name__} is not frozen"
-        assert params.kw_only, f"{cls.__name__} is not kw_only"
+        assert all(f.kw_only for f in fields(cls)), f"{cls.__name__} is not kw_only"
 
     def test_has_slots(self, cls: type[GeomTransf]) -> None:
         # slots=True on a dataclass installs __slots__ on the class.

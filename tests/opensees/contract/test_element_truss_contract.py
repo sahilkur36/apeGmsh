@@ -101,7 +101,7 @@ class TestTrussElementContract:
         assert is_dataclass(cls), f"{cls.__name__} is not a dataclass"
         params: Any = cls.__dataclass_params__  # type: ignore[attr-defined]
         assert params.frozen, f"{cls.__name__} dataclass not frozen"
-        assert params.kw_only, f"{cls.__name__} dataclass not kw_only"
+        assert all(f.kw_only for f in fields(cls)), f"{cls.__name__} dataclass not kw_only"
         assert hasattr(cls, "__slots__"), (
             f"{cls.__name__} not slotted"
         )

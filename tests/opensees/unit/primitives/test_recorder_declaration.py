@@ -169,7 +169,7 @@ class TestRecorderRecordShape:
         assert is_dataclass(RecorderRecord)
         params = RecorderRecord.__dataclass_params__  # type: ignore[attr-defined]
         assert params.frozen
-        assert params.kw_only
+        assert all(f.kw_only for f in fields(RecorderRecord))
 
     def test_frozen_raises_on_mutation(self) -> None:
         r = RecorderRecord(category="nodes")
@@ -228,7 +228,7 @@ class TestRecorderDeclaration:
         assert is_dataclass(RecorderDeclaration)
         params = RecorderDeclaration.__dataclass_params__  # type: ignore[attr-defined]
         assert params.frozen
-        assert params.kw_only
+        assert all(f.kw_only for f in fields(RecorderDeclaration))
 
     def test_has_slots(self) -> None:
         assert hasattr(RecorderDeclaration, "__slots__")
