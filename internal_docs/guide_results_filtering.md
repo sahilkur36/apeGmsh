@@ -247,6 +247,46 @@ zero-row slab, no error).
 
 ---
 
+## 4a. `.select()` — the fluent, daisy-chainable idiom
+
+`results.nodes.select(...)` / `results.elements.select(...)` is the
+**canonical fluent form** of the additive composition above. It
+returns a `ResultChain` whose spatial verbs compose without nesting
+kwargs, and a terminal `.get(component=, time=, stage=)` reads the
+slab:
+
+```python
+slab = (results.nodes.select(pg="Base")          # candidate set
+            .in_box(lo, hi)                       # narrow
+            .on_plane(p, n, tol=1e-6)             # narrow again
+            .get(component="displacement_z"))     # terminal read
+
+# set algebra between selections (same level + same Results)
+sel = results.nodes.select(ids=a) | results.nodes.select(ids=b)
+sel.get(component="reaction_force_z", time=-1)
+```
+
+`.select()` accepts the **same selectors** as `.get()`
+(`pg=` / `label=` / `selection=` / `ids=`; no selector seeds every
+domain node) and delegates name resolution to the **exact same
+resolver** `.get()` uses — so `select(...).get(...)` is id-for-id
+identical to the equivalent `get(...)`. The spatial verbs share the
+same point-family semantics documented in §3 (`in_box` half-open
+`[lo, hi)`, `in_sphere` closed ball, `on_plane` normalised). The bare
+`.result()` terminal deliberately **raises** a directive
+`RuntimeError` — a results selection identifies *where* to read but a
+slab read still needs *what* (a component), so always finish with
+`.get(component=...)`.
+
+> [!note] `.select()` is **additive** — `.get()` and the spatial
+> helpers are unchanged
+> Everything in §2–§4 still works exactly as before. `.select()` is a
+> new fluent surface beside the existing one, not a replacement, and
+> not a facade over it. Use whichever reads better at the call site.
+> Maintainer invariants: [The Selection Chain](guide_selection_chain.md).
+
+---
+
 ## 5. The five-shape slab dataclass
 
 Every `.get()` (and every spatial helper) returns a frozen
@@ -564,6 +604,15 @@ responsibility. When a query returns nothing unexpectedly, call
 `results.inspect.diagnose("<component>")` for a per-level routing
 report.
 
+> [!warning] `selection=` on an import-origin FEMData now fails loud (S5)
+> A `FEMData` reconstructed from `from_msh` / MPCO / native HDF5 has
+> no mesh-selection store (`mesh_selection=None`). Passing
+> `selection="..."` (or `.select(selection=...)`) against such a
+> FEMData used to silently resolve to an **empty set**; it now raises
+> `RuntimeError` directing you to bind a session-origin FEMData that
+> actually carries the `g.mesh_selection` sets. This was a
+> formerly-silent wrong path — see [MIGRATION_v1](MIGRATION_v1.md).
+
 ### 10.2  "My in_box returns nothing"
 
 Three common causes:
@@ -581,6 +630,17 @@ Distances are computed in world coordinates from
 `fem.nodes.coords`. If your model has scale issues or the FEM
 snapshot doesn't match what you think, `fem.nodes.coords` is the
 ground truth. Use `results.fem.nodes.coords` to spot-check.
+
+> [!warning] Element centroids now fail loud on bad connectivity (S5)
+> The element-level spatial helpers (`results.elements.in_box /
+> nearest_to / on_plane`, and the new
+> `results.elements.select(...)` chain) compute an element centroid
+> from its node coordinates. If a connectivity entry references a node
+> id that is **not** in the bound FEM node set, this used to silently
+> substitute the last node (a corrupted centroid). It now raises
+> `KeyError` naming the offending element and node. If you hit this,
+> the FEMData you bound doesn't match the results file's mesh — bind
+> the correct one. See [MIGRATION_v1](MIGRATION_v1.md).
 
 ### 10.4  "I want elements with a node in box, not centroid in box"
 
@@ -616,7 +676,7 @@ Two more filter families on the way:
 ### 11.1  Value-range filter (`where`)
 
 ```python
-# Coming soon
+# Coming soon (value-range form on the composite)
 results.nodes.where(
     component="displacement_z",
     greater_than=0.05,
@@ -629,6 +689,13 @@ results.nodes.where(
 Filters by the result *values* themselves: "show me entities whose
 displacement exceeds X at any time". Composes additively with the
 spatial helpers.
+
+> [!note] A coordinate-predicate `.where()` already exists on the chain
+> The unified `.select()` chain (§4a) already has a `.where(predicate)`
+> verb, but it filters on the entity's **coordinate row**
+> (`lambda xyz: xyz[2] > 5.0`), not on result values. The
+> value-range `where` sketched here is the still-queued *result-value*
+> filter — a different, complementary feature.
 
 ### 11.2  Slab aggregation methods
 
@@ -654,5 +721,7 @@ post-fetch operations on data you already have.
   declare on the write side (mirror of this page).
 - [Results container guide](guide_results.md) — `Results` as a
   data structure (slabs, snapshots, viewers).
+- [The Selection Chain](guide_selection_chain.md) — maintainer
+  invariants behind the unified `.select()` idiom (§4a).
 - [Architecture — Obtaining the database](../architecture/apeGmsh_results_obtaining.md) —
   the spec-as-seam pattern.

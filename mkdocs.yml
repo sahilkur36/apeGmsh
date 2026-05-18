@@ -191,6 +191,7 @@ nav:
       - FEM Broker: api/fem.md
       - OpenSees: api/opensees.md
       - Results: api/results.md
+      - Selection: api/selection.md
       - Viewers: api/viewers.md
       - Viz: api/viz.md
   - Planning:

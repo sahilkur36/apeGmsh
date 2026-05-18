@@ -164,6 +164,20 @@ overlaps the specified region. This is an approximate search — it
 finds entities whose AABB intersects, not whose actual geometry
 intersects.
 
+> [!note] Fluent alternative: `g.model.select(...).in_box(...)`
+> For daisy-chainable entity selection, `g.model.select()` returns the
+> unified `GeometryChain` (entity family) whose `.in_box / .in_sphere /
+> .on_plane / .nearest_to / .where` verbs compose and support set
+> algebra (`| & - ^`). Its `.in_box` delegates to
+> `getEntitiesInBoundingBox` (BRep bbox-**containment**, closed; the
+> point-family half-open / `inclusive=` knob does **not** exist here
+> and passing it raises `TypeError`). This is **additive** — every
+> query method on this page, and the legacy
+> `g.model.queries.select(on=/crossing=)` predicate selector, are
+> unchanged and still the right tool for exact geometric predicates.
+> See [Selection in apeGmsh](guide_selection.md) §0 and the maintainer
+> page [The Selection Chain](guide_selection_chain.md).
+
 
 ## 9. Model registry
 
@@ -193,5 +207,7 @@ print(f"{len(vols)} volumes, total volume: {vols['mass'].sum():.2f}")
 ## See also
 
 - `guide_basics.md` — geometry creation and boolean operations
-- `guide_selection.md` — spatial selection queries
+- `guide_selection.md` — spatial selection queries (and the unified
+  `.select()` idiom, §0)
+- `guide_selection_chain.md` — maintainer invariants for `.select()`
 - `guide_cad_import.md` — STEP/IGES I/O operations

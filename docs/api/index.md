@@ -17,6 +17,7 @@ session object's layout:
 | [FEM Broker](fem.md)           | `g.mesh.queries.get_fem_data()` | `FEMData` snapshot container |
 | [OpenSees](opensees.md)        | `apeSees(fem)` | OpenSees bridge — post-session explicit-constructor (`nDMaterial`, `element`, `fix`, `mass`, `pattern`, recorders, `tcl`/`py`/`h5`/`run`) |
 | [Results](results.md)          | `Results`      | Post-processing container |
+| [Selection](selection.md)      | `.select()`    | Unified daisy-chainable selection idiom across all four levels |
 | [Viewers](viewers.md)          |                | Qt/PyVista model and mesh viewers |
 | [Viz](viz.md)                  | `g.plot`, etc. | Matplotlib, selection, VTK export |
 
