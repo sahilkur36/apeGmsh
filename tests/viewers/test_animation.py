@@ -24,6 +24,10 @@ from apeGmsh.viewers.diagrams import (
 from apeGmsh.viewers.diagrams._director import ResultsDirector
 from apeGmsh.viewers.scene.fem_scene import build_fem_scene
 
+# The optional `animation` extra (imageio / imageio-ffmpeg) is
+# not installed in the curated CI suite; skip cleanly when absent.
+pytest.importorskip("imageio")
+
 
 def _has_ffmpeg() -> bool:
     try:

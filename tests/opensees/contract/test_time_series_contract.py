@@ -69,7 +69,7 @@ class TestTimeSeriesContract:
         assert is_dataclass(cls), f"{cls.__name__} is not a dataclass"
         params = cls.__dataclass_params__  # type: ignore[attr-defined]
         assert params.frozen, f"{cls.__name__} dataclass is not frozen"
-        assert params.kw_only, f"{cls.__name__} dataclass is not kw_only"
+        assert all(f.kw_only for f in fields(cls)), f"{cls.__name__} dataclass is not kw_only"
 
     def test_has_slots(self, cls: type[TimeSeries]) -> None:
         # @dataclass(slots=True) sets __slots__ on the class.
