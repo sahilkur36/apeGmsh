@@ -141,7 +141,12 @@ fem
   +-- .inspect            InspectComposite (summary, tables, source tracing)
 ```
 
-**Selection API** — get subsets by physical group or label:
+**Selection API** — get subsets by physical group or label.
+`fem.nodes.get(pg=)` / `fem.elements.get/.resolve` are the
+single-shot accessors (unchanged, still fine). For anything
+spatial or composed, prefer the canonical fluent `.select()` chain
+(§1.4) — `fem.nodes.select(pg="Base").result()` returns the *same*
+`NodeResult` as `fem.nodes.get(pg="Base")`.
 ```python
 # NodeResult yields (id, xyz) pairs on iteration — ids are Python ints
 for nid, xyz in fem.nodes.get(pg="Base"):
@@ -186,6 +191,93 @@ print(fem.inspect.constraint_summary())   # kind counts + source names
 fem.inspect.node_table()                  # DataFrame
 fem.inspect.physical_table()              # DataFrame
 ```
+
+### 1.4  `.select()` — the canonical fluent selection idiom
+
+`.select()` is the **one canonical, daisy-chainable** selection idiom.
+It exists at **all four levels** with the *same* verb names and set
+algebra:
+
+| Entry point | Returns | Family | Terminal |
+|---|---|---|---|
+| `g.model.select(target, *, dim=)` | `GeometryChain` | entity | `.result()` → legacy `Selection` |
+| `fem.nodes.select(...)` | `NodeChain` | point | `.result()` → `NodeResult` |
+| `fem.elements.select(...)` | `ElementChain` | point | `.result()` → `GroupResult` |
+| `results.nodes.select(...)` / `results.elements.select(...)` | `ResultChain` | point | `.get(component=, time=, stage=)` → slab |
+| `g.mesh_selection.select(*, level=, dim=, ids=)` | `MeshSelectionChain` | point | `.result()` / `.ids` |
+
+**Refining verbs** (identical on every chain), each returns a new
+chain of the same type so they compose:
+
+```python
+sel = (fem.nodes.select(pg="Body")          # seed (same selectors as .get)
+           .in_box((0, 0, 0), (1, 1, 1))     # half-open [lo, hi)
+           .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)
+           .nearest_to((0.5, 0.5, 0.0), count=4)
+           .where(lambda xyz: xyz[2] == 0.0))
+nodes = sel.result()                          # the existing NodeResult
+```
+
+- `.in_box(lo, hi, *, inclusive=False)` · `.in_sphere(center, radius)`
+  · `.on_plane(point, normal, *, tol=)` · `.nearest_to(point, *,
+  count=1)` · `.where(predicate)`
+- **Set algebra**: `|` `&` `-` `^` and the aliases `.union` /
+  `.intersect` / `.difference` (insertion-order preserving). Combining
+  chains of different type or different engine raises `TypeError`
+  (cross-level mixing is loud, never a silent empty set):
+  ```python
+  fem.nodes.select(ids=a) | fem.nodes.select(ids=b)
+  ```
+- **Seeding reuses the locked resolvers** — broker chains take the
+  same selectors as `.get` (`target`/`pg`/`label`/`tag`/`dim`/
+  `partition`, `element_type=` for elements) plus `ids=`; no-arg seeds
+  the whole domain. Results chains take `pg=`/`label=`/`selection=`/
+  `ids=`. `g.model.select` resolves strings through the same
+  label→PG→part tier as everything else.
+- **Results terminal differs** — a results selection needs a
+  component, so it ends in `.get(...)`, not `.result()`:
+  ```python
+  (results.nodes.select(pg="Base")
+       .in_box(lo, hi)
+       .get(component="displacement_x"))
+  ```
+
+**Two spatial families — same names, NOT the same behavior:**
+
+- **point family** (`fem.*`, `results.*`, `g.mesh_selection`) —
+  `.in_box` is half-open `[lo, hi)` by default; `inclusive=True`
+  gives the closed `[lo, hi]`. Element chains test the element
+  **centroid**.
+- **entity family** (`g.model.select`) — `.in_box` is Gmsh's
+  `getEntitiesInBoundingBox`: BRep bbox **containment** (the whole
+  entity bbox must fall inside the query box, ~1e-8 expanded). No
+  half-open notion → passing `inclusive=` (or any kw) **raises
+  `TypeError`**. For exact geometric on/crossing use the unchanged
+  `g.model.queries.select(on=/crossing=)`.
+
+Never assume a cross-family `.in_box` gives the same set.
+
+**The old selection methods still work** —
+`fem.nodes.get(pg=)`, `fem.elements.get` / `.resolve`,
+`results.*` `.get` / `.in_box` / `.nearest_to` / `.on_plane`,
+`g.mesh_selection.add_nodes` / `add_elements` / `filter_set`,
+`g.model.queries.select`, `g.model.selection.select_*`, and the two
+legacy `Selection` classes are all unchanged. `.select()` sits
+**beside** them as the one canonical fluent idiom; prefer it for new
+code. `GeometryChain.result()` returns the *same* legacy `Selection`
+(so `.to_label()` / `.to_physical()` keep working).
+
+**Persistence is query-only** — chains are ephemeral; there is no
+`.save_as`. For a named, round-tripping selection use the pre-mesh
+`g.mesh_selection.add_nodes(..., name=...)` path → it lands in the
+FEMData snapshot and round-trips as `results(selection=...)`
+(unchanged).
+
+**Not yet available** (don't reach for these): results sub-composite
+`.select()` (`gauss`/`fibers`/`layers`/`line_stations`/`springs` —
+use the existing `results.elements.<sub>.in_box/...` helpers);
+`g.mesh_selection.select()` name-seed (today only `ids=` or
+full-universe; use `add_nodes(name=...)` for a named set).
 
 ---
 
@@ -533,6 +625,27 @@ OCC renumbers entities. Re-query via `g.parts.instances` or
 Drop to 1e10-1e12 if Newton fails to converge. The element only
 needs K >> parent element stiffness.
 
+### 7.8  `in_box` is half-open `[lo, hi)` (point family)
+`g.mesh_selection.add_nodes/add_elements/filter_set(in_box=)` and
+every point-family `.select().in_box(...)` exclude a coordinate /
+centroid lying exactly on the **upper** box face by default (matches
+the results side; adjacent boxes don't double-count). Pass
+`inclusive=True` for the closed box `[lo, hi]`. The entity family
+(`g.model.select().in_box`) has **no** `inclusive=` knob — passing
+it raises `TypeError` (use `g.model.queries.select(on=/crossing=)`
+for an exact predicate).
+
+### 7.9  These selection paths fail loud (no silent wrong answer)
+- `results(...)` with `selection=` on an import-origin FEM
+  (`from_msh` / MPCO / native — no `mesh_selection`) raises
+  `RuntimeError`. Build the selection on `g.mesh_selection` so it
+  travels into the snapshot.
+- A `g.loads` / `g.masses` whose `__ms__` named selection is gone
+  raises `KeyError` instead of binding the load/mass to zero nodes.
+- `results.elements.in_box/nearest_to/on_plane` (and centroid-based
+  chains) raise `KeyError` if an element's connectivity references a
+  node absent from the FEM — no more silently-corrupted centroid.
+
 ---
 
 ## 8. Anti-patterns
@@ -555,6 +668,23 @@ the pipeline. Local dicts don't survive fragmentation.
 ### 8.5  ❌ `fem.node_ids` (old API) → use `fem.nodes.ids`
 The FEMData API was rebuilt as composites. Old flat attributes no
 longer exist. Use `fem.nodes.*` and `fem.elements.*`.
+
+### 8.6  ❌ Hand-stitching spatial filters → use `.select()` chain
+For a composed/spatial selection don't manually `np.isin` /
+intersect `.get(pg=)` results, and don't assume the entity-family
+`g.model.select().in_box` matches a point-family box. Use the one
+canonical chain (§1.4): `fem.nodes.select(pg=...).in_box(...)
+.on_plane(...)`, set algebra with `| & - ^`. The old single-shot
+`.get/.resolve/.add_nodes` accessors still work for the simple case.
+
+### 8.7  ❌ `results.elements.gauss.select(...)` / mesh-selection name-seed
+Not shipped yet. Results sub-composites (`gauss`/`fibers`/`layers`/
+`line_stations`/`springs`) have **no** `.select()` — use their
+existing `.in_box/.nearest_to/.on_plane` helpers.
+`g.mesh_selection.select()` cannot seed from a name/PG/label yet
+(only `ids=` / full universe) — use
+`g.mesh_selection.add_nodes(..., name=...)` for a named set (it also
+round-trips as `results(selection=...)`).
 
 ---
 
@@ -588,7 +718,14 @@ with apeGmsh(model_name="model", verbose=True) as g:
 
     # FEM broker
     fem = g.mesh.queries.get_fem_data(dim=3)
-    ids, coords = fem.nodes.get(pg="Base")    # selection
+    ids, coords = fem.nodes.get(pg="Base")     # single-shot (unchanged)
+    # canonical fluent selection (all 4 levels; same verbs everywhere):
+    sel = (fem.nodes.select(pg="Body")
+               .in_box((0, 0, 0), (1, 1, 1))   # half-open; inclusive=True → closed
+               .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6))
+    nodes = sel.result()                        # → NodeResult (same as .get)
+    both = fem.nodes.select(ids=a) | fem.nodes.select(ids=b)   # set algebra
+    faces = g.model.select("box", dim=2).in_box(lo, hi)        # entity family
     print(fem.inspect.summary())               # introspection
 
     # Viewer with FEM overlays (sees session loads/masses/constraints)

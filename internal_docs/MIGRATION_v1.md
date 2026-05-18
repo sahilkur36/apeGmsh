@@ -711,7 +711,79 @@ parts. The auto-mapping collapsed this richness.
 
 ---
 
-## 7. Automated migration
+## 6a. Selection-unification behavioural changes (post-v1.0)
+
+The selection-unification work added a new fluent `.select()` idiom
+**additively** — no existing selection method was renamed or removed,
+and there is nothing to find/replace for it. But it carries **four
+deliberate behavioural changes** you must know about: one breaking box
+default (S2) and three formerly-silent paths that now fail loud (S5).
+
+### S2 — `g.mesh_selection` box default: closed → half-open (BREAKING)
+
+`g.mesh_selection`'s `in_box` filter is now **half-open on the upper
+side** by default (`xmin <= xyz < xmax` per axis), matching the
+`results` side which was always half-open. Previously it was
+closed-closed. A coordinate exactly equal to an upper bound is now
+**excluded** — adjacent boxes no longer double-count a shared face.
+
+```diff
+ # A node exactly on the z = 10 upper face:
+-g.mesh_selection.add_nodes(in_box=(-5,-5,0, 5,5,10), name="z")  # INCLUDED it
++g.mesh_selection.add_nodes(in_box=(-5,-5,0, 5,5,10), name="z")  # now EXCLUDES it
+
+ # Restore the old closed-closed behaviour explicitly:
++g.mesh_selection.add_nodes(in_box=(-5,-5,0, 5,5,10),
++                           inclusive=True, name="z")
+```
+
+`inclusive=True` is accepted by `add_nodes`, `add_elements`, and
+`filter_set` and restores the pre-S2 closed upper bound. If you relied
+on a tight box capturing on-face nodes, either pad the box by a small
+ε or pass `inclusive=True`. `results.*.in_box` is **unchanged** (it
+was already half-open) — this only reconciles the mesh side to match.
+
+The new `g.mesh_selection.select(...).in_box(lo, hi)` chain follows
+the same half-open default, with `.in_box(lo, hi, inclusive=True)`
+for the closed variant.
+
+### S5 — three formerly-silent paths now raise
+
+Each of these used to silently produce a wrong (usually empty or
+corrupted) result; they now fail loud with a directive message.
+
+```diff
+ # 1. Results selection= against an import-origin FEMData
+ #    (from_msh / MPCO / native — these have mesh_selection=None)
+ results = Results.from_native("run.h5", fem=fem_from_msh)
+-results.nodes.get(selection="my_set")   # silently → empty slab
++results.nodes.get(selection="my_set")   # RuntimeError: selection= requires
++                                        # fem.mesh_selection to be present
+```
+
+```diff
+ # 2. A load bound to a mesh-selection name whose set is missing
+ #    (the __ms__ consumer in LoadsComposite)
+-g.loads.point("missing_ms_name", force_xyz=(0,0,-1))  # silently bound to 0 nodes
++g.loads.point("missing_ms_name", force_xyz=(0,0,-1))  # KeyError: the mesh-
++                                                      # selection set is empty/missing
+```
+
+```diff
+ # 3. Element centroid with a connectivity id absent from the node set
+ #    (backs results.elements.in_box / nearest_to / on_plane AND the
+ #     new results.elements.select(...) chain)
+-results.elements.in_box(lo, hi, component="stress_xx")  # silent corrupted centroid
++results.elements.in_box(lo, hi, component="stress_xx")  # KeyError: element N
++                                                        # references node M not
++                                                        # in the FEM node set
+```
+
+Fixes, in order: bind a session-origin `FEMData` (one that actually
+carries the `g.mesh_selection` sets); give the load a target that
+resolves to a real, non-empty mesh selection; bind the `FEMData` whose
+mesh matches the results file. None of these were valid results
+before — the change only surfaces a bug you already had.
 
 For a mechanical find-replace across your own codebase, this Python
 script handles every transform in this guide — including the Model,
@@ -930,6 +1002,14 @@ Save as `migrate_v1.py` and run: `python migrate_v1.py /path/to/your/project`
   entry points stay flat on `g.mesh`
 - `g.opensees.set_model()` and `g.opensees.build()` — the two
   OpenSees lifecycle verbs stay flat
+- The **entire legacy selection surface** — `g.model.selection.*`,
+  `g.model.queries.select(on=/crossing=)`, `g.mesh_selection.add_*` /
+  `filter_set`, `fem.nodes/elements.get/resolve`,
+  `results.*.get/in_box/nearest_to/on_plane`, and both `Selection`
+  classes. The post-v1.0 `.select()` idiom (§6a) is **purely
+  additive**; nothing here was renamed, removed, or wrapped. The only
+  behavioural deltas are the S2 box default and the S5 fail-loud paths
+  in §6a.
 
 ---
 

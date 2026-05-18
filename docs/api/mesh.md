@@ -111,6 +111,39 @@ corner lists, or custom triangle arrangement, drop to the granular methods:
 
 ::: apeGmsh.mesh._mesh_partitioning._Partitioning
 
+## Fluent selection — `g.mesh_selection.select()`
+
+`g.mesh_selection` (a session attribute,
+[`MeshSelectionSet`][apeGmsh.mesh.MeshSelectionSet.MeshSelectionSet])
+is the live-mesh entry of the unified, daisy-chainable
+[selection idiom](selection.md). It is **additive** —
+`add_nodes` / `add_elements` / `filter_set` (including their `name=`
+named-persistence path) are unchanged. `select()` returns a
+[`MeshSelectionChain`][apeGmsh.mesh._mesh_selection_chain.MeshSelectionChain]
+(point family, bi-level); `.result()` is the same-shape `dict`
+`get_nodes` / `get_elements` return.
+
+```python
+node_set = (g.mesh_selection.select()              # node level
+    .in_box((0, 0, 0), (1, 1, 1))                  # half-open [lo, hi)
+    .on_plane((0, 0, 0), (0, 0, 1), tol=1e-9)
+    .result())
+
+hexes = g.mesh_selection.select(level="element", dim=3).in_box(
+    lo, hi, inclusive=True).ids
+```
+
+!!! warning "S2 — box default flipped to half-open"
+    `add_nodes(in_box=)` / `add_elements(in_box=)` /
+    `filter_set(in_box=)` changed from a **closed** `[lo, hi]` default
+    to **half-open** `[lo, hi)` (to match `results`). Pass
+    `inclusive=True` to restore the old closed box. See the
+    [changelog](../changelog.md) for the migration note.
+
+Name-based seeding for `select()` and chain persistence are tracked
+follow-ups — see [Selection](selection.md) for the full idiom and the
+planned/not-yet items.
+
 ## Supporting types
 
 ::: apeGmsh.mesh.PhysicalGroups.PhysicalGroups

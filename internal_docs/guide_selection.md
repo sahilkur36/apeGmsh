@@ -12,6 +12,41 @@ The guiding idea: **OCC selection is geometry, mesh selection is topology**. One
 Both systems feed the same FEM broker. This guide walks through both ends, then shows how to bridge them.
 
 
+## 0. `.select()` — the unified fluent idiom (start here)
+
+There is now **one canonical, daisy-chainable selection idiom**,
+`.select()`, available at every level — geometry, the FEM broker,
+results, and the live mesh:
+
+```python
+g.model.select("box", dim=2).in_box(lo, hi).on_plane(p, n, tol=1e-6)   # geometry
+fem.nodes.select(pg="Base").in_box(lo, hi)                             # broker
+results.nodes.select(pg="Base").in_box(lo, hi).get(component="displacement_z")
+g.mesh_selection.select().in_box(lo, hi).on_plane(p, n, tol=1e-6)      # live mesh
+```
+
+Every `.select()` returns a chain with the same verbs
+(`.in_box / .in_sphere / .on_plane / .nearest_to / .where`), the same
+set algebra (`| & - ^` and `.union / .intersect / .difference`), and a
+domain terminal — `.result()` everywhere, except results which reads
+with `.get(component=, time=, stage=)`. Name resolution inside
+`.select()` is **never re-implemented**: it delegates to the same
+contract-locked resolver the matching `.get()` already uses, so
+`select(...).result()` is id-for-id identical to `get(...)`.
+
+> [!note] `.select()` is **additive** — the old ways still work
+> Everything else in this guide (`g.model.selection.select_*`,
+> `g.model.queries.select(on=/crossing=)`, `g.mesh_selection.add_*`,
+> the `Selection` set algebra, the bridges) is **unchanged and fully
+> supported**. `.select()` sits *beside* the legacy surface, it does
+> not replace or wrap it. A facade was deliberately not built (it was
+> proven structurally impossible) — there is exactly one new canonical
+> idiom and the old ways persist by design. Reach for `.select()` for
+> new fluent code; keep the legacy entry points where they already fit.
+> The maintainer invariants behind this live in
+> [The Selection Chain](guide_selection_chain.md).
+
+
 ## 1. Geometric selection — the OCC side
 
 The geometric selection composite is attached to the model as `g.model.selection`. It is a *query engine* over the currently synchronised OCC topology. Every call returns a frozen `Selection` snapshot that behaves like a mathematical set with some refinement and conversion helpers attached.
@@ -186,6 +221,16 @@ core = g.mesh_selection.add_elements(
 ```
 
 Each creation call returns the allocated tag. Tags are auto-allocated per-dim and independent from physical-group tags.
+
+> [!warning] `in_box` default changed (S2): now half-open
+> As of the selection-unification work, `g.mesh_selection`'s `in_box`
+> filter is **half-open on the upper side** by default
+> (`xmin <= xyz < xmax` per axis), matching the `results` side which
+> was already half-open. Previously it was closed-closed. A coordinate
+> exactly on an upper bound is now **excluded** so adjacent boxes do
+> not double-count a shared face. Pass `inclusive=True` to
+> `add_nodes` / `add_elements` / `filter_set` to restore the old
+> closed-closed behaviour. See [MIGRATION_v1](MIGRATION_v1.md).
 
 ### 2.2 Explicit lists and predicates
 

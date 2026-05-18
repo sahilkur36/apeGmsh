@@ -395,6 +395,46 @@ ids, conn = fem.elements.get("Body", dim=3).resolve(element_type="tet4")
 A list passed to `target=` is interpreted as a **union** of targets.
 
 
+## Fluent selection — `fem.nodes.select()` / `fem.elements.select()`
+
+`.select()` is the **canonical daisy-chainable** form of `.get()`. It
+returns a chain (`NodeChain` / `ElementChain`) whose spatial verbs
+compose, with `.result()` yielding the **same** `NodeResult` /
+`GroupResult` `.get()` returns today:
+
+```python
+# Same selectors as .get() (target / pg / label / tag / partition /
+# dim) plus ids=; no-arg seeds every domain node/element.
+res = fem.nodes.select(pg="Base").in_box(lo, hi).result()
+for nid, xyz in res:
+    ops.node(nid, *xyz)
+
+# set algebra between selections (same level + same FEMData)
+sel = fem.nodes.select(ids=a) | fem.nodes.select(ids=b)
+
+# elements compose the same way; .result() is a GroupResult
+ids, conn = fem.elements.select(pg="Body").in_box(lo, hi).result().resolve(
+    element_type="tet4"
+)
+```
+
+Name resolution is **not** re-implemented in `.select()`: it delegates
+verbatim to the same `_resolve_nodes` / `_resolve_elements` `.get()`
+uses, so `select(...).result()` is id-for-id identical to `get(...)`.
+That reuse is deliberate — it preserves the broker's documented
+node-vs-element resolver behaviour (the node path lets a
+wrong-dimension `ValueError` propagate; the element path swallows
+more) **by reuse, not re-implementation**.
+
+> [!note] `.select()` is **additive**
+> `.get()` / `.resolve()` / `.get_ids()` and every accessor on this
+> page are unchanged. `.select()` is a fluent surface beside them, not
+> a replacement and not a facade. Use whichever fits the call site.
+> Maintainer invariants — including why this is *not* a single
+> library-wide resolver — are in
+> [The Selection Chain](guide_selection_chain.md).
+
+
 ## Complete solver workflow
 
 ```python

@@ -687,25 +687,18 @@ def test_item7_results_selection_on_import_origin_raises_runtimeerror(
         )
 
 
-def test_item7_loads_ms_sentinel_missing_set_returns_empty_silently():
-    # pin: src/apeGmsh/core/LoadsComposite.py:1048-1054 (_target_nodes)
-    #   if dts[0][0] == "__ms__":
-    #       info = ms._sets.get((dim, tag))
-    #       if info is None:
-    #           return set()           # <-- SILENT empty
-    # why pinned: this is the silent-empty hole S5 closes. We drive
-    #   the literal arm with a stub parent whose _resolve_target
-    #   matches the name to a sentinel but whose _sets.get((dim,tag))
-    #   misses -> the method returns an empty set with no error.
+def test_item7_loads_ms_sentinel_missing_set_raises():
+    # S5: silent return set() -> fail-loud raise.
+    #   FLIPPED PIN (was ..._returns_empty_silently, which asserted
+    #   out == set()). src/apeGmsh/core/LoadsComposite.py _target_nodes
+    #   __ms__ arm now: if info is None: raise KeyError(
+    #   "...Refusing to silently bind this load to zero nodes
+    #   (fail loud).")  -- was a silent `return set()`.
     #
-    # LIMITATION (reported to orchestrator): the plan frames item 7's
-    # loads side as the import-origin-fem consumer, but LoadsComposite
-    # resolves against the live SESSION's `_parent.mesh_selection`, NOT
-    # a FEMData. An import-origin FEMData never reaches this arm
-    # through loads (the loads composite isn't fed a FEMData). So this
-    # pins the *literal* silent-empty contract at unit level — the
-    # behavior S5 must convert to fail-loud — rather than an
-    # import-origin end-to-end path, which is not reachable here.
+    # LIMITATION (unchanged): LoadsComposite resolves against the live
+    # SESSION's `_parent.mesh_selection`, NOT a FEMData. This drives
+    # the literal __ms__ missing-set arm at unit level (the behavior
+    # S5 converts to fail-loud), not an import-origin end-to-end path.
     class _MissingSets(dict):
         def get(self, _key, _default=None):   # always "set lost"
             return None
@@ -720,8 +713,7 @@ def test_item7_loads_ms_sentinel_missing_set_returns_empty_silently():
     lc = LoadsComposite.__new__(LoadsComposite)
     lc._parent = parent
 
-    out = lc._target_nodes(
-        "ghost", node_map=None, all_nodes=None, source="auto"
-    )
-    assert out == set()              # silent empty — no exception
-    assert isinstance(out, set)
+    with pytest.raises(KeyError, match="Refusing to silently bind"):
+        lc._target_nodes(
+            "ghost", node_map=None, all_nodes=None, source="auto"
+        )

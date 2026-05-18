@@ -29,6 +29,30 @@ transforms, io, queries.
 
 ::: apeGmsh.core._model_queries._Queries
 
+### Fluent selection — `g.model.select()`
+
+`g.model.select(...)` is the geometry entry of the unified,
+daisy-chainable [selection idiom](selection.md). It is **additive** —
+`g.model.queries.select(...)` (the `on=`/`crossing=` predicate
+selector documented below) and `g.model.selection.select_*` are
+unchanged. `select()` returns a
+[`GeometryChain`][apeGmsh.core._selection.GeometryChain] (entity
+family); `.result()` yields the same legacy `Selection`, so
+`.to_label()` / `.to_physical()` / `.tags()` keep working.
+
+```python
+(g.model.select("Faces")                          # tiered name resolve
+    .in_box((-0.1, -0.1, -0.1), (1.1, 1.1, 1.1))  # gmsh BRep containment
+    .on_plane((0, 0, 0), (0, 0, 1), tol=1e-6)
+    .result()
+    .to_physical("Base"))
+```
+
+Entity-family `in_box` is gmsh BRep containment and rejects
+`inclusive=` with a `TypeError` (it is point-family only). See
+[Selection](selection.md) for the full idiom, the verb surface, and
+the point-vs-entity family contract.
+
 ### Geometric predicates — cheat sheet
 
 The full set of filters available on `queries.select(...)` and `Selection`:

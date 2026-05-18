@@ -948,7 +948,15 @@ class LoadsComposite:
             ms = self._parent.mesh_selection
             info = ms._sets.get((dim, tag))
             if info is None:
-                return set()
+                # S5: silent return set() -> fail-loud raise
+                raise KeyError(
+                    f"load target {target!r} resolved to mesh-selection "
+                    f"sentinel ('__ms__', {dim}, {tag}), but that set is "
+                    f"absent from g.mesh_selection._sets — the named "
+                    f"selection is gone or the store is inconsistent. "
+                    f"Refusing to silently bind this load to zero nodes "
+                    f"(fail loud)."
+                )
             return set(int(n) for n in info.get("node_ids", []))
 
         # Part label fast path: use the precomputed node map
