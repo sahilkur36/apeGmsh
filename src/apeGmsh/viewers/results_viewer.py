@@ -44,6 +44,28 @@ if TYPE_CHECKING:
 _LIVE_VIEWERS: "set[ResultsViewer]" = set()
 
 
+def _ensure_qapplication():
+    """Return the process ``QApplication``, creating one if absent.
+
+    The viewer builds QWidgets (the Output and Color-Map docks) *before*
+    :class:`ViewerWindow` — historically the first and only place a
+    ``QApplication`` was created. Constructing any QWidget with no live
+    ``QApplication`` aborts the process with::
+
+        QWidget: Must construct a QApplication before a QWidget
+
+    which is fatal in the ``python -m apeGmsh.viewers`` subprocess
+    (``viewer(blocking=False)``) and in any in-process blocking
+    ``viewer()`` call made before a ``QApplication`` exists. Calling
+    this at the top of the launch path guarantees the invariant;
+    :class:`ViewerWindow`'s own ``instance() or QApplication([])``
+    then simply reuses the returned instance (and still runs the
+    event loop unconditionally).
+    """
+    from qtpy import QtWidgets
+    return QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+
+
 class ResultsViewer:
     """Post-solve interactive viewer.
 
@@ -229,6 +251,12 @@ class ResultsViewer:
         from .ui._results_window import ResultsWindow
         from .ui._diagram_settings_tab import DiagramSettingsTab
         from .ui.preferences_manager import PREFERENCES as _PREF
+
+        # ── QApplication ────────────────────────────────────────────
+        # Must exist before the Output / Color-Map dock QWidgets built
+        # below; ViewerWindow (which used to create it) is too late.
+        # See _ensure_qapplication for the failure mode it prevents.
+        _app = _ensure_qapplication()  # noqa: F841 — strong ref for this frame
 
         # ── Director ────────────────────────────────────────────────
         director = ResultsDirector(self._results)
