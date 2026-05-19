@@ -63,12 +63,57 @@ them.
   becomes an orphan once `select` (`:669-794`) is removed (its only
   callers `:762,774`). Delete it same-commit (orphan-cleanup of P3-R's
   own removal).
-- **M-CORRECTION** `_select_impl`, `Plane`, `Line` ALL stay: the
-  **retained** `Selection.select` (`core/_selection.py:513`) and the
-  `EntitySelection` crossing path call `_select_impl`. `_model_queries.py:15`
-  `from ._selection import Selection,_select_impl,Plane,Line` → drop
-  ONLY `Selection` (referenced solely inside the removed
-  `select`/`select_all*`/`line` bodies); keep `_select_impl,Plane,Line`.
+- **M-CORRECTION (REVISED — RED-3 CLAIM-A KILLED, BLUE-adjudicated +
+  head-reverified at HEAD; supersedes the prior wording AND §6.2's
+  ":15 keep Plane,Line").** The symbol *definitions* `_select_impl`
+  (`core/_selection.py:166`), `Plane` (`:57`), `Line` (`:94`) **stay
+  defined** — load-bearing for the retained `Selection.select`
+  (`:513` calls `_select_impl`), `EntitySelection`, and the P2-G chain
+  (do **not** delete the defs). **Separately**, P3-R rewrites the
+  now-stale module-local import `core/_model_queries.py:15` to
+  **exactly** `from ._selection import Plane`. Source-proven (census +
+  RED-3 + BLUE + head, 4 independent HEAD checks): after removing
+  `line`(:603-615)/`_select_all`+`select_all*`(:621-642)/
+  `_string_ref_to_dimtags`(:644-667)/`select`(:669-794), the **only**
+  surviving runtime ref is `Plane` (retained `_Queries.plane`
+  :561-601, refs :585/:596/:597 — `plane` is **NOT** in removal
+  scope); `Selection` (refs only :622/:626/:790 + lazy `select`
+  annotations), `_select_impl` (only :792), `Line` (only :615) all
+  become dead imports. Nothing imports those four names *from*
+  `_model_queries`. Both prior prose lines were wrong (§6.3 left
+  `_select_impl`+`Line` dead = SERIOUS; §6.2 left `Line` dead).
+- **M-STOP-3 PRECONDITION (hardening — RED-3 CLAIM-B).** The
+  `resolve(element_type=name)`→direct-iteration equivalence holds only
+  under "`ElementComposite._groups` is one-`ElementGroup`-per-type-code"
+  (verified all 4 constructors: `_femdata_native_io.py:102`,
+  `_femdata_h5_io.py:904`, `_femdata_mpco_io.py:94`,
+  `_fem_factory.py:151`; `_groups` FEMData.py:601; `types` :667-669).
+  The 3 rewires iterate `fem.elements._groups.values()` **directly**
+  (do NOT re-implement `resolve_type_filter`), emit
+  `(grp.ids, grp.connectivity)` per group preserving `_groups` dict
+  order (matches the deleted `for type_info in fem.elements.types`);
+  the single-type site `results/_composites.py:254-265`
+  (`_element_ids_of_type`) **retains its existing
+  `element_type not in available` guard** (:261-263) so the
+  absent-type→empty contract is unchanged.
+- **M-NOTE-save_as (clarifying pin — RED-3 CLAIM-D).** `mesh/
+  MeshSelectionSet.py` has **no `def save_as`** (HEAD-verified; the
+  retained generic surface is `add()`@:147 + `select()`@:715 only;
+  removal set within the file = `add_nodes`@:199/`add_elements`@:259/
+  `from_geometric`@:516). The `.save_as` in §5 (cascade-D) / §6.2
+  SC-12 is a method of the **returned `MeshSelection`** terminal, not
+  of `MeshSelectionSet` — no plan line is defective; this pin only
+  prevents inferring a `MeshSelectionSet.save_as`.
+- **M-NOTE-oracle-shape (executor guard, reinforces §5 — RED-1
+  advisory).** The proof-file rewrites at oracle `:287/:290/:312`
+  (`test_pin_resolution_v2.py`) and the element sites in §5 use
+  `.groups()`/`.result()` (GroupResult-shaped, matching the deleted
+  element-`get` body) — **never** `.ids`. Do not "simplify" to `.ids`.
+- **RED-2 MINOR stale-strings (non-blocking).** The stale legacy-idiom
+  error/docstring strings (`core/_model_geometry.py:1053`;
+  `core/_selection.py:353/:545/:586/:938/:1161`;
+  `mesh/_mesh_structured.py:124/:204/:423`) are **P4 /
+  optional-same-commit cosmetic** — not PROD callers, not a blocker.
 
 ## 1. Zero-PROD-caller census (the P3-R gate) — summary
 

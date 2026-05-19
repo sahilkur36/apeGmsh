@@ -662,8 +662,13 @@ per-type group iteration. Hard-remove
 `core/_selection.Selection` = retained `EntitySelection` terminal
 payload per R-v2-8); the `queries.select`/`select_all*`/`queries.line`
 **method bodies** (`core/_model_queries.py:603-640,669-794`) and rewrite
-its `:15` import to **keep `Plane`,`Line`** (reusable primitives, NOT
-removal targets) dropping only `Selection`,`_select_impl` if unused;
+its `:15` import to **exactly `from ._selection import Plane`** (the
+sole symbol referenced by surviving code — the retained `_Queries.plane`
+@:585/:596/:597; `Selection`/`_select_impl`/`Line` are referenced only
+by removed methods. The symbol *definitions* in `core/_selection.py`
+are untouched — load-bearing for retained `Selection.select`/
+`EntitySelection`/P2-G. RED-3/BLUE/head-reverified; see
+`selection-unification-v2-p3r-callers.md` §0 M-CORRECTION REVISED);
 `SelectionComposite`; `fem.*.get/get_ids/get_coords/resolve`; the chain
 `results.*.select(...).values()`/`ResultChain.get` path;
 `g.mesh_selection.add_*/from_*`; **the 4 dead chain modules +
