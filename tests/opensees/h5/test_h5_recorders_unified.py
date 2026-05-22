@@ -44,10 +44,11 @@ from apeGmsh.opensees.emitter import h5_reader
 def test_schema_version_is_2_5_0() -> None:
     # Phase 6 (ADR 0021) bumped minor 2.5.0 → 2.6.0 for the additive
     # /meta/lineage sub-group.  Phase 7b (ADR 0022) bumped to 2.7.0
-    # for the additive /opensees/constraints/ group.  The test name
-    # is left at the legacy form to keep test discovery stable across
-    # CI runs.
-    assert SCHEMA_VERSION == "2.7.0"
+    # for the additive /opensees/constraints/ group.  The follow-up
+    # cleanup bumped to 2.8.0 for the embeddedNode field rename
+    # (embedding_ele → cnode).  The test name is left at the legacy
+    # form to keep test discovery stable across CI runs.
+    assert SCHEMA_VERSION == "2.8.0"
 
 
 def test_schema_2_5_0_writes_to_meta(tmp_path: Path) -> None:
@@ -55,7 +56,7 @@ def test_schema_2_5_0_writes_to_meta(tmp_path: Path) -> None:
     out = tmp_path / "x.h5"
     e.write(str(out))
     with h5py.File(out, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.7.0"
+        assert f["meta"].attrs["schema_version"] == "2.8.0"
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +220,7 @@ class TestRecordersReader:
         out = tmp_path / "legacy.h5"
         with h5py.File(out, "w") as f:
             meta = f.create_group("meta")
-            meta.attrs["schema_version"] = "2.6.0"
+            meta.attrs["schema_version"] = "2.7.0"
             meta.attrs["snapshot_id"] = "x"
             meta.attrs["model_name"] = "x"
             meta.attrs["ndm"] = 3

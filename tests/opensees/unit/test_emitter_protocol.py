@@ -149,7 +149,7 @@ def test_rigidDiaphragm_records_perp_master_slaves() -> None:
     assert e.calls == [("rigidDiaphragm", (3, 100, 1, 2, 3), {})]
 
 
-def test_embeddedNode_records_ele_tag_embedding_ele_args() -> None:
+def test_embeddedNode_records_ele_tag_cnode_args() -> None:
     e = RecordingEmitter()
     e.embeddedNode(1000, 5, 10, 20, 30)
     assert e.calls == [("embeddedNode", (1000, 5, 10, 20, 30), {})]

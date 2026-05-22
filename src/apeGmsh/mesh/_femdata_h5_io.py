@@ -201,18 +201,30 @@ def write_meta(
 
     Per ADR 0023 (per-zone schema versioning, Phase 7a) this also
     stamps ``/meta/neutral_schema_version`` as the neutral-zone-specific
-    marker.  The envelope ``/meta/schema_version`` is preserved for
-    one-key legacy readers; the bridge composer may later overwrite the
-    envelope with its own ``SCHEMA_VERSION`` so envelope readers see
-    "whichever wrote last" (single-stamp era semantics).
+    marker, **and** stamps ``/meta/opensees_schema_version`` with the
+    current bridge writer version even on broker-only files (so they
+    open cleanly through :func:`h5_reader.open` whose validation runs
+    against the opensees per-zone window — an absent per-zone key
+    would fall back to the envelope and fail validation whenever the
+    neutral and opensees windows have diverged).  The envelope
+    ``/meta/schema_version`` is preserved for one-key legacy readers;
+    the bridge composer may later overwrite the envelope with its own
+    ``SCHEMA_VERSION`` so envelope readers see "whichever wrote last"
+    (single-stamp era semantics).
     """
+    # Lazy import: keep apeGmsh.mesh's import-time graph free of
+    # apeGmsh.opensees.  Only the version constant is needed.
+    from apeGmsh.opensees.emitter.h5 import SCHEMA_VERSION as OPENSEES_VERSION
+
     meta = f.create_group("meta")
     meta.attrs["schema_version"] = schema_version
     # ADR 0023 §"Three per-zone version stamps" — per-zone neutral key,
-    # independent of the envelope. Broker-only files carry just this
-    # key; composed files add ``opensees_schema_version`` in
-    # ``_compose_model_h5``.
+    # independent of the envelope. Broker-only files now also stamp
+    # the opensees per-zone key (see docstring above); composed files
+    # overwrite this stamp in ``_compose_model_h5`` after writing the
+    # /opensees/ content.
     meta.attrs["neutral_schema_version"] = schema_version
+    meta.attrs["opensees_schema_version"] = OPENSEES_VERSION
     meta.attrs["apeGmsh_version"] = apegmsh_version
     meta.attrs["created_iso"] = datetime.now(tz=timezone.utc).isoformat()
     meta.attrs["ndm"] = int(_derive_ndm(fem))

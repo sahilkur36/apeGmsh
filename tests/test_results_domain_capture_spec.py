@@ -279,10 +279,10 @@ class TestFromH5:
     ) -> None:
         import h5py
         # Per ADR 0023 fixture must be inside the two-version reader
-        # window (2.6.x / 2.7.x).
+        # window (2.7.x / 2.8.x).
         with h5py.File(path, "w") as f:
             meta = f.create_group("meta")
-            meta.attrs["schema_version"] = "2.6.0"
+            meta.attrs["schema_version"] = "2.7.0"
             meta.attrs["ndm"] = ndm
             meta.attrs["ndf"] = ndf
             meta.attrs["snapshot_id"] = "stub-snapshot"

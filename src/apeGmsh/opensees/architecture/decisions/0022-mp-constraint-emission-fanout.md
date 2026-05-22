@@ -57,7 +57,7 @@ class Emitter(Protocol):
     def equalDOF(self, master: int, slave: int, *dofs: int) -> None: ...
     def rigidLink(self, kind: Literal["beam", "bar"], master: int, slave: int) -> None: ...
     def rigidDiaphragm(self, perp_dir: int, master: int, *slaves: int) -> None: ...
-    def embeddedNode(self, ele_tag: int, embedding_ele: int, *args: int | float) -> None: ...
+    def embeddedNode(self, ele_tag: int, cnode: int, *args: int | float) -> None: ...
     def mp_constraint_comment(self, name: str) -> None: ...
 ```
 
@@ -115,9 +115,11 @@ deterministic per ADR 0021's canonical-bytes property.
 **between element emission and pattern emission**. The ordering
 matters:
 
-- **Elements before constraints** — constraint references must point
-  at existing element tags (especially for ASDEmbeddedNodeElement,
-  which references the embedding element).
+- **Elements before constraints** — the constraint pass itself emits
+  ``element ASDEmbeddedNodeElement`` lines (one per
+  :class:`InterpolationRecord`), which should come after the user's
+  structural elements so their internally-allocated tags do not
+  shadow user element tags.
 - **Constraints before patterns** — patterns reference DOFs that
   constraints may consolidate (`equalDOF` collapses two DOFs into
   one); the pattern's `ops.load(node, ...)` calls must come after

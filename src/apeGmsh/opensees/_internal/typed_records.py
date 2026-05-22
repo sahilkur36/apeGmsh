@@ -496,12 +496,13 @@ class EmbeddedNodeRecord:
     ``embedded`` / ``tied_contact`` / ``mortar``) that the fan-out
     pass routes through ASDEmbeddedNodeElement.
 
-    ``args`` are the positional arguments following the embedding
-    element tag (typically the master/slave node tags and any
-    weights); shape depends on the underlying record family.
+    ``cnode`` is the constrained (embedded / slave) node — the second
+    positional in the OpenSees signature
+    ``element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 ...``.
+    ``args`` are the host element's node tags ($Rnode1..$RnodeN).
     """
 
     ele_tag: int
-    embedding_ele: int
+    cnode: int
     args: tuple[int | float, ...]
     name: str = ""

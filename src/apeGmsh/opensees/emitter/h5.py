@@ -180,7 +180,17 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #:     Additive — old 2.6.x readers ignore the new group.  Per ADR
 #:     0023 two-version reader window, both 2.6.x and 2.7.x files
 #:     are accepted.
-SCHEMA_VERSION: str = "2.7.0"
+#:   * 2.8.0 — embeddedNode field rename: the second compound-dtype
+#:     column of ``/opensees/constraints/embeddedNode`` was
+#:     ``embedding_ele`` in 2.7.0 (a misnomer — the value is the
+#:     constrained / slave node id, not an element id) and is
+#:     ``cnode`` from 2.8.0 onward (matches the OpenSees ``$Cnode``
+#:     vocabulary).  Stored values are unchanged; only the column
+#:     name flips.  No in-repo reader consumed the 2.7.0 name, so
+#:     no compat shim is required; the two-version reader window
+#:     accepts 2.7.x and 2.8.x files but the column name is
+#:     version-dependent.
+SCHEMA_VERSION: str = "2.8.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path
@@ -501,14 +511,14 @@ class H5Emitter:
         )
 
     def embeddedNode(
-        self, ele_tag: int, embedding_ele: int,
+        self, ele_tag: int, cnode: int,
         *args: int | float,
     ) -> None:
         name = self._consume_pending_mp_name()
         self._embedded_nodes.append(
             _EmbeddedNodeRecord(
                 ele_tag=int(ele_tag),
-                embedding_ele=int(embedding_ele),
+                cnode=int(cnode),
                 args=tuple(args),
                 name=name,
             )
@@ -1715,7 +1725,7 @@ class H5Emitter:
         dt = np.dtype(
             [
                 ("ele_tag", np.int64),
-                ("embedding_ele", np.int64),
+                ("cnode", np.int64),
                 ("args", np.float64, (max_args,)),
                 ("n_args", np.int32),
                 ("name", h5py.string_dtype(encoding="utf-8")),
@@ -1728,7 +1738,7 @@ class H5Emitter:
                 + [float("nan")] * (max_args - len(rec.args))
             )
             rows[i] = (
-                rec.ele_tag, rec.embedding_ele,
+                rec.ele_tag, rec.cnode,
                 tuple(padded), len(rec.args), rec.name,
             )
         parent.create_dataset("embeddedNode", data=rows)

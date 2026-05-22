@@ -26,7 +26,7 @@ def _write_minimal_h5(
     path: Path,
     *,
     groups: dict[str, dict[str, np.ndarray]],
-    schema_version: str = "2.6.0",
+    schema_version: str = "2.7.0",
 ) -> None:
     """Write the smallest h5 that the reference reader accepts.
 
@@ -211,12 +211,12 @@ def test_missing_fem_eids_dataset_raises_helpful(tmp_path: Path) -> None:
     "re-emit with newer apeGmsh" message rather than KeyError on an
     h5 dataset.  Originally this exercised the pre-Phase-8.6
     (schema 2.1.x) shape; per ADR 0023 the fixture must be inside
-    the two-version reader window, so we use 2.6.0 with the dataset
+    the two-version reader window, so we use 2.7.0 with the dataset
     deliberately omitted."""
     h5 = tmp_path / "model.h5"
     with h5py.File(h5, "w") as f:
         meta = f.create_group("meta")
-        meta.attrs["schema_version"] = "2.6.0"
+        meta.attrs["schema_version"] = "2.7.0"
         em = f.create_group("opensees/element_meta")
         g = em.create_group("forceBeamColumn")
         g.attrs["type"] = "forceBeamColumn"

@@ -104,12 +104,24 @@ UserWarning fires.
 Three independent semver stamps replace the racing single envelope:
 
 - `/meta/neutral_schema_version` = `"2.6.0"`
-- `/meta/opensees_schema_version` = `"2.7.0"`
+- `/meta/opensees_schema_version` = `"2.8.0"`
 - `/meta/results_schema_version` = `"1.1.0"`
 
 Envelope `/meta/schema_version` retained for single-stamp legacy
 back-compat. Two-version reader window: reader at X.Y.Z accepts
 X.Y.* and X.(Y-1).*; refuses everything else with `SchemaVersionError`.
+
+The opensees zone shipped at `2.7.0` for the additive
+`/opensees/constraints/` group, then bumped to `2.8.0` for a
+follow-up field rename: the second compound-dtype column of
+`/opensees/constraints/embeddedNode` was `embedding_ele` in 2.7.0
+(a misnomer — the stored value is the constrained / slave node id,
+not an element id) and is `cnode` from 2.8.0 onward (matches the
+OpenSees `$Cnode` vocabulary). Same rename rippled through the
+`Emitter.embeddedNode` Protocol parameter name and the
+`EmbeddedNodeRecord` dataclass field. Two-version reader window
+accepts both 2.7.x and 2.8.x files; the column name is
+version-dependent.
 
 ### ADDED — `FEMData.from_h5(path, *, root="/")` parameterization
 
