@@ -36,7 +36,7 @@ from apeGmsh.viewers.results_viewer import ResultsViewer
 # --------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------- #
-def _make_minimal_h5(path: Path, schema_version: str = "2.6.0") -> None:
+def _make_minimal_h5(path: Path, schema_version: str = "2.7.0") -> None:
     """Minimum the cuts reader needs: ``/meta/schema_version``."""
     with h5py.File(path, "w") as f:
         meta = f.create_group("meta")
@@ -130,11 +130,11 @@ def test_director_load_cuts_from_h5_on_pre_v4_file_is_empty(
     """In-window file with no /opensees/cuts/ → no calls, empty return.
 
     Per ADR 0023 the fixture must be inside the two-version reader
-    window (2.6.x / 2.7.x); the test exercises "no cuts group" handling,
+    window (2.7.x / 2.8.x); the test exercises "no cuts group" handling,
     not "pre-window file" handling.
     """
     path = tmp_path / "pre_v4.h5"
-    _make_minimal_h5(path, schema_version="2.6.0")
+    _make_minimal_h5(path, schema_version="2.7.0")
 
     director = ResultsDirector.__new__(ResultsDirector)
     director._model_h5 = path

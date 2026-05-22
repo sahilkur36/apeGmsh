@@ -67,14 +67,15 @@ def test_apesees_h5_bumps_schema_version_to_2_5_0(tmp_path: Path) -> None:
     whether v4 content is actually present.  Phase 6 (ADR 0021) bumped
     to 2.6.0 for the additive ``/meta/lineage`` sub-group; Phase 7b
     (ADR 0022) bumped to 2.7.0 for the additive
-    ``/opensees/constraints/`` group.
+    ``/opensees/constraints/`` group; the follow-up cleanup bumped to
+    2.8.0 for the embeddedNode field rename (embedding_ele → cnode).
     """
     ops = _build_minimal_ops()
     out = tmp_path / "model.h5"
     ops.h5(str(out))
 
     with h5py.File(out, "r") as f:
-        assert f["meta"].attrs["schema_version"] == "2.7.0"
+        assert f["meta"].attrs["schema_version"] == "2.8.0"
 
 
 # --------------------------------------------------------------------- #
@@ -180,6 +181,6 @@ def test_apesees_h5_with_cuts_passes_reference_reader(
     ops.h5(str(out), cuts=[cut])
 
     with h5_reader.open(str(out)) as model:
-        assert model.schema_version == "2.7.0"
+        assert model.schema_version == "2.8.0"
         violations = model.validate()
         assert violations == [], violations

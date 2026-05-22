@@ -1201,7 +1201,7 @@ def emit_mp_constraints(
     6. **Surface couplings** — :meth:`fem.elements.constraints.interpolations`
        yields :class:`InterpolationRecord` rows (one slave node ↔ N
        weighted master nodes from a master element face).  Emitted as
-       one ``emitter.embeddedNode(ele_tag, embedding_ele, *args)``
+       one ``emitter.embeddedNode(ele_tag, cnode, *args)``
        per record using a freshly allocated element tag.  Covers
        ``tie`` / ``distributing`` / ``embedded`` directly and
        ``tied_contact`` / ``mortar`` via the
@@ -1458,16 +1458,19 @@ def _emit_surface_couplings(
     / ``embedded`` directly; tied_contact / mortar via the
     :meth:`SurfaceCouplingRecord.slave_records` expansion).
 
-    The ``embedding_ele`` argument is the *master element* the slave
-    node embeds into.  apeGmsh's :class:`InterpolationRecord` does not
-    carry a master-element id (it carries weights against master
-    *nodes*), so the fan-out routes the master nodes through as the
-    args tail; the underlying OpenSees ASDEmbeddedNodeElement reads
-    them as the host-element nodes.  Each emitted line allocates a
-    fresh integer element tag from a per-call counter — these tags
-    are file-internal and do not collide with bridge-allocated element
-    tags because the ASDEmbeddedNodeElement vocabulary uses the
-    ``element`` family namespace.
+    The second positional ``cnode`` is the constrained (embedded /
+    slave) node — the ``$Cnode`` slot in the OpenSees signature
+    ``element ASDEmbeddedNodeElement $tag $Cnode $Rnode1 ...``.  The
+    variadic tail carries the host element's corner node tags
+    ($Rnode1..$RnodeN); ASDEmbeddedNodeElement uses isoparametric
+    interpolation over those corners internally, so the per-record
+    weights from :class:`InterpolationRecord` are NOT emitted here
+    (they survive in the FEM record for round-tripping).  Each
+    emitted line allocates a fresh integer element tag from a
+    per-call counter — these tags are file-internal and do not
+    collide with bridge-allocated element tags because the
+    ASDEmbeddedNodeElement vocabulary uses the ``element`` family
+    namespace.
     """
     from apeGmsh._kernel.records._constraints import InterpolationRecord
 

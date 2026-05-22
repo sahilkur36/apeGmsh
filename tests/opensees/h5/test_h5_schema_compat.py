@@ -341,7 +341,7 @@ def test_envelope_back_compat_preserves_existing_files(tmp_path: Any) -> None:
 
 
 def test_results_schema_version_independent_of_opensees(tmp_path: Any) -> None:
-    """results at 1.1.0 + opensees at 2.6.0 both validate independently.
+    """results at 1.1.0 + opensees at 2.7.0 both validate independently.
 
     The results-zone reader window applies to the results version
     only; the opensees-zone window applies to the opensees version
@@ -350,12 +350,14 @@ def test_results_schema_version_independent_of_opensees(tmp_path: Any) -> None:
     reader_neutral = reader_version(NEUTRAL)
     reader_opensees = reader_version(OPENSEES)
     reader_results = reader_version(RESULTS)
-    # File at the current writer versions in every zone.
+    # File at the current writer versions in every zone (each in its
+    # own two-version window: neutral 2.6.x, opensees 2.7.x–2.8.x,
+    # results 1.0.x–1.1.x).
     validate_zone_version(
         SchemaVersion(2, 6, 0), reader_neutral, zone=NEUTRAL,
     )
     validate_zone_version(
-        SchemaVersion(2, 6, 0), reader_opensees, zone=OPENSEES,
+        SchemaVersion(2, 7, 0), reader_opensees, zone=OPENSEES,
     )
     validate_zone_version(
         SchemaVersion(1, 1, 0), reader_results, zone=RESULTS,
@@ -363,9 +365,9 @@ def test_results_schema_version_independent_of_opensees(tmp_path: Any) -> None:
 
 
 def test_composed_file_validates_all_three_zones(tmp_path: Any) -> None:
-    """Open a Composed results.h5 with neutral=2.6.0, opensees=2.6.0,
-    results=1.1.0; the NativeReader's __init__ validation succeeds for
-    all three zones with no warnings raised."""
+    """Open a Composed results.h5 at the current per-zone writer versions
+    (neutral, opensees, results 1.1.0); the NativeReader's __init__
+    validation succeeds for all three zones with no warnings raised."""
     from apeGmsh.results.readers._native import NativeReader
 
     results_path, _ = _build_composed_results(tmp_path)
@@ -398,32 +400,34 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Phase 7b — schema 2.7.0 / /opensees/constraints/
+# Phase 7b — schema 2.8.0 / /opensees/constraints/
+# (2.7.0 added the group; 2.8.0 renamed the embeddedNode field
+#  embedding_ele → cnode to match the OpenSees ``$Cnode`` vocabulary.)
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_7_0() -> None:
-    """Phase 7b bumped the opensees per-zone reader to 2.7.0."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 7, 0)
+def test_opensees_reader_version_is_2_8_0() -> None:
+    """Schema 2.8.0 — embeddedNode field rename (embedding_ele → cnode)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 8, 0)
 
 
-def test_two_version_window_at_2_7_accepts_2_6_and_2_7() -> None:
-    """Reader at 2.7.0 accepts 2.6.x and 2.7.x (window: prev minor + current)."""
-    reader = SchemaVersion(2, 7, 0)
+def test_two_version_window_at_2_8_accepts_2_7_and_2_8() -> None:
+    """Reader at 2.8.0 accepts 2.7.x and 2.8.x (window: prev minor + current)."""
+    reader = SchemaVersion(2, 8, 0)
     for patch in (0, 1, 99):
-        validate_zone_version(
-            SchemaVersion(2, 6, patch), reader, zone=OPENSEES,
-        )
         validate_zone_version(
             SchemaVersion(2, 7, patch), reader, zone=OPENSEES,
         )
+        validate_zone_version(
+            SchemaVersion(2, 8, patch), reader, zone=OPENSEES,
+        )
 
 
-def test_two_version_window_at_2_7_refuses_2_5() -> None:
-    """Reader at 2.7.0 refuses 2.5.x (outside window)."""
+def test_two_version_window_at_2_8_refuses_2_6() -> None:
+    """Reader at 2.8.0 refuses 2.6.x (outside window)."""
     with pytest.raises(_PerZoneSchemaError) as exc:
         validate_zone_version(
-            SchemaVersion(2, 5, 0), SchemaVersion(2, 7, 0), zone=OPENSEES,
+            SchemaVersion(2, 6, 0), SchemaVersion(2, 8, 0), zone=OPENSEES,
         )
     assert "too old" in str(exc.value)
 

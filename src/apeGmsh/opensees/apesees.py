@@ -388,13 +388,15 @@ class BuiltModel:
         self._emit_broker_loads(emitter, tags)
 
         # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).  Runs strictly
-        # between element emission and pattern emission: element tags
-        # must exist (constraints reference them; ASDEmbeddedNodeElement
-        # references the embedding element), and DOFs must be
-        # consolidated before patterns push ``ops.load(node, ...)`` on
-        # them (equalDOF collapses pairs of DOFs into one).  Includes
-        # the phantom-node pre-step that emits ``node(tag, *xyz, ndf=6)``
-        # before any constraint references the phantom (INV-3).
+        # between element emission and pattern emission: the constraint
+        # pass itself emits ``element ASDEmbeddedNodeElement`` lines
+        # (one per InterpolationRecord) whose internally-allocated tags
+        # need to come after the user's structural elements so they do
+        # not shadow user tags; DOFs must be consolidated before
+        # patterns push ``ops.load(node, ...)`` on them (equalDOF
+        # collapses pairs of DOFs into one).  Includes the phantom-node
+        # pre-step that emits ``node(tag, *xyz, ndf=6)`` before any
+        # constraint references the phantom (INV-3).
         emit_mp_constraints(emitter, self.fem)
 
         # 7c. Auto-emit constraint handler when MP constraints are

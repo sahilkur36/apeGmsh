@@ -40,7 +40,7 @@ per-zone semver evolution with a bounded reader-compatibility window.
 
 ```
 /meta/neutral_schema_version    = "2.5.0"   (neutral zone, post-Phase 2)
-/meta/opensees_schema_version   = "2.7.0"   (opensees zone, post-Phase 7)
+/meta/opensees_schema_version   = "2.8.0"   (opensees zone, post-Phase 7)
 /meta/results_schema_version    = "1.0.0"   (results zone, NEW in Phase 4)
 
 /meta/schema_version            = "2.x"     (envelope; back-compat for one-key readers)
@@ -70,8 +70,8 @@ It **refuses** with `SchemaVersionError`:
 - `(X+1).*.*` and later majors (breaking change)
 
 `SchemaVersionError` text includes the explicit upgrade-path
-recommendation: *"file written at `opensees_schema_version=2.4.0`; this
-reader supports 2.6.x–2.7.x. Upgrade apeGmsh to read this archive, or
+recommendation: *"file written at `opensees_schema_version=2.5.0`; this
+reader supports 2.7.x–2.8.x. Upgrade apeGmsh to read this archive, or
 re-emit the model with the current version."*
 
 ### Single-stamp legacy files — back-compat mapping
@@ -159,8 +159,8 @@ auto-upgrades them.
   version key. The pattern scales — adding `aster_schema_version` is
   one new key, one new reader rule, no impact on existing keys.
 - Archived files have an expiration horizon users can plan against.
-  *"This file was written under `opensees=2.5.0`; this reader supports
-  2.6.x–2.7.x"* is a precise message.
+  *"This file was written under `opensees=2.6.0`; this reader supports
+  2.7.x–2.8.x"* is a precise message.
 - Lineage determinism (per [ADR 0021](0021-lineage-chain-replaces-snapshot-id.md)
   INV-5) is required only **within** the two-version window —
   bounding the canonical-bytes determinism requirement.

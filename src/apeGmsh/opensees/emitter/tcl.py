@@ -131,7 +131,7 @@ class TclEmitter:
         )
 
     def embeddedNode(
-        self, ele_tag: int, embedding_ele: int,
+        self, ele_tag: int, cnode: int,
         *args: int | float,
     ) -> None:
         # ASDEmbeddedNodeElement covers tie / tied_contact / mortar /
@@ -139,7 +139,7 @@ class TclEmitter:
         self._lines.append(
             _join(
                 "element", "ASDEmbeddedNodeElement",
-                ele_tag, embedding_ele, *args,
+                ele_tag, cnode, *args,
             )
         )
 

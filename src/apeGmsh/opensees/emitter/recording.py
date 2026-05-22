@@ -58,11 +58,11 @@ class RecordingEmitter:
         )
 
     def embeddedNode(
-        self, ele_tag: int, embedding_ele: int,
+        self, ele_tag: int, cnode: int,
         *args: int | float,
     ) -> None:
         self.calls.append(
-            ("embeddedNode", (ele_tag, embedding_ele, *args), {})
+            ("embeddedNode", (ele_tag, cnode, *args), {})
         )
 
     def mp_constraint_comment(self, name: str) -> None:
