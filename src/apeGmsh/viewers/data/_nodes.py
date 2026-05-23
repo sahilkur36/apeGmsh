@@ -273,6 +273,7 @@ class ViewerNodes:
         "_ids",
         "_coords",
         "_id_to_idx",
+        "_boundary_node_ids",
         "physical",
         "labels",
         "selection",
@@ -294,10 +295,19 @@ class ViewerNodes:
         sp: SPView,
         masses: MassView,
         constraints: NodeConstraintView,
+        boundary_node_ids: "frozenset[int] | None" = None,
     ) -> None:
         self._ids = np.asarray(ids, dtype=np.int64)
         self._coords = np.asarray(coords, dtype=np.float64)
         self._id_to_idx: dict[int, int] | None = None
+        # Node tags shared between OpenSeesMP ranks (schema 2.10.0 /
+        # ADR 0027 — union of every PartitionEmittedRecord.
+        # boundary_node_ids). Empty for single-partition models,
+        # pre-2.10.0 archives, and the from_fem path.
+        self._boundary_node_ids: frozenset[int] = (
+            frozenset(int(n) for n in boundary_node_ids)
+            if boundary_node_ids else frozenset()
+        )
         self.physical = physical
         self.labels = labels
         self.selection = selection
@@ -313,6 +323,22 @@ class ViewerNodes:
     @property
     def coords(self) -> ndarray:
         return self._coords
+
+    @property
+    def boundary_node_ids(self) -> "frozenset[int]":
+        """Node tags shared between two or more OpenSeesMP ranks.
+
+        Empty for single-partition models, pre-2.10.0 archives, and
+        the live ``from_fem`` path. Per ADR 0027 the boundary set is
+        symmetric — a node appears on this set iff it was declared
+        under at least two ``partition_open`` brackets.
+        """
+        return self._boundary_node_ids
+
+    @property
+    def has_boundary_nodes(self) -> bool:
+        """True when the source carries cross-rank boundary nodes."""
+        return bool(self._boundary_node_ids)
 
     def index(self, nid: int) -> int:
         """Array index for a node ID.  O(1) after first call."""
