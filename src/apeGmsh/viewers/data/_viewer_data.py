@@ -215,6 +215,13 @@ class ViewerData:
         masses_rows = _decode_masses(model.masses())
         node_cs_rows, elem_cs_rows = _decode_constraints(model.constraints())
 
+        # Cross-partition enrichment (schema 2.10.0 / ADR 0027). Both
+        # joins degrade silently to empty for single-partition models
+        # and pre-2.10.0 archives — the missing surfaces look the same
+        # at the reader level.
+        partition_by_eid = _decode_partition_by_eid(model)
+        boundary_node_ids = _decode_boundary_node_ids(model)
+
         nodes = ViewerNodes(
             ids=ids, coords=coords,
             physical=node_physical, labels=node_labels,
@@ -223,6 +230,7 @@ class ViewerData:
             sp=SPView(sp_rows),
             masses=MassView(masses_rows),
             constraints=NodeConstraintView(node_cs_rows),
+            boundary_node_ids=boundary_node_ids,
         )
 
         # Per-element geomTransf vecxz — the schema-aware transforms ↔
@@ -241,6 +249,7 @@ class ViewerData:
             loads=ElementLoadView(_decode_element_loads(model.loads())),
             constraints=SurfaceConstraintView(elem_cs_rows),
             vecxz=vecxz,
+            partition_by_eid=partition_by_eid,
         )
 
         return cls(
@@ -290,6 +299,69 @@ def _named_view_from_h5_index(
     return _NamedNodeSelection(
         by_name, raise_on_missing=raise_on_missing, label=label,
     )
+
+
+def _decode_partition_by_eid(model: Any) -> dict[int, int]:
+    """Build ``{fem_eid: rank}`` by joining ``element_meta_arrays``'
+    ``fem_eids`` and ``partition_ids`` columns across every type token.
+
+    Schema 2.10.0 (ADR 0027). Both columns are optional at the reader
+    level: pre-2.10.0 archives carry neither; archives written with no
+    ``partition_open`` brackets carry ``partition_ids`` filled with
+    ``-1`` sentinels. Both shapes degrade to an empty mapping.
+
+    Multiple OpenSees tags can share one FEM eid under bridge fan-out;
+    the ranks must agree (the broker assigns rank per-element, not
+    per-OpenSees-tag), so last-write-wins is safe.
+    """
+    out: dict[int, int] = {}
+    try:
+        meta = model.element_meta()
+    except Exception:
+        return out
+    for token in meta:
+        try:
+            arr = model.element_meta_arrays(token)
+        except KeyError:
+            continue
+        fem_eids = arr.get("fem_eids")
+        partition_ids = arr.get("partition_ids")
+        if fem_eids is None or partition_ids is None:
+            continue
+        fem_eids = np.asarray(fem_eids, dtype=np.int64)
+        partition_ids = np.asarray(partition_ids, dtype=np.int64)
+        n = min(fem_eids.size, partition_ids.size)
+        for i in range(n):
+            feid = int(fem_eids[i])
+            rank = int(partition_ids[i])
+            if feid != -1 and rank != -1:
+                out[feid] = rank
+    return out
+
+
+def _decode_boundary_node_ids(model: Any) -> "frozenset[int]":
+    """Union ``PartitionEmittedRecord.boundary_node_ids`` across every
+    rank.
+
+    Schema 2.10.0 (ADR 0027). Returns an empty frozenset when the
+    reader has no partitions group (pre-2.10.0, or a 2.10.x archive
+    emitted with no ``partition_open`` brackets — both yield the same
+    empty list from :meth:`H5Model.partitions`).
+
+    ``partitions()`` is not in the ADR 0026 H5ModelReader Protocol
+    surface — it's a concrete apeGmsh reader method. Foreign-format
+    adapters (LS-DYNA d3plot, xDMF) that don't implement it degrade
+    to the empty-frozenset path via ``getattr`` rather than swallowing
+    a runtime exception.
+    """
+    partitions_fn = getattr(model, "partitions", None)
+    if partitions_fn is None:
+        return frozenset()
+    recs = partitions_fn()
+    out: set[int] = set()
+    for rec in recs:
+        out.update(int(n) for n in rec.boundary_node_ids)
+    return frozenset(out)
 
 
 def _decode_element_groups(model: Any) -> list[ViewerElementGroup]:

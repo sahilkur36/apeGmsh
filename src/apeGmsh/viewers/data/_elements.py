@@ -166,6 +166,7 @@ class ViewerElements:
         "_groups",
         "_types",
         "_vecxz_by_eid",
+        "_partition_by_eid",
         "physical",
         "labels",
         "selection",
@@ -183,6 +184,7 @@ class ViewerElements:
         loads: ElementLoadView,
         constraints: SurfaceConstraintView,
         vecxz: dict[int, ndarray] | None = None,
+        partition_by_eid: dict[int, int] | None = None,
     ) -> None:
         self._groups = list(groups)
         self._types = [g.element_type for g in self._groups]
@@ -192,6 +194,13 @@ class ViewerElements:
         self._vecxz_by_eid: dict[int, ndarray] = {
             int(k): np.asarray(v, dtype=np.float64).reshape(3)
             for k, v in (vecxz or {}).items()
+        }
+        # FEM element id -> OpenSeesMP rank (schema 2.10.0 / ADR 0027).
+        # Joined from /opensees/element_meta/{token}/{fem_eids,
+        # partition_ids}. Empty for single-partition models, pre-2.10.0
+        # files, and the from_fem path (FEMData has no rank labelling).
+        self._partition_by_eid: dict[int, int] = {
+            int(k): int(v) for k, v in (partition_by_eid or {}).items()
         }
         self.physical = physical
         self.labels = labels
@@ -210,6 +219,18 @@ class ViewerElements:
         """True when per-element orientation is available (h5 path with
         a ``/opensees/transforms`` zone)."""
         return bool(self._vecxz_by_eid)
+
+    def partition_for(self, element_id: int) -> "int | None":
+        """Return the OpenSeesMP rank for a FEM element id, or ``None``
+        when the element has no rank labelling (single-partition model,
+        pre-2.10.0 archive, or the live ``from_fem`` path)."""
+        return self._partition_by_eid.get(int(element_id))
+
+    @property
+    def has_partitions(self) -> bool:
+        """True when at least one element carries an OpenSeesMP rank
+        label (schema 2.10.0 partition zone present and non-trivial)."""
+        return bool(self._partition_by_eid)
 
     def __iter__(self) -> Iterator[ViewerElementGroup]:
         return iter(self._groups)
