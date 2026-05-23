@@ -30,6 +30,7 @@ Schema-version compatibility (ADR 0023):
 from __future__ import annotations
 
 import builtins
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from .._internal.schema_version import (
@@ -212,6 +213,62 @@ class H5Model:
     def handle(self) -> h5py.File:
         """Raw h5py file handle — for advanced use beyond this API."""
         return self._f
+
+    @property
+    def path(self) -> Path:
+        """The on-disk source the reader was opened against.
+
+        ADR 0026 (H5ModelReader Protocol) requires this property so
+        adapters can expose their file backing for callers that need
+        a path (subprocess argv, error messages, debugging).  Returns
+        a :class:`pathlib.Path` regardless of how the source was
+        passed to :func:`open` — the stored ``self._path`` is the
+        original ``str``.
+        """
+        return Path(self._path)
+
+    # -- Capability probes (ADR 0026) -----------------------------------
+
+    def has_opensees_orientation(self) -> bool:
+        """``True`` iff the file carries the orientation sidecar.
+
+        Both ``/opensees/transforms`` and ``/opensees/element_meta``
+        must be present.  This is the gate
+        :func:`apeGmsh.viewers.data._h5_probe.has_opensees_orientation`
+        applies — the standalone function exists for path-only
+        callers; this method is the equivalent on an already-open
+        reader (cheaper: no second ``h5py.File`` open).
+
+        Producer-agnostic: both the bridge writer (``apeSees(fem).h5()``)
+        and :class:`apeGmsh.opensees.ModelData` write the same
+        byte-equivalent zone (ADR 0018 INV-16), so the probe needs
+        no provenance check — it asks the file directly.
+
+        Existence of *both* groups is the contract; the join in
+        :meth:`element_local_axes_vecxz` requires both.  A file with
+        the zones but only ``-1`` sentinel rows still returns
+        ``True`` here and degrades gracefully inside the join
+        (ADR 0018 INV-11 — "write+degrade on nothing-injected").
+        """
+        return (
+            "opensees/transforms" in self._f
+            and "opensees/element_meta" in self._f
+        )
+
+    def has_neutral_zone(self) -> bool:
+        """``True`` iff the file carries the rich neutral zone.
+
+        The probe re-uses the ``neutral_schema_version`` marker that
+        :func:`open` already inspects at construction time
+        (``h5_reader.py:157``) to recognise broker-emit files.  An
+        apeGmsh-written ``model.h5`` always returns ``True``.  Foreign
+        formats whose adapters synthesise a neutral view from the
+        bridge zone return ``True`` once the synthesis is complete;
+        bridge-only adapters return ``False`` (the viewer degrades
+        to fem-only rendering, mirroring the MPCO asymmetry).
+        """
+        meta_attrs = _attrs_as_dict(self._f[self._meta_path])
+        return "neutral_schema_version" in meta_attrs
 
     # -- Required reads --------------------------------------------------
 
