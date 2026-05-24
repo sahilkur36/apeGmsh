@@ -205,7 +205,7 @@ class _Boolean:
         dim           : int  = 3,
         remove_object : bool = True,
         remove_tool   : bool = True,
-        cleanup_free  : bool = True,
+        cleanup_free  : bool = False,
         sync          : bool = True,
     ) -> list[Tag]:
         """
@@ -223,10 +223,22 @@ class _Boolean:
             (default 3).
         remove_object, remove_tool : passed to OCC (default True).
         cleanup_free : bool
-            When True (default), remove any "free" surfaces that do not
-            bound a volume after the fragment operation.  This cleans up
-            exterior remnants of cutting planes that fall outside the
-            solid.  Set to False to keep all surface fragments.
+            When True, remove any "free" surfaces that do not bound a
+            volume after the fragment operation.  Useful for dropping
+            exterior remnants of cutting planes that overhang the
+            solid.  Defaults to ``False`` (changed from ``True``): the
+            cleanup heuristic also deleted shell surfaces attached to
+            volume faces (shell-on-solid workflows) whose centroid sat
+            outside the volume bounding box, silently destroying the
+            user's geometry.  Pass ``cleanup_free=True`` explicitly
+            when you know the model only produces stray exterior
+            surfaces, or delete unwanted surfaces by hand with
+            ``gmsh.model.occ.remove`` after the fragment.  When True,
+            free surfaces whose centroid sits INSIDE some volume bbox
+            are still preserved (embedded interior surfaces such as
+            future crack planes), and free surfaces sharing a boundary
+            curve with a volume face are preserved as well (shell
+            walls attached to a volume).
         sync : synchronise the OCC kernel (default True).
 
         Returns
@@ -249,6 +261,13 @@ class _Boolean:
         # also adjacency-free, so we keep any free surface whose
         # centroid falls inside some volume's bounding box; only
         # surfaces clearly outside every volume are deleted.
+        # NOTE on shell-on-solid: the cleanup_free=True path is
+        # opt-in and removes ALL adjacency-free overhang surfaces
+        # outside volume bboxes — both genuine cutting-plane remnants
+        # AND shell-wall portions that extend beyond the volume face
+        # they sit on. Shell-on-solid workflows must use the default
+        # cleanup_free=False (changed from True for exactly this
+        # reason) so user-declared shells survive.
         if cleanup_free and gmsh.model.getEntities(3):
             vol_bboxes = [
                 gmsh.model.getBoundingBox(3, vt)
