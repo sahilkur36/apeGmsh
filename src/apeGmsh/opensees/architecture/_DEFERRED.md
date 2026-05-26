@@ -511,30 +511,33 @@ not just `s.remove_mp` — also any hypothetical `s.swap_mp` or
 `s.update_mp_stiffness` (relevant for damper / spring
 substitutions in nonlinear time history).
 
-**Refactor shape** (not yet planned for any PR):
-
-- Thread `tags.allocate("MPconstraint")` through each per-kind
-  emit helper (after `_emit_phantom_nodes`).
-- Persist a per-stage / per-broker `mp_name_to_tag` map on the
-  bridge so the stage emit pass can read it back.
-- Emit one comment line per MP carrying the apeGmsh `name=`
-  before the OpenSees command, for human-readable decks (the
-  Tcl `# mp_name=foo (tag=42)` shape).
-- Update the H5 schema (`/opensees/constraints/{equalDOF,
-  rigidLink, rigidDiaphragm}` compound dtypes) to add a `tag`
-  column — schema bump opensees 2.7.0 → 2.8.0 per ADR 0023,
-  reader window stays at two versions so existing readers
-  tolerate the addition.
+**Refactor shape:** open. A prior sketch (apeGmsh-side
+`TagAllocator` thread; schema bump opensees 2.12.0 → 2.13.0
+per ADR 0023) did not survive review. OpenSees auto-allocates
+MP tags inside `MP_Constraint`'s constructor (static `nextTag++`
+at `SRC/domain/constraints/MP_Constraint.cpp:238`), and the Tcl
+/ Py / Live dialects expose the resulting tag asymmetrically:
+`TclCommand_addEqualDOF_MP` returns it via `Tcl_SetObjResult`
+(`constraint.cpp:500`), but `TclCommand_RigidLink` and
+`TclCommand_RigidDiaphragm` (`rigid_links.cpp`) do NOT, and
+`ops.equalDOF(...)` returns `None` because `OPS_EqualDOF`
+(`MP_Constraint.cpp:49-101`) never populates the Python
+wrapper's `currentResult`. Any future design must re-ground
+against per-dialect tag-capture semantics — likely a
+`getMPtags()` snapshot-diff in Live and a raw `MP_Constraint`
+emit bypassing the convenience wrappers in Tcl/Py — before any
+PR lands.
 
 **Trigger:** any first consumer (`s.remove_mp`, `s.swap_mp`,
-H5 readback of MP identity), OR a quiet PR that just lands the
-plumbing because the architecture surface gets cleaner.
+H5 readback of MP identity).
 
-**Cost estimate (informational):** 1-2 days of code + tests +
-schema bump. Lives in `_internal/build.py::emit_mp_constraints`
-and `emitter/h5.py::_write_mp_constraints`. The Tcl / Py / Live
-/ Recording emitters are unaffected because the tag is just
-another integer in the existing command.
+**Cost estimate (informational):** lift touches
+`_internal/build.py::emit_mp_constraints`,
+`emitter/h5.py::_write_mp_constraints`, and per-dialect
+tag-capture work in every emitter (Tcl / Py / Live / Recording
+— shape TBD per "Refactor shape" note above; the Emitter
+Protocol classifies any new method as an architecture event per
+`emitter/base.py`).
 
 ## Cylindrical / Spherical in 2-D models
 
