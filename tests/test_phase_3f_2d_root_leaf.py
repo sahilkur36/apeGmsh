@@ -297,13 +297,63 @@ def test_leaf_deterministic_across_calls() -> None:
 # =====================================================================
 
 
+def test_viewer_local_parser_parity_with_mesh_side() -> None:
+    """Viewer-local ``_split_joined_module_label`` must agree with the
+    canonical ``apeGmsh.mesh._compose._split_joined_label`` on every
+    valid joined label. The viewer can't import from mesh (layering
+    invariant), so we maintain two parsers — this test locks them
+    in lock-step against drift.
+
+    If this test fails, either the mesh-side parser changed (review
+    whether the viewer-local copy needs an equivalent update) or the
+    viewer-local copy has a bug (fix it).
+    """
+    from apeGmsh.mesh._compose import _split_joined_label as canonical
+    from apeGmsh.viewers.core.color_mode_controller import (
+        _split_joined_module_label as viewer_local,
+    )
+
+    cases = [
+        "",  # empty
+        "partA",  # depth 1
+        "outer.inner",  # depth 2 — actually this is the OTHER form ".at depth 1"
+        "outer/inner",  # depth 2
+        "top.assemblyM/partA",  # depth 3, from ADR worked example
+        "bayP/frameA",  # depth 2 worked example
+        "frame.beam_A.end",  # depth 3
+        "bldg_1.frame/beam_A.end",  # depth 4 from ADR comment
+    ]
+    for label in cases:
+        if not label:
+            # Both parsers handle empty as () — confirm matching
+            assert canonical(label) == viewer_local(label) == ()
+            continue
+        # Canonical may raise on labels that violate alternation —
+        # viewer-local should raise on the same set. We test against
+        # canonical's behavior to keep the local copy in sync.
+        try:
+            canon_result = canonical(label)
+        except Exception:
+            # Canonical rejected — viewer-local should too
+            with pytest.raises((ValueError, Exception)):
+                viewer_local(label)
+            continue
+        # Canonical accepted — viewer-local should produce the same tuple
+        assert viewer_local(label) == canon_result, (
+            f"parser drift on label {label!r}: "
+            f"canonical = {canon_result!r}, viewer_local = {viewer_local(label)!r}"
+        )
+
+
 def test_malformed_label_raises_compose_error_root() -> None:
     """If a malformed joined label (violating separator alternation)
     appears in module_by_eid, the projector raises ComposeError —
     fail-loud rather than silently fall back, since this indicates
     upstream corruption.
     """
-    from apeGmsh.mesh._compose import ComposeError
+    # _split_joined_module_label (viewer-local, inlined to satisfy
+    # the test_viewers_pure_h5_consumer layering invariant) raises
+    # ValueError rather than ComposeError.
 
     scene = _FakeScene(brep_to_elems={(2, 10): [100]})
     # "top/foo/bar" is malformed — depth-3 expects "." at the outermost
@@ -312,16 +362,18 @@ def test_malformed_label_raises_compose_error_root() -> None:
     _, elements = _make_viewer_data(module_by_eid={100: "top/foo/bar"})
     ctrl = _make_controller(scene=scene, view=_MiniView(elements))
 
-    with pytest.raises(ComposeError):
+    with pytest.raises(ValueError):
         ctrl._module_idle_by_root((2, 10))
 
 
 def test_malformed_label_raises_compose_error_leaf() -> None:
-    from apeGmsh.mesh._compose import ComposeError
+    # _split_joined_module_label (viewer-local, inlined to satisfy
+    # the test_viewers_pure_h5_consumer layering invariant) raises
+    # ValueError rather than ComposeError.
 
     scene = _FakeScene(brep_to_elems={(2, 10): [100]})
     _, elements = _make_viewer_data(module_by_eid={100: "top/foo/bar"})
     ctrl = _make_controller(scene=scene, view=_MiniView(elements))
 
-    with pytest.raises(ComposeError):
+    with pytest.raises(ValueError):
         ctrl._module_idle_by_leaf((2, 10))

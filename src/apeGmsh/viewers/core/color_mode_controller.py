@@ -80,6 +80,66 @@ _DEFAULT_QUALITY_METRIC = "minSICN"
 _QUALITY_CMAP = "viridis"
 
 
+def _split_joined_module_label(label: str) -> tuple[str, ...]:
+    """Inverse of the compose-side ``_join_module_label`` rule —
+    inlined locally so the viewer layer doesn't reach into
+    ``apeGmsh.mesh`` (forbidden by the layering invariant test
+    ``test_viewers_pure_h5_consumer.py``).
+
+    Joined-label format: components separated by `.` at odd depths
+    and `/` at even depths, with the LEFTMOST separator at depth N
+    (the outermost join) and the RIGHTMOST at depth 2. A depth-1
+    label has no separator.
+
+    Returns the component tuple in outer-to-inner order. Raises
+    ``ValueError`` if a separator at any position violates the
+    alternation rule — fail-loud, since a malformed label in the
+    broker indicates upstream corruption (``ComposeLabelError``
+    should have prevented it at write time).
+
+    Canonical implementation lives at
+    ``apeGmsh.mesh._compose._split_joined_label``. Keep this copy in
+    lock-step; the round-trip property is tested on both sides.
+    """
+    if not label:
+        return ()
+    # Find separator positions
+    seps = [i for i, ch in enumerate(label) if ch in ("/", ".")]
+    if not seps:
+        return (label,)
+    depth = len(seps) + 1
+    # Validate alternation: leftmost sep is depth N, next is N-1,
+    # ..., rightmost is depth 2. The depth-k separator must be `.`
+    # for odd k and `/` for even k.
+    for i, pos in enumerate(seps):
+        k = depth - i  # depth of this separator (decreasing left to right)
+        expected = "." if (k % 2 == 1) else "/"
+        if label[pos] != expected:
+            raise ValueError(
+                f"malformed joined module label {label!r}: "
+                f"separator at position {pos} is {label[pos]!r}, "
+                f"alternation rule requires {expected!r} at depth {k}"
+            )
+    # Split at separator positions; reject any empty component
+    parts = []
+    start = 0
+    for pos in seps:
+        comp = label[start:pos]
+        if not comp:
+            raise ValueError(
+                f"malformed joined module label {label!r}: empty component"
+            )
+        parts.append(comp)
+        start = pos + 1
+    tail = label[start:]
+    if not tail:
+        raise ValueError(
+            f"malformed joined module label {label!r}: empty component"
+        )
+    parts.append(tail)
+    return tuple(parts)
+
+
 class ColorModeController:
     """Switch the mesh viewer between named color modes."""
 
@@ -283,9 +343,8 @@ class ColorModeController:
         Uncomposed sources degrade to ``_FALLBACK_RGB`` (same as
         :meth:`_module_idle`).
         """
-        from apeGmsh.mesh._compose import _split_joined_label
         return self._module_idle_projected(
-            dt, lambda label: _split_joined_label(label)[0]
+            dt, lambda label: _split_joined_module_label(label)[0]
         )
 
     def _module_idle_by_leaf(self, dt: "DimTag") -> np.ndarray:
@@ -301,9 +360,8 @@ class ColorModeController:
         Single-level (depth-1) labels project to themselves. Uncomposed
         sources degrade to ``_FALLBACK_RGB``.
         """
-        from apeGmsh.mesh._compose import _split_joined_label
         return self._module_idle_projected(
-            dt, lambda label: _split_joined_label(label)[-1]
+            dt, lambda label: _split_joined_module_label(label)[-1]
         )
 
     def _module_idle_projected(self, dt: "DimTag", projector) -> np.ndarray:
