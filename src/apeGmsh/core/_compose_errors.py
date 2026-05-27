@@ -66,6 +66,27 @@ class ComposeInvariantError(RuntimeError):
     """
 
 
+class ComposeInterfaceSizeWarning(UserWarning):
+    """Advisory warning raised when a compose's interface size sits in
+    the regime where downstream cross-rank emit / parse cost may
+    become a problem per ADR 0038 §"v1 scope gate".
+
+    Phase 3F.1.  The Phase 1 gate (10k x 4 ranks) passed; the 100k x 8
+    cell breached emit/parse/RSS thresholds.  Composing a source with
+    more than :data:`apeGmsh.mesh._compose.WARN_INTERFACE_SIZE`
+    interface-class constraint records puts the composed assembly
+    into the latter regime, so the merge engine emits this warning
+    once per compose call.
+
+    Subclass of :class:`UserWarning` so it can be silenced with
+    ``warnings.simplefilter("ignore",
+    apeGmsh.core._compose_errors.ComposeInterfaceSizeWarning)`` when
+    callers accept the cost.  Distinct from
+    :class:`~apeGmsh.mesh._compose.ComposeFilterWarning` so users can
+    filter the two independently.
+    """
+
+
 class ComposeDepthExceededError(RuntimeError, ValueError):
     """Raised when a nested-compose operation would exceed the
     configured ``max_compose_depth`` per ADR 0038 §"Nested composition".

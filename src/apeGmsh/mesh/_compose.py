@@ -36,6 +36,7 @@ from .._kernel.records._compose import ComposeRecord
 from ..core._compose_errors import (
     ComposeDepthExceededError as _CoreComposeDepthExceededError,
 )
+from ..core._compose_errors import ComposeInterfaceSizeWarning
 
 if TYPE_CHECKING:
     from .._core import apeGmsh
@@ -141,6 +142,23 @@ class ComposeFilterWarning(UserWarning):
 #: Class constant on :class:`Compose`; the public ``compose(...)`` method
 #: also accepts ``max_compose_depth=N`` as a per-call override.
 DEFAULT_MAX_COMPOSE_DEPTH: int = 3
+
+#: Advisory threshold on a compose's interface size per ADR 0038
+#: §"v1 scope gate" (Phase 3F.1).  The Phase 1 microbenchmark passed
+#: at 10k x 4 ranks but breached emit / parse / RSS thresholds at
+#: 100k x 8 ranks; the middle-branch decision was to ship compose at
+#: full scope and emit a :class:`ComposeInterfaceSizeWarning` when the
+#: caller's compose lands in the regime where downstream cross-rank
+#: emit / parse cost may become a problem.
+#:
+#: "Interface size" here is the count of MP-style constraint records
+#: in the rewritten bundle (node-side + element-side) — each replicates
+#: across ranks per ADR 0027's cross-partition emission rules, so the
+#: replication cost scales with the constraint count regardless of
+#: rank count.  Constants in :data:`apeGmsh.mesh._compose` rather than
+#: a sub-config because the threshold is a property of the Phase 1
+#: gate, not user configuration.
+WARN_INTERFACE_SIZE: int = 50_000
 
 #: Separators allowed at compose-namespace boundaries.  The first entry
 #: is the canonical "outer" separator at depth 1; the alternation rule
@@ -2904,3 +2922,65 @@ def _emit_filter_warnings(source_path: "str | Path", label: str) -> None:
         # engine has already loaded the IMPORT records successfully via
         # the rewrite step.
         return
+
+
+# ---------------------------------------------------------------------------
+# Interface-size advisory (Phase 3F.1 / ADR 0038 §"v1 scope gate")
+# ---------------------------------------------------------------------------
+
+
+def _count_interface_size(bundle: "_RewrittenBundle") -> int:
+    """Return the count of MP-style constraint records in ``bundle``.
+
+    Phase 3F.1 / ADR 0038 §"v1 scope gate".  The gate matrix
+    (``tests/benchmarks/test_cross_rank_constraint_cost.py``) measured
+    emit / parse cost as a function of an ``interface_size`` parameter
+    that counts the embedded interpolation constraints in the
+    fixture.  At compose time the same quantity is the count of
+    constraint records carried by the rewritten bundle — each of
+    those records will, at emit time, fan out across ranks per
+    ADR 0027's cross-partition emission rules (``equalDOF``,
+    ``rigidLink``, ``rigidDiaphragm``, ``embeddedNode``,
+    ``mp_constraint_comment``), so the cost scales with the
+    constraint count regardless of rank count.
+
+    Counts the node-side + element-side constraint streams on the
+    bundle.  Other interface-class proxies (interface node count, PG
+    member counts) are correlated but indirect; the constraint count
+    matches the gate fixture's framing exactly.
+    """
+    return len(bundle.node_constraints) + len(bundle.elem_constraints)
+
+
+def _warn_interface_size(
+    bundle: "_RewrittenBundle",
+    *,
+    threshold: "int | None" = None,
+) -> None:
+    """Emit a :class:`ComposeInterfaceSizeWarning` when ``bundle`` sits
+    above the advisory threshold.
+
+    Phase 3F.1 / ADR 0038 §"v1 scope gate".  Predicate is
+    strictly-greater-than so the threshold value itself does NOT
+    trip the warning — only counts that exceed it.  ``threshold=None``
+    disables the warning entirely (escape hatch for callers who have
+    already accepted the cost).
+
+    Emits at most one warning per call regardless of how many
+    constraint records the bundle carries.
+    """
+    if threshold is None:
+        return
+    count = _count_interface_size(bundle)
+    if count <= threshold:
+        return
+    warnings.warn(
+        f"compose(label={bundle.label!r}): module carries {count} "
+        f"interface-class constraints (> {threshold}); downstream "
+        f"cross-rank emit / parse cost may dominate per ADR 0038 "
+        f"§\"v1 scope gate\". Consider splitting the source into "
+        f"smaller modules, or silence with warnings.simplefilter("
+        f"\"ignore\", ComposeInterfaceSizeWarning).",
+        ComposeInterfaceSizeWarning,
+        stacklevel=3,
+    )

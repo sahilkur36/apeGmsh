@@ -1900,6 +1900,14 @@ class FEMData:
         # 5. Emit FILTER warnings (stages / time-series / patterns).
         _emit_filter_warnings(source, label)
 
+        # 5b. Interface-size advisory (Phase 3F.1 / ADR 0038
+        #     §"v1 scope gate").  Emits one ComposeInterfaceSizeWarning
+        #     when the bundle's MP-style constraint count exceeds
+        #     WARN_INTERFACE_SIZE = 50_000 — silenceable per-call via
+        #     ``warnings.simplefilter("ignore", ComposeInterfaceSizeWarning)``.
+        from ._compose import WARN_INTERFACE_SIZE, _warn_interface_size
+        _warn_interface_size(bundle, threshold=WARN_INTERFACE_SIZE)
+
         # 6. Merge bundle into self → new FEMData.  The merge engine
         #    runs the Phase 2.2 tag-collision verifier first
         #    (ADR 0038 §"Tag-collision verifier") and raises a typed
