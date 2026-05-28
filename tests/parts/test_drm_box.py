@@ -243,6 +243,103 @@ class TestToggles:
         finally:
             g.end()
 
+    def test_line_pgs_classify_by_band_of_their_own_axis(self):
+        """Every curve in ``lines_{region}_{axis}`` must span the
+        ``axis`` segment named by ``region``.
+
+        This is the contract that makes
+        ``set_transfinite_curve('lines_inner_x', n_nodes=nx_inner+1)``
+        well-defined — all curves in the PG share the same length.
+        A regression to "classify X-aligned edges by Y-band" (or any
+        other axis crossing) would put curves of mixed length into a
+        single PG and break direct ``set_transfinite_curve`` use.
+        """
+        g = apeGmsh(model_name="drm_band", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_DRM_box(**TINY)
+            axis_map = {"x": res.axes["x"], "y": res.axes["y"], "z": res.axes["z"]}
+            expected_size = {
+                ("x", "inner"): TINY["x_inner"][0],
+                ("x", "layer"): TINY["x_layer"][0],
+                ("x", "outer"): TINY["x_outer"][0],
+                ("y", "inner"): TINY["y_inner"][0],
+                ("y", "layer"): TINY["y_layer"][0],
+                ("y", "outer"): TINY["y_outer"][0],
+                ("z", "top"):    TINY["z_top"][0],
+                ("z", "mid"):    TINY["z_mid"][0],
+                ("z", "bottom"): TINY["z_bottom"][0],
+            }
+            for key, pg_name in res.line_pgs.items():
+                region, axis_letter = key.rsplit("_", 1)
+                pg_tag = g.physical.get_tag(1, pg_name)
+                want_size = expected_size[(axis_letter, region)]
+                for ctag in g.physical.get_entities(1, pg_tag):
+                    bb = gmsh.model.getBoundingBox(1, int(ctag))
+                    dx, dy, dz = bb[3]-bb[0], bb[4]-bb[1], bb[5]-bb[2]
+                    span = {"x": dx, "y": dy, "z": dz}[axis_letter]
+                    assert span == pytest.approx(want_size, abs=1e-6), (
+                        f"{pg_name} curve {ctag}: span along {axis_letter} "
+                        f"= {span}, expected {want_size} (the {region} "
+                        f"segment of axis_{axis_letter}). Classifier is "
+                        f"likely crossing axes."
+                    )
+        finally:
+            g.end()
+
+    def test_user_style_per_pg_curve_count_drives_per_axis_total(self):
+        """User-style ``set_transfinite_curve('lines_inner_x', n_nodes=N+1)``
+        must yield the expected per-axis element total when paired
+        with explicit ``setTransfiniteSurface`` / ``setTransfiniteVolume``
+        directives on every sub-volume.
+
+        This pins the line-PG semantics: ``lines_inner_x`` curves must
+        all share the same X-length so a single n_nodes per PG is the
+        right knob.  A classifier regression that mixes lengths into
+        one PG would cause adjacent sub-volumes to disagree on shared
+        edges and either drop hex elements or fall back to tets.
+
+        ``setTransfiniteAutomatic`` is deliberately NOT used here —
+        gmsh overrides per-curve counts inside it from corner mesh
+        sizes, which is orthogonal to the classifier contract under
+        test.
+        """
+        g = apeGmsh(model_name="drm_user_style", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_DRM_box(**TINY, apply_transfinite=False)
+            per_pg_count = {
+                "inner_x": TINY["x_inner"][1],
+                "layer_x": TINY["x_layer"][1],
+                "outer_x": TINY["x_outer"][1],
+                "inner_y": TINY["y_inner"][1],
+                "layer_y": TINY["y_layer"][1],
+                "outer_y": TINY["y_outer"][1],
+                "top_z":    TINY["z_top"][1],
+                "mid_z":    TINY["z_mid"][1],
+                "bottom_z": TINY["z_bottom"][1],
+            }
+            for key, n_elem in per_pg_count.items():
+                g.mesh.structured.set_transfinite_curve(
+                    tag=res.line_pgs[key], n_nodes=n_elem + 1,
+                )
+            inst = g.parts.get("drm_box")
+            for vt in inst.entities[3]:
+                bnd = gmsh.model.getBoundary(
+                    [(3, int(vt))], oriented=False, recursive=False,
+                )
+                for d, t in bnd:
+                    if d == 2:
+                        gmsh.model.mesh.setTransfiniteSurface(int(t))
+                        gmsh.model.mesh.setRecombine(2, int(t))
+                gmsh.model.mesh.setTransfiniteVolume(int(vt))
+            g.mesh.generation.generate(dim=3)
+            counts = _element_counts(3)
+            assert counts.get("Tetrahedron 4", 0) == 0
+            assert counts["Hexahedron 8"] == TINY_TOTAL_HEX
+        finally:
+            g.end()
+
     def test_apply_transfinite_false_skips_directives(self):
         g = apeGmsh(model_name="drm_no_tf", verbose=False)
         g.begin()

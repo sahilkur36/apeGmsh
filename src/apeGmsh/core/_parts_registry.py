@@ -769,22 +769,23 @@ class PartsRegistry(_PartsFragmentationMixin):
                 mid_world = 0.5 * (p0 + p1)
                 lx, ly, lz = to_local(tuple(mid_world))
 
-                if axis_idx == 0:  # local-X
-                    # Position determined by the OTHER lateral
-                    # coordinate (Y region) and the local-Z region.
-                    # An x-aligned edge in the inner column sits at
-                    # ly within axis_y.inner range, regardless of
-                    # which x segment it spans.  Use Y region.
-                    region = drm.axis_y.region_of(
-                        max(min(ly, drm.axis_y.hi), drm.axis_y.lo)
-                    )
-                    line_groups[f"{region}_x"].append(int(ctag))
-                elif axis_idx == 1:  # local-Y
+                if axis_idx == 0:  # local-X aligned edge
+                    # Classify by the X-segment the edge spans, i.e.
+                    # ``axis_x.region_of`` of the edge's local X
+                    # midpoint.  All curves in ``lines_inner_x`` then
+                    # share the same X-length (= x_inner) so a single
+                    # ``set_transfinite_curve(..., n_nodes=nx_inner+1)``
+                    # is well-defined.
                     region = drm.axis_x.region_of(
                         max(min(lx, drm.axis_x.hi), drm.axis_x.lo)
                     )
+                    line_groups[f"{region}_x"].append(int(ctag))
+                elif axis_idx == 1:  # local-Y aligned edge
+                    region = drm.axis_y.region_of(
+                        max(min(ly, drm.axis_y.hi), drm.axis_y.lo)
+                    )
                     line_groups[f"{region}_y"].append(int(ctag))
-                else:  # local-Z
+                else:  # local-Z aligned edge
                     region = drm.axis_z.region_of(
                         max(min(lz, drm.axis_z.hi), drm.axis_z.lo)
                     )
