@@ -77,6 +77,68 @@ class TestHappyPath:
         finally:
             g.end()
 
+    def test_volume_pg_geometric_semantics(self):
+        """Pins the user-notebook geometric semantics of the three
+        volume PGs (in_box rule, not max-lateral-rank wrap):
+
+        * ``inner_box`` is the single inner-inner-top sub-volume.
+        * ``transition_box`` is the shell inside
+          ``[-x_LL,+x_LL] x [-y_LL,+y_LL] x [-(z_top+z_mid), 0]``
+          (with ``x_LL = (x_inner+x_layer)/2``) minus ``inner_box``.
+        * ``outer_box`` is the rest.
+
+        Regression guard against the original max-lateral-rank
+        wrap classifier, which split the column at every Z layer
+        and yielded the wrong sub-volume counts (3 / 24 / 48).
+        """
+        g = apeGmsh(model_name="drm_geom", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_DRM_box(**TINY)
+            inner_tag = g.physical.get_tag(3, res.inner_pg)
+            (inner_vt,) = tuple(g.physical.get_entities(3, inner_tag))
+            # inner-inner-top sits laterally at (0, 0) and z-mid at
+            # -z_top/2.
+            com = g.model.queries.center_of_mass(int(inner_vt), dim=3)
+            assert com[0] == pytest.approx(0.0, abs=1e-6)
+            assert com[1] == pytest.approx(0.0, abs=1e-6)
+            assert com[2] == pytest.approx(-TINY["z_top"][0] / 2, abs=1e-6)
+
+            # Transition AABB: cx ∈ [-x_LL, +x_LL], cy ∈ [-y_LL, +y_LL],
+            # cz ∈ [-(z_top + z_mid), 0].
+            x_LL = (TINY["x_inner"][0] + TINY["x_layer"][0]) / 2
+            y_LL = (TINY["y_inner"][0] + TINY["y_layer"][0]) / 2
+            z_LL = TINY["z_top"][0] + TINY["z_mid"][0]
+            tol = 1e-6
+            trans_tag = g.physical.get_tag(3, res.transition_pg)
+            for vt in g.physical.get_entities(3, trans_tag):
+                cx, cy, cz = g.model.queries.center_of_mass(int(vt), dim=3)
+                assert -x_LL - tol <= cx <= x_LL + tol, (
+                    f"trans vol {vt} cx={cx} outside x_LL={x_LL}"
+                )
+                assert -y_LL - tol <= cy <= y_LL + tol, (
+                    f"trans vol {vt} cy={cy} outside y_LL={y_LL}"
+                )
+                assert -z_LL - tol <= cz <= tol, (
+                    f"trans vol {vt} cz={cz} outside z_LL={z_LL}"
+                )
+
+            # Every outer sub-volume sits outside at least one of those
+            # three bounds (i.e. NOT inside the transition AABB).
+            outer_tag = g.physical.get_tag(3, res.outer_pg)
+            for vt in g.physical.get_entities(3, outer_tag):
+                cx, cy, cz = g.model.queries.center_of_mass(int(vt), dim=3)
+                outside = (
+                    abs(cx) > x_LL + tol or abs(cy) > y_LL + tol
+                    or cz < -z_LL - tol or cz > tol
+                )
+                assert outside, (
+                    f"outer vol {vt} at ({cx},{cy},{cz}) should not "
+                    f"lie inside the transition AABB"
+                )
+        finally:
+            g.end()
+
     def test_volume_pg_partition_is_complete(self):
         g = apeGmsh(model_name="drm_pgs", verbose=False)
         g.begin()
@@ -97,14 +159,17 @@ class TestHappyPath:
             assert inner.isdisjoint(outer)
             assert trans.isdisjoint(outer)
             assert inner | trans | outer == all_vols
-            # Symmetric layered geometry: the inner column is one
-            # cell laterally x 3 z layers = 3 sub-volumes.
-            assert len(inner) == 3
-            # Lateral wrap classes — see comment in ``add_DRM_box``:
-            # per z layer there is 1 inner + 8 transition + 16 outer
-            # sub-volumes; x 3 z layers => 3, 24, 48.
-            assert len(trans) == 24
-            assert len(outer) == 48
+            # ``inner_box`` is the single inner-inner-top sub-volume
+            # — the geometric "inner box" where an embedded structure
+            # sits in the canonical DRM layout.
+            assert len(inner) == 1
+            # ``transition_box`` is the layer-bounded AABB shell minus
+            # the inner cell: (inner | layer)^2 lateral × (top | mid)
+            # Z = 9 * 2 = 18, minus the inner cell = 17.
+            assert len(trans) == 17
+            # ``outer_box`` is everything else (the absorbing region
+            # + the inner column below the transition shell).
+            assert len(outer) == 75 - 1 - 17
         finally:
             g.end()
 
@@ -240,6 +305,103 @@ class TestToggles:
                 assert pg_tag is not None, f"line PG {key} missing"
                 ents = g.physical.get_entities(1, pg_tag)
                 assert len(ents) > 0, f"line PG {key} empty"
+        finally:
+            g.end()
+
+    def test_line_pgs_classify_by_band_of_their_own_axis(self):
+        """Every curve in ``lines_{region}_{axis}`` must span the
+        ``axis`` segment named by ``region``.
+
+        This is the contract that makes
+        ``set_transfinite_curve('lines_inner_x', n_nodes=nx_inner+1)``
+        well-defined — all curves in the PG share the same length.
+        A regression to "classify X-aligned edges by Y-band" (or any
+        other axis crossing) would put curves of mixed length into a
+        single PG and break direct ``set_transfinite_curve`` use.
+        """
+        g = apeGmsh(model_name="drm_band", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_DRM_box(**TINY)
+            axis_map = {"x": res.axes["x"], "y": res.axes["y"], "z": res.axes["z"]}
+            expected_size = {
+                ("x", "inner"): TINY["x_inner"][0],
+                ("x", "layer"): TINY["x_layer"][0],
+                ("x", "outer"): TINY["x_outer"][0],
+                ("y", "inner"): TINY["y_inner"][0],
+                ("y", "layer"): TINY["y_layer"][0],
+                ("y", "outer"): TINY["y_outer"][0],
+                ("z", "top"):    TINY["z_top"][0],
+                ("z", "mid"):    TINY["z_mid"][0],
+                ("z", "bottom"): TINY["z_bottom"][0],
+            }
+            for key, pg_name in res.line_pgs.items():
+                region, axis_letter = key.rsplit("_", 1)
+                pg_tag = g.physical.get_tag(1, pg_name)
+                want_size = expected_size[(axis_letter, region)]
+                for ctag in g.physical.get_entities(1, pg_tag):
+                    bb = gmsh.model.getBoundingBox(1, int(ctag))
+                    dx, dy, dz = bb[3]-bb[0], bb[4]-bb[1], bb[5]-bb[2]
+                    span = {"x": dx, "y": dy, "z": dz}[axis_letter]
+                    assert span == pytest.approx(want_size, abs=1e-6), (
+                        f"{pg_name} curve {ctag}: span along {axis_letter} "
+                        f"= {span}, expected {want_size} (the {region} "
+                        f"segment of axis_{axis_letter}). Classifier is "
+                        f"likely crossing axes."
+                    )
+        finally:
+            g.end()
+
+    def test_user_style_per_pg_curve_count_drives_per_axis_total(self):
+        """User-style ``set_transfinite_curve('lines_inner_x', n_nodes=N+1)``
+        must yield the expected per-axis element total when paired
+        with explicit ``setTransfiniteSurface`` / ``setTransfiniteVolume``
+        directives on every sub-volume.
+
+        This pins the line-PG semantics: ``lines_inner_x`` curves must
+        all share the same X-length so a single n_nodes per PG is the
+        right knob.  A classifier regression that mixes lengths into
+        one PG would cause adjacent sub-volumes to disagree on shared
+        edges and either drop hex elements or fall back to tets.
+
+        ``setTransfiniteAutomatic`` is deliberately NOT used here —
+        gmsh overrides per-curve counts inside it from corner mesh
+        sizes, which is orthogonal to the classifier contract under
+        test.
+        """
+        g = apeGmsh(model_name="drm_user_style", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_DRM_box(**TINY, apply_transfinite=False)
+            per_pg_count = {
+                "inner_x": TINY["x_inner"][1],
+                "layer_x": TINY["x_layer"][1],
+                "outer_x": TINY["x_outer"][1],
+                "inner_y": TINY["y_inner"][1],
+                "layer_y": TINY["y_layer"][1],
+                "outer_y": TINY["y_outer"][1],
+                "top_z":    TINY["z_top"][1],
+                "mid_z":    TINY["z_mid"][1],
+                "bottom_z": TINY["z_bottom"][1],
+            }
+            for key, n_elem in per_pg_count.items():
+                g.mesh.structured.set_transfinite_curve(
+                    tag=res.line_pgs[key], n_nodes=n_elem + 1,
+                )
+            inst = g.parts.get("drm_box")
+            for vt in inst.entities[3]:
+                bnd = gmsh.model.getBoundary(
+                    [(3, int(vt))], oriented=False, recursive=False,
+                )
+                for d, t in bnd:
+                    if d == 2:
+                        gmsh.model.mesh.setTransfiniteSurface(int(t))
+                        gmsh.model.mesh.setRecombine(2, int(t))
+                gmsh.model.mesh.setTransfiniteVolume(int(vt))
+            g.mesh.generation.generate(dim=3)
+            counts = _element_counts(3)
+            assert counts.get("Tetrahedron 4", 0) == 0
+            assert counts["Hexahedron 8"] == TINY_TOTAL_HEX
         finally:
             g.end()
 

@@ -274,15 +274,21 @@ def classify_drm_box_lines(
         lx, ly, lz = to_local((float(mid_world[0]), float(mid_world[1]), float(mid_world[2])))
 
         try:
-            if axis_idx == 0:  # local-X — region keyed by Y
-                clamped = max(min(ly, axis_y.hi), axis_y.lo)
-                region = axis_y.region_of(clamped)
-                key = f"{region}_x"
-            elif axis_idx == 1:  # local-Y — region keyed by X
+            # Own-axis classification (fix #392): an x-aligned edge is
+            # bucketed by ``axis_x.region_of(local_x)`` of its midpoint,
+            # so every curve in ``lines_inner_x`` spans the inner
+            # X-segment and shares the same length.  Makes a single
+            # ``set_transfinite_curve('lines_inner_x', n_nodes=nx+1)``
+            # well-defined and matches the user's notebook idiom.
+            if axis_idx == 0:  # local-X aligned edge
                 clamped = max(min(lx, axis_x.hi), axis_x.lo)
                 region = axis_x.region_of(clamped)
+                key = f"{region}_x"
+            elif axis_idx == 1:  # local-Y aligned edge
+                clamped = max(min(ly, axis_y.hi), axis_y.lo)
+                region = axis_y.region_of(clamped)
                 key = f"{region}_y"
-            else:  # local-Z
+            else:  # local-Z aligned edge
                 clamped = max(min(lz, axis_z.hi), axis_z.lo)
                 region = axis_z.region_of(clamped)
                 key = f"{region}_z"
