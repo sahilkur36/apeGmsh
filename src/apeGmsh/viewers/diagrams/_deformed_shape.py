@@ -6,19 +6,20 @@ Reads ``displacement_x`` / ``_y`` / ``_z`` (configurable via
 Optional undeformed wireframe ghost stays visible behind the warped
 mesh.
 
+Render seam (ADR 0042, R-B): emits two :class:`MeshLayer`s through
+``self._backend`` — a solid *deformed* layer (its points re-warped per
+step / scale change via ``update_layer``) and an optional *undeformed*
+wireframe ghost. The diagram holds no VTK actors. The submesh is still
+extracted via pyvista (transitional) and re-expressed as neutral IR
+through ``cellblocks_from_grid``; that extraction moves behind a
+pyvista-free scene accessor at R-B.final.
+
 Performance contract:
 
-* Selector + component list resolved once at attach.
-* Per-step update reads N components × selected nodes (small for
-  ``pg=`` slices, full mesh for unrestricted), reshapes to
-  ``(n_points, ndim)``, mutates ``deformed_grid.points`` in place.
-* The actor is re-used across steps; only the points array changes.
-
-Note on selectors: ``selector.component`` is the *primary* component
-for the diagram (used for the display label). The actual warp uses
-the full ``style.components`` triple — this keeps the SlabSelector
-single-component contract while letting deformed shapes warp by 2-3
-components.
+* Selector + component list + cell topology resolved once at attach.
+* Per-step update reshapes displacement to ``(n_points, ndim)``,
+  recomputes ``base + scale * disp``, and updates the deformed layer in
+  place (the backend reuses the actor when topology is unchanged).
 """
 from __future__ import annotations
 
@@ -29,11 +30,13 @@ from numpy import ndarray
 
 from ._base import Diagram, DiagramSpec
 from ._styles import DeformedShapeStyle
+from ..scene_ir import ColorSpec, MeshLayer, PointSet
 
 if TYPE_CHECKING:
     from apeGmsh.results.Results import Results
     from apeGmsh.viewers.data import ViewerData
     from ..scene.fem_scene import FEMSceneData
+    from ..scene_ir import CellBlocks
 
 
 class DeformedShapeDiagram(Diagram):
@@ -50,20 +53,20 @@ class DeformedShapeDiagram(Diagram):
             )
         super().__init__(spec, results)
 
-        # Runtime state populated by attach()
-        self._deformed_grid: Any = None
-        self._deformed_actor: Any = None
-        self._undeformed_actor: Any = None
+        # Topology + warp inputs, resolved once at attach.
+        self._cells: "Optional[CellBlocks]" = None
         self._base_points: Optional[ndarray] = None
         self._submesh_pos_of_id: Optional[ndarray] = None
         self._fem_ids_to_read: Optional[ndarray] = None
         self._displacement_buffer: Optional[ndarray] = None  # (n_points, ndim)
 
+        # Backend handles + last-emitted layers (no VTK actor held).
+        self._deformed_handle: Any = None
+        self._undeformed_handle: Any = None
+        self._deformed_layer: Optional[MeshLayer] = None
+
         # Mutable runtime overrides
         self._runtime_scale: Optional[float] = None
-        self._runtime_show_undeformed: Optional[bool] = None
-
-        # Cached for re-applying scale on step or scale change
         self._last_step: int = 0
 
     # ------------------------------------------------------------------
@@ -79,8 +82,7 @@ class DeformedShapeDiagram(Diagram):
         if scene is None:
             raise RuntimeError(
                 "DeformedShapeDiagram.attach requires a FEMSceneData. "
-                "The Director must call bind_plotter(plotter, "
-                "scene=scene)."
+                "The Director must call bind_plotter(plotter, scene=scene)."
             )
         super().attach(plotter, view, scene)
 
@@ -93,17 +95,18 @@ class DeformedShapeDiagram(Diagram):
         else:
             point_indices = self._fem_ids_to_substrate_indices(scene, node_ids)
             if point_indices.size == 0:
-                self._deformed_grid = None
+                self._cells = None
                 return
 
+        # Submesh extraction is still pyvista (transitional) — re-expressed
+        # as neutral IR below via cellblocks_from_grid.
         submesh = scene.grid.extract_points(
             point_indices, adjacent_cells=False,
         )
         if submesh.n_points == 0:
-            self._deformed_grid = None
+            self._cells = None
             return
 
-        # vtkOriginalPointIds maps submesh point index -> substrate index
         orig_indices = np.asarray(
             submesh.point_data["vtkOriginalPointIds"], dtype=np.int64,
         )
@@ -115,78 +118,72 @@ class DeformedShapeDiagram(Diagram):
             fem_ids_in_submesh.size, dtype=np.int64,
         )
 
-        # ── Save base points (undeformed) for warp math ─────────────
         base_points = np.asarray(submesh.points, dtype=np.float64).copy()
-
-        # ── Deformed grid is a separate copy — we mutate its points ─
-        deformed = submesh.copy()
-
         ndim = len(style.components)
-        disp_buffer = np.zeros((base_points.shape[0], ndim), dtype=np.float64)
 
-        self._deformed_grid = deformed
+        from ..backends.pyvista_qt import cellblocks_from_grid
+
+        self._cells = cellblocks_from_grid(submesh)
         self._base_points = base_points
         self._submesh_pos_of_id = submesh_pos
         self._fem_ids_to_read = fem_ids_in_submesh
-        self._displacement_buffer = disp_buffer
-
-        # ── Initial warp at step 0 ──────────────────────────────────
-        self._apply_step(0)
-
-        # ── Add deformed mesh actor ─────────────────────────────────
-        # Both actors are decorative — picks fall through to the
-        # substrate (which already rides the deformation when the
-        # deform geometry is enabled).
-        deformed_actor = plotter.add_mesh(
-            deformed,
-            color=style.color,
-            opacity=1.0,
-            show_edges=False,
-            lighting=True,
-            smooth_shading=False,
-            name=self._actor_name("deformed"),
-            reset_camera=False,
-            pickable=False,
+        self._displacement_buffer = np.zeros(
+            (base_points.shape[0], ndim), dtype=np.float64,
         )
-        self._deformed_actor = deformed_actor
+
+        # ── Deformed layer (warped at step 0) ───────────────────────
+        warped = self._warped_points(0)
+        self._deformed_layer = self._mesh_layer(
+            warped, "deformed", style.color, opacity=1.0, wireframe=False,
+        )
+        self._deformed_handle = self._backend.add_layer(self._deformed_layer)
 
         # ── Undeformed reference (wireframe ghost) ──────────────────
         if style.show_undeformed:
-            undef_actor = plotter.add_mesh(
-                submesh,
-                color=style.undeformed_color,
-                style="wireframe",
-                line_width=1,
-                opacity=style.undeformed_opacity,
-                show_edges=False,
-                lighting=False,
-                name=self._actor_name("undeformed"),
-                reset_camera=False,
-                pickable=False,
+            undef = self._mesh_layer(
+                base_points, "undeformed", style.undeformed_color,
+                opacity=style.undeformed_opacity, wireframe=True,
             )
-            self._undeformed_actor = undef_actor
+            self._undeformed_handle = self._backend.add_layer(undef)
         else:
-            self._undeformed_actor = None
-
-        actors = [deformed_actor]
-        if self._undeformed_actor is not None:
-            actors.append(self._undeformed_actor)
-        self._actors = actors
+            self._undeformed_handle = None
 
     def update_to_step(self, step_index: int) -> None:
-        if self._deformed_grid is None:
+        if self._cells is None or self._deformed_handle is None:
             return
-        self._apply_step(int(step_index))
+        warped = self._warped_points(int(step_index))
+        self._deformed_layer = self._mesh_layer(
+            warped, "deformed",
+            self.spec.style.color,            # type: ignore[attr-defined]
+            opacity=1.0, wireframe=False,
+        )
+        self._backend.update_layer(self._deformed_handle, self._deformed_layer)
 
     def detach(self) -> None:
-        self._deformed_grid = None
-        self._deformed_actor = None
-        self._undeformed_actor = None
+        for handle in (self._deformed_handle, self._undeformed_handle):
+            if self._backend is not None and handle is not None:
+                self._backend.remove_layer(handle)
+        self._deformed_handle = None
+        self._undeformed_handle = None
+        self._deformed_layer = None
+        self._cells = None
         self._base_points = None
         self._submesh_pos_of_id = None
         self._fem_ids_to_read = None
         self._displacement_buffer = None
         super().detach()
+
+    # ------------------------------------------------------------------
+    # Visibility (backend-routed)
+    # ------------------------------------------------------------------
+
+    def set_visible(self, visible: bool) -> None:
+        self._visible = visible
+        if self._backend is None:
+            return
+        for handle in (self._deformed_handle, self._undeformed_handle):
+            if handle is not None:
+                self._backend.set_layer_visible(handle, bool(visible))
 
     # ------------------------------------------------------------------
     # Runtime style adjustments
@@ -195,17 +192,13 @@ class DeformedShapeDiagram(Diagram):
     def set_scale(self, scale: float) -> None:
         """Update the warp scale. Live update without re-attach."""
         self._runtime_scale = float(scale)
-        if self._deformed_grid is not None:
-            self._apply_step(self._last_step)
+        if self._cells is not None and self._deformed_handle is not None:
+            self.update_to_step(self._last_step)
 
     def set_show_undeformed(self, show: bool) -> None:
         """Toggle the undeformed reference visibility."""
-        self._runtime_show_undeformed = bool(show)
-        if self._undeformed_actor is not None:
-            try:
-                self._undeformed_actor.SetVisibility(bool(show))
-            except Exception:
-                pass
+        if self._backend is not None and self._undeformed_handle is not None:
+            self._backend.set_layer_visible(self._undeformed_handle, bool(show))
 
     def current_scale(self) -> float:
         if self._runtime_scale is not None:
@@ -217,29 +210,48 @@ class DeformedShapeDiagram(Diagram):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _actor_name(self, suffix: str) -> str:
-        return f"diagram_deformed_{id(self):x}_{suffix}"
+    def _layer_id(self, suffix: str) -> str:
+        return f"deformed_{id(self):x}_{suffix}"
 
-    def _apply_step(self, step_index: int) -> None:
-        """Read all components for ``step_index`` and update points in place."""
-        if (
-            self._deformed_grid is None
-            or self._base_points is None
-            or self._displacement_buffer is None
-            or self._fem_ids_to_read is None
-            or self._submesh_pos_of_id is None
-        ):
-            return
+    def _mesh_layer(
+        self,
+        points: ndarray,
+        suffix: str,
+        color: Any,
+        *,
+        opacity: float,
+        wireframe: bool,
+    ) -> MeshLayer:
+        assert self._cells is not None
+        return MeshLayer(
+            layer_id=self._layer_id(suffix),
+            points=PointSet(points),
+            cells=self._cells,
+            color=ColorSpec(mode="solid", solid_rgb=color),
+            opacity=opacity,
+            wireframe=wireframe,
+        )
 
+    def _warped_points(self, step_index: int) -> ndarray:
+        """Return ``base + scale * displacement`` for ``step_index``.
+
+        Reads each configured component for the step, scatters it into
+        the displacement buffer, pads to 3-D, and applies the scale.
+        Falls back to the base points if results can't be read.
+        """
+        assert (
+            self._base_points is not None
+            and self._displacement_buffer is not None
+            and self._fem_ids_to_read is not None
+            and self._submesh_pos_of_id is not None
+        )
+        self._last_step = step_index
         style: DeformedShapeStyle = self.spec.style    # type: ignore[assignment]
         results = self._scoped_results()
         if results is None:
-            return
+            return self._base_points
 
-        # Reset displacement buffer to zero before scattering each
-        # component — missing components contribute nothing.
         self._displacement_buffer.fill(0.0)
-
         for axis, component in enumerate(style.components):
             try:
                 slab = results.nodes.get(
@@ -248,7 +260,6 @@ class DeformedShapeDiagram(Diagram):
                     time=[int(step_index)],
                 )
             except Exception:
-                # Component may not be available — skip silently.
                 continue
             if slab.values.size == 0:
                 continue
@@ -260,27 +271,15 @@ class DeformedShapeDiagram(Diagram):
                 slab_values[valid]
             )
 
-        scale = self.current_scale()
-        # Pad to 3D if components < 3 (e.g., 2D model with x/y only).
         if self._displacement_buffer.shape[1] < 3:
-            disp_3d = np.zeros(
-                (self._base_points.shape[0], 3), dtype=np.float64,
-            )
+            disp_3d = np.zeros((self._base_points.shape[0], 3), dtype=np.float64)
             disp_3d[:, : self._displacement_buffer.shape[1]] = (
                 self._displacement_buffer
             )
         else:
             disp_3d = self._displacement_buffer[:, :3]
 
-        new_points = self._base_points + scale * disp_3d
-        # In-place mutation of the VTK points array — VTK observes
-        # the change via Modified.
-        self._deformed_grid.points = new_points
-        try:
-            self._deformed_grid.Modified()
-        except Exception:
-            pass
-        self._last_step = step_index
+        return self._base_points + self.current_scale() * disp_3d
 
     def _scoped_results(self) -> "Optional[Results]":
         if self.spec.stage_id is not None:

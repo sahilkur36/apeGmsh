@@ -29,9 +29,12 @@ import numpy as np
 import pyvista as pv
 
 from apeGmsh.viewers.scene_ir import (
+    CellBlocks,
+    ColorSpec,
     GlyphLayer,
     LabelLayer,
     MeshLayer,
+    PointSet,
     ScalarBarSpec,
     SceneLayer,
     VisibilityMask,
@@ -61,6 +64,10 @@ TOKEN_TO_VTK: dict[str, int] = {
     "wedge": _VTK_WEDGE,
     "pyramid": _VTK_PYRAMID,
 }
+
+#: Inverse — VTK cell-type code back to the neutral token, for
+#: decomposing a pyvista grid into :class:`CellBlocks`.
+VTK_TO_TOKEN: dict[int, str] = {v: k for k, v in TOKEN_TO_VTK.items()}
 
 # vtkDataSetAttributes::HIDDENCELL — the bit a renderer honours to skip
 # a cell. Matches viewers/core/element_visibility.py.
@@ -133,6 +140,42 @@ def apply_visibility_mask(
         if idx.size:
             ghost[idx] = _GHOST_HIDDEN_CELL
     grid.cell_data["vtkGhostType"] = ghost
+
+
+def cellblocks_from_grid(grid: pv.UnstructuredGrid) -> CellBlocks:
+    """Decompose a pyvista grid into neutral :class:`CellBlocks`.
+
+    The inverse of :func:`mesh_layer_to_grid`'s cell construction — uses
+    pyvista's ``cells_dict`` and maps each VTK cell-type code back to the
+    IR's neutral token. Cell types with no token mapping are dropped.
+    Lets a diagram that still extracts a submesh via pyvista (transitional
+    R-B) re-express the result as backend-neutral IR.
+    """
+    blocks: dict[str, np.ndarray] = {}
+    for vtk_int, conn in grid.cells_dict.items():
+        token = VTK_TO_TOKEN.get(int(vtk_int))
+        if token is not None:
+            blocks[token] = conn
+    return CellBlocks(blocks)
+
+
+def mesh_layer_from_grid(
+    grid: pv.UnstructuredGrid,
+    layer_id: str,
+    *,
+    color: Optional[ColorSpec] = None,
+    opacity: float = 1.0,
+    wireframe: bool = False,
+) -> MeshLayer:
+    """Build a :class:`MeshLayer` from a pyvista grid (points + cells)."""
+    return MeshLayer(
+        layer_id=layer_id,
+        points=PointSet(np.asarray(grid.points)),
+        cells=cellblocks_from_grid(grid),
+        color=color if color is not None else ColorSpec(),
+        opacity=opacity,
+        wireframe=wireframe,
+    )
 
 
 # =====================================================================
@@ -272,6 +315,8 @@ class PyVistaQtBackend:
             "opacity": layer.opacity,
             "show_edges": layer.show_edges,
         }
+        if layer.wireframe:
+            kwargs["style"] = "wireframe"
         color = layer.color
         if color.mode == "solid":
             kwargs["color"] = color.solid_rgb
@@ -324,4 +369,10 @@ def _glyph_geometry(kind: str) -> Any:
     return pv.Sphere()
 
 
-__all__ = ["PyVistaQtBackend", "mesh_layer_to_grid", "apply_visibility_mask"]
+__all__ = [
+    "PyVistaQtBackend",
+    "mesh_layer_to_grid",
+    "apply_visibility_mask",
+    "cellblocks_from_grid",
+    "mesh_layer_from_grid",
+]
