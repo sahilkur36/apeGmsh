@@ -83,7 +83,7 @@ def test_auto_emits_runtime_conditional_parallel_plain_and_mumps_tcl() -> None:
     )
 
     # UserWarning fired for both auto-emits.
-    messages = [str(w.message) for w in caught if w.category is UserWarning]
+    messages = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
     assert any(
         "numberer ParallelPlain" in m and "RCM" in m for m in messages
     ), (

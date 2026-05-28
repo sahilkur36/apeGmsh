@@ -50,7 +50,7 @@ def test_user_band_spd_under_partitioning_warns_but_preserves_choice() -> None:
         "INV-5: user-set system must not be silently overridden"
     )
     # UserWarning fired flagging the MP-incompatibility.
-    messages = [str(w.message) for w in caught if w.category is UserWarning]
+    messages = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
     assert any(
         "BandSPD" in m and "OpenSeesMP" in m
         for m in messages
@@ -86,7 +86,7 @@ def test_user_plain_numberer_under_partitioning_warns_but_preserves_choice() -> 
     assert "numberer ParallelPlain" not in text, (
         "INV-5: user-set numberer must not be silently overridden"
     )
-    messages = [str(w.message) for w in caught if w.category is UserWarning]
+    messages = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
     assert any(
         "Plain" in m and "OpenSeesMP" in m
         for m in messages

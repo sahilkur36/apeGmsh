@@ -124,6 +124,19 @@ if TYPE_CHECKING:
 __all__ = ["apeSees", "BuiltModel"]
 
 
+class OpenSeesAutoEmitWarning(UserWarning):
+    """Emitted by the bridge when an MP-aware default is auto-applied.
+
+    Tagged subclass so tests can filter these without losing genuine
+    ``UserWarning`` signal. Real users in interactive sessions still see
+    the message — the only difference is pytest's default filter ignores
+    them (see ``pyproject.toml`` ``[tool.pytest.ini_options]``). Covers
+    the constraint-handler auto-emit and the Plain-handler footgun
+    warning, plus the parallel-numberer / parallel-system auto-emit
+    family in ``_maybe_auto_emit_*`` methods.
+    """
+
+
 # Sentinel for "argument not supplied" on ``default_orientation``.
 # Using a sentinel (rather than ``None``) lets the user EXPLICITLY pass
 # ``None`` to disable the auto-default (typical for 2D models, where
@@ -3057,7 +3070,7 @@ class BuiltModel:
                 "Auto-emitting 'Transformation' constraint handler. "
                 "To override, explicitly declare ops.constraints.X() "
                 "before build().",
-                UserWarning,
+                OpenSeesAutoEmitWarning,
                 stacklevel=2,
             )
             emitter.constraints("Transformation")
@@ -3070,7 +3083,7 @@ class BuiltModel:
                 "MP constraints present but Plain handler explicitly "
                 "declared — MP constraints will be silently ignored. "
                 "Did you mean Transformation/Lagrange/Penalty?",
-                UserWarning,
+                OpenSeesAutoEmitWarning,
                 stacklevel=2,
             )
             return
@@ -3113,7 +3126,7 @@ class BuiltModel:
                 "and single-process OpenSees (ADR 0027 INV-5).  Explicitly "
                 "declare ops.numberer.<Plain|RCM|ParallelPlain|ParallelRCM>() "
                 "before build() to override.",
-                UserWarning,
+                OpenSeesAutoEmitWarning,
                 stacklevel=2,
             )
             emitter.parallel_runtime_fallback_numberer(
@@ -3132,7 +3145,7 @@ class BuiltModel:
                 "choice is preserved; switch to ops.numberer.ParallelPlain() "
                 "or ops.numberer.ParallelRCM() for a runnable parallel "
                 "deck.",
-                UserWarning,
+                OpenSeesAutoEmitWarning,
                 stacklevel=2,
             )
 
@@ -3161,7 +3174,7 @@ class BuiltModel:
                 "and single-process OpenSees (ADR 0027 INV-5).  Explicitly "
                 "declare ops.system.<Mumps|MumpsParallel>() before build() "
                 "to override.",
-                UserWarning,
+                OpenSeesAutoEmitWarning,
                 stacklevel=2,
             )
             emitter.parallel_runtime_fallback_system(
@@ -3184,7 +3197,7 @@ class BuiltModel:
                 "a parallel system ('Mumps' typically). The user's "
                 "choice is preserved; switch to ops.system.Mumps() for "
                 "a runnable parallel deck.",
-                UserWarning,
+                OpenSeesAutoEmitWarning,
                 stacklevel=2,
             )
 
