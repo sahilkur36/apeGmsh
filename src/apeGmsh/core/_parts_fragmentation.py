@@ -13,6 +13,16 @@ if TYPE_CHECKING:
     from ._parts_registry import Instance
 
 
+class UnregisteredPartEntityWarning(UserWarning):
+    """Emitted when ``fragment_all`` runs against entities not adopted by any part.
+
+    Tagged subclass so tests can filter these without losing genuine
+    ``UserWarning`` signal. Real users in interactive sessions still see
+    the message; pytest's default filter ignores it (see
+    ``pyproject.toml`` ``[tool.pytest.ini_options]``).
+    """
+
+
 class _PartsFragmentationMixin:
     """Mixin providing fragment/fuse operations on tracked instances.
 
@@ -169,6 +179,7 @@ class _PartsFragmentationMixin:
                     f"participate in fragmentation but won't be remapped.  "
                     f"Use g.parts.register() or g.parts.from_model() to "
                     f"adopt them.",
+                    UnregisteredPartEntityWarning,
                     stacklevel=3,
                 )
 

@@ -221,7 +221,7 @@ def test_live_emitter_falls_back_on_unavailable_numberer() -> None:
     )
 
     # UserWarning fired flagging the fallback.
-    messages = [str(w.message) for w in caught if w.category is UserWarning]
+    messages = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
     assert any(
         "ParallelPlain" in m and "RCM" in m and "OpenSeesMP" in m
         for m in messages
@@ -247,7 +247,7 @@ def test_live_emitter_succeeds_with_parallelplain_when_available() -> None:
         f"happy path: fallback must not be called; got {call_args}"
     )
     # No UserWarning about fallback.
-    messages = [str(w.message) for w in caught if w.category is UserWarning]
+    messages = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
     assert not any("falling back" in m for m in messages), (
         f"happy path: no fallback warning; got {messages}"
     )

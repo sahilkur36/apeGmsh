@@ -80,6 +80,19 @@ markers = [
     "slow: > 1 second",
     "bench: opt-in performance benchmarks (run with `pytest -m bench`)",
 ]
+# Silence specific MP-aware advisory warnings by default. These are
+# legitimate user-facing nudges in interactive sessions (auto-emit of
+# Transformation constraint handler / parallel numberer / parallel
+# system when the user did not declare one; orphan-entity nudge on
+# parts.fragment_all). They fire predictably across the test suite
+# and inflate apparent failure counts under -W error::UserWarning
+# without signalling real bugs. Use a tagged UserWarning subclass +
+# ignore filter so users still see them and tests that explicitly
+# assert them via pytest.warns(UserWarning, ...) keep working.
+filterwarnings = [
+    "ignore::apeGmsh.opensees.apesees.OpenSeesAutoEmitWarning",
+    "ignore::apeGmsh.core._parts_fragmentation.UnregisteredPartEntityWarning",
+]
 
 [tool.pyright]
 pythonVersion = "3.10"
