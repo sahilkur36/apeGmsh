@@ -57,6 +57,7 @@ from contextlib import contextmanager
 from typing import TYPE_CHECKING, Iterator
 
 import gmsh
+import numpy as np
 
 from apeGmsh._logging import _HasLogging
 from apeGmsh._types import DimTag
@@ -305,71 +306,21 @@ def _entity_signature(dim: int, tag: int) -> dict | None:
     return sig
 
 
-def _point_in_bbox(
-    p: tuple[float, float, float],
-    bbox: tuple[float, ...],
-    tol: float,
-) -> bool:
-    """``p`` lies inside ``bbox`` expanded by ``tol`` in every dim."""
-    return (
-        bbox[0] - tol <= p[0] <= bbox[3] + tol
-        and bbox[1] - tol <= p[1] <= bbox[4] + tol
-        and bbox[2] - tol <= p[2] <= bbox[5] + tol
-    )
+# The compatibility rule (bidirectional centroid-in-bbox + kind
+# equality + direction/normal parallelism within ~5°) is implemented
+# vectorized inside ``remap_physical_groups._geometric_match``.
+# The matching axes:
+#
+# * Splits: child centroid lies inside parent bbox (one direction).
+# * Merges: parent centroid lies inside child bbox (the other
+#   direction).  Captures fuse and fragment merge-products.
+# * ``kind`` (gmsh.model.getType): hard categorical filter — a
+#   planar face cannot match a cylindrical one regardless of bbox
+#   overlap.  Empty ``kind`` on either side skips the check (don't
+#   reject when OCC didn't report a type).
+# * Direction (1D) or normal (2D): cos(angle) >= ``_PARALLEL_COS_TOL``
+#   when both sides have it; skipped when either is missing.
 
-
-def _signatures_compatible(
-    child: dict, parent: dict, dim: int, tol: float,
-) -> bool:
-    """``child`` could plausibly be a descendant or merge-product of ``parent``.
-
-    Bidirectional centroid-in-bbox: ``child.centroid in parent.bbox``
-    catches splits (post-op piece sits inside the pre-op bbox), and
-    ``parent.centroid in child.bbox`` catches merges (pre-op piece
-    sits inside the merged post-op bbox).  Direction (for 1D) and
-    normal (for 2D, when available) eliminate coincident-but-
-    different-orientation false positives.  ``kind`` (the OCC type
-    name from ``gmsh.model.getType``) is a hard categorical filter:
-    a planar face cannot match a cylindrical one across a boolean,
-    regardless of bbox overlap.
-    """
-    if dim == 0:
-        dx = child['centroid'][0] - parent['centroid'][0]
-        dy = child['centroid'][1] - parent['centroid'][1]
-        dz = child['centroid'][2] - parent['centroid'][2]
-        return (dx * dx + dy * dy + dz * dz) ** 0.5 < tol
-
-    # Categorical type filter — applies to all dims >= 1.  Empty
-    # ``kind`` (signature computation failed for one side) skips
-    # the check rather than rejecting, so unknown surface types
-    # fall through to the geometric checks instead of producing
-    # false negatives.
-    ck, pk = child.get('kind', ''), parent.get('kind', '')
-    if ck and pk and ck != pk:
-        return False
-
-    if not (
-        _point_in_bbox(child['centroid'], parent['bbox'], tol)
-        or _point_in_bbox(parent['centroid'], child['bbox'], tol)
-    ):
-        return False
-
-    if dim == 1:
-        cd, pd = child.get('direction'), parent.get('direction')
-        if cd is None or pd is None:
-            return True
-        dot = abs(cd[0] * pd[0] + cd[1] * pd[1] + cd[2] * pd[2])
-        return dot >= _PARALLEL_COS_TOL
-
-    if dim == 2:
-        cn, pn = child.get('normal'), parent.get('normal')
-        if cn is None or pn is None:
-            return True
-        dot = abs(cn[0] * pn[0] + cn[1] * pn[1] + cn[2] * pn[2])
-        return dot >= _PARALLEL_COS_TOL
-
-    # dim == 3
-    return True
 
 class _PGPreserver:
     """Collects boolean result info and remaps PGs on context exit."""
@@ -579,38 +530,205 @@ def remap_physical_groups(
         for _, t in gmsh.model.getEntities(d):
             current_entities.add((d, int(t)))
 
-    # -- Geometric-fallback index: signatures of current entities at
-    # every dim that appears in the snapshot.  Built lazily and only
-    # for the dims we'll actually need to search (avoids signature
-    # computation on a large model when no PG needs it).
-    needed_dims: set[int] = {entry['dim'] for entry in snapshot}
+    # -- Geometric-fallback index: vectorized arrays of current-entity
+    # signatures, built lazily per dim.  Two optimisations layered on
+    # top of the scalar baseline:
+    #
+    # 1. **Transform fast path** — when ``input_dimtags`` is empty
+    #    (``pg_preserved_identity`` for translate/rotate/copy), the
+    #    geometric search is a guaranteed no-op (the pre-op signature
+    #    won't match the post-transform geometry, and the keep-as-is
+    #    branch handles tag preservation).  Skip signature build
+    #    entirely.
+    #
+    # 2. **bbox pre-filter** — for each current entity, we always need
+    #    its bbox to know if it's a candidate for any pre-op PG entity
+    #    at the same dim.  Skip the expensive ``getCenterOfMass`` /
+    #    ``getMass`` / ``getNormal`` calls for entities whose bbox
+    #    doesn't overlap any pre-op bbox.  On a 10k-entity model with
+    #    sparse PG coverage this typically skips >95% of the OCC work.
     geom_tol = _model_tolerance()
-    current_sigs: dict[int, dict[int, dict]] = {}
+    is_boolean = bool(input_dimtags)
+
+    pre_bboxes_by_dim: dict[int, np.ndarray] = {}
+    if is_boolean:
+        for entry in snapshot:
+            d_e = int(entry['dim'])
+            sigs = entry.get('entity_signatures', {})
+            if not sigs:
+                continue
+            bboxes = np.array(
+                [s['bbox'] for s in sigs.values()], dtype=np.float64,
+            )
+            if d_e in pre_bboxes_by_dim:
+                pre_bboxes_by_dim[d_e] = np.vstack(
+                    [pre_bboxes_by_dim[d_e], bboxes]
+                )
+            else:
+                pre_bboxes_by_dim[d_e] = bboxes
+
+    current_idx: dict[int, dict | None] = {}
 
     def _ensure_dim_indexed(d: int) -> None:
-        if d in current_sigs:
+        if d in current_idx:
             return
-        idx: dict[int, dict] = {}
+        if not is_boolean or d not in pre_bboxes_by_dim:
+            current_idx[d] = None
+            return
+
+        pre_bboxes = pre_bboxes_by_dim[d]
+        pre_mins = pre_bboxes[:, 0:3]
+        pre_maxs = pre_bboxes[:, 3:6]
+
+        tags_list: list[int] = []
+        bboxes_list: list[tuple[float, ...]] = []
+        centroids_list: list[tuple[float, float, float]] = []
+        directions_list: list[tuple[float, float, float]] = []
+        has_direction_list: list[bool] = []
+        normals_list: list[tuple[float, float, float]] = []
+        has_normal_list: list[bool] = []
+        kinds_list: list[str] = []
+        masses_list: list[float] = []
+
         for _, t in gmsh.model.getEntities(d):
             t_int = int(t)
+            try:
+                bb = gmsh.model.getBoundingBox(d, t_int)
+            except Exception:
+                continue
+            bbox = (
+                float(bb[0]), float(bb[1]), float(bb[2]),
+                float(bb[3]), float(bb[4]), float(bb[5]),
+            )
+            # bbox pre-filter: vectorized AABB-overlap against every
+            # pre-op bbox at this dim.  Skip the full signature
+            # build for non-candidates.
+            cb_min = np.array(bbox[0:3]) - geom_tol
+            cb_max = np.array(bbox[3:6]) + geom_tol
+            overlap = (
+                (cb_min <= pre_maxs) & (pre_mins <= cb_max)
+            ).all(axis=1)
+            if not overlap.any():
+                continue
+
             sig = _entity_signature(d, t_int)
-            if sig is not None:
-                idx[t_int] = sig
-        current_sigs[d] = idx
+            if sig is None:
+                continue
 
-    def _geometric_match(dim: int, pre_sig: dict | None) -> list[int]:
-        """Find current entities whose signature is compatible with ``pre_sig``.
+            tags_list.append(t_int)
+            bboxes_list.append(sig['bbox'])
+            centroids_list.append(sig['centroid'])
+            dir_v = sig.get('direction')
+            if dir_v is not None:
+                directions_list.append(dir_v)
+                has_direction_list.append(True)
+            else:
+                directions_list.append((0.0, 0.0, 0.0))
+                has_direction_list.append(False)
+            n_v = sig.get('normal')
+            if n_v is not None:
+                normals_list.append(n_v)
+                has_normal_list.append(True)
+            else:
+                normals_list.append((0.0, 0.0, 0.0))
+                has_normal_list.append(False)
+            kinds_list.append(sig.get('kind', '') or '')
+            m = sig.get('mass')
+            masses_list.append(float(m) if m is not None else float('nan'))
 
-        Returns an empty list when ``pre_sig`` is ``None`` (signature
-        could not be computed pre-op — degenerate entity).
+        if not tags_list:
+            current_idx[d] = None
+            return
+
+        current_idx[d] = {
+            'tags':          np.array(tags_list, dtype=np.int64),
+            'bboxes':        np.array(bboxes_list, dtype=np.float64),
+            'centroids':     np.array(centroids_list, dtype=np.float64),
+            'directions':    np.array(directions_list, dtype=np.float64),
+            'has_direction': np.array(has_direction_list, dtype=bool),
+            'normals':       np.array(normals_list, dtype=np.float64),
+            'has_normal':    np.array(has_normal_list, dtype=bool),
+            'kinds':         np.array(kinds_list, dtype='<U32'),
+            'masses':        np.array(masses_list, dtype=np.float64),
+        }
+
+    def _geometric_match(
+        dim: int, pre_sig: dict | None,
+    ) -> tuple[list[int], float]:
+        """Find current entities compatible with ``pre_sig``.
+
+        Returns ``(tags, child_mass_sum)``.  The mass sum is computed
+        inline to avoid a second pass through the array for the
+        mass-balance check; entries whose mass is ``NaN`` (signature
+        computation couldn't reach OCC) are excluded via
+        ``np.nansum``.
         """
         if pre_sig is None:
-            return []
+            return [], 0.0
         _ensure_dim_indexed(dim)
-        return [
-            t for t, sig in current_sigs[dim].items()
-            if _signatures_compatible(sig, pre_sig, dim, geom_tol)
-        ]
+        idx = current_idx.get(dim)
+        if idx is None:
+            return [], 0.0
+
+        # ── dim 0: position-distance only ──────────────────────────
+        if dim == 0:
+            pre_c = np.array(pre_sig['centroid'], dtype=np.float64)
+            deltas = idx['centroids'] - pre_c
+            dist_sq = (deltas * deltas).sum(axis=1)
+            mask = dist_sq < geom_tol * geom_tol
+            if not mask.any():
+                return [], 0.0
+            return idx['tags'][mask].tolist(), 0.0
+
+        # ── Bidirectional centroid-in-bbox ────────────────────────
+        pre_bbox = np.asarray(pre_sig['bbox'], dtype=np.float64)
+        pre_min, pre_max = pre_bbox[0:3], pre_bbox[3:6]
+        pre_c = np.array(pre_sig['centroid'], dtype=np.float64)
+
+        centroids = idx['centroids']
+        bboxes = idx['bboxes']
+
+        child_in_pre = (
+            (centroids >= pre_min - geom_tol).all(axis=1)
+            & (centroids <= pre_max + geom_tol).all(axis=1)
+        )
+        pre_in_child = (
+            (pre_c >= bboxes[:, 0:3] - geom_tol).all(axis=1)
+            & (pre_c <= bboxes[:, 3:6] + geom_tol).all(axis=1)
+        )
+        mask = child_in_pre | pre_in_child
+
+        # ── Kind filter ───────────────────────────────────────────
+        pre_kind = (pre_sig.get('kind') or '')
+        if pre_kind:
+            kinds = idx['kinds']
+            mask &= (kinds == '') | (kinds == pre_kind)
+
+        # ── Direction (1D) or normal (2D) parallelism ─────────────
+        if dim == 1:
+            pre_dir = pre_sig.get('direction')
+            if pre_dir is not None:
+                pre_dir_arr = np.asarray(pre_dir, dtype=np.float64)
+                dots = np.abs(idx['directions'] @ pre_dir_arr)
+                mask &= (
+                    ~idx['has_direction'] | (dots >= _PARALLEL_COS_TOL)
+                )
+        elif dim == 2:
+            pre_n = pre_sig.get('normal')
+            if pre_n is not None:
+                pre_n_arr = np.asarray(pre_n, dtype=np.float64)
+                dots = np.abs(idx['normals'] @ pre_n_arr)
+                mask &= (
+                    ~idx['has_normal'] | (dots >= _PARALLEL_COS_TOL)
+                )
+
+        if not mask.any():
+            return [], 0.0
+
+        matched_tags = idx['tags'][mask].tolist()
+        matched_masses = idx['masses'][mask]
+        child_mass_sum = float(np.nansum(matched_masses))
+        return matched_tags, child_mass_sum
 
     # Mass-balance tolerance: 5% slack absorbs OCC's BRep rebuilding
     # noise on every-day cuts while still flagging the egregious
@@ -620,7 +738,7 @@ def remap_physical_groups(
 
     def _check_mass_balance(
         dim: int, pre_sig: dict | None, matches: list[int],
-        pg_name: str, pre_tag: int,
+        child_mass_sum: float, pg_name: str, pre_tag: int,
     ) -> None:
         """Warn when matched-children total mass disagrees with parent.
 
@@ -637,17 +755,9 @@ def remap_physical_groups(
         parent_mass = pre_sig.get('mass')
         if parent_mass is None or parent_mass <= 0.0:
             return
-        child_total = 0.0
-        for t in matches:
-            child_sig = current_sigs.get(dim, {}).get(int(t))
-            if child_sig is None:
-                continue
-            cm = child_sig.get('mass')
-            if cm is not None:
-                child_total += float(cm)
-        if child_total <= 0.0:
+        if child_mass_sum <= 0.0:
             return
-        ratio = child_total / parent_mass
+        ratio = child_mass_sum / parent_mass
         # Tolerate splits (ratio < 1 + tol) and merges where the
         # matched entity is the union of several parents (ratio
         # well above 1 is then expected from THIS parent's view).
@@ -745,13 +855,38 @@ def remap_physical_groups(
                 )
                 continue
 
-            # Not a boolean input — sub-entity path.  Always go
-            # through geometric matching (see comment above).
+            # Not a boolean input — sub-entity path.
+            #
+            # Fast path: when there was no boolean at all
+            # (``input_dimtags`` empty -> ``pg_preserved_identity``
+            # for translate/rotate/copy), tags preserve through the
+            # operation and the geometric search would just waste
+            # cycles computing post-transform signatures that can't
+            # match the pre-op ones.  Skip straight to keep-as-is.
+            if not is_boolean:
+                if old_dt in current_entities:
+                    new_tags.append(et)
+                else:
+                    warnings.warn(
+                        f"Physical group '{name}' (dim={dim}): entity "
+                        f"{et} was lost (entity no longer in the model "
+                        f"after a non-boolean operation).",
+                        stacklevel=3,
+                    )
+                continue
+
+            # Boolean sub-entity path.  Always go through geometric
+            # matching even when the old tag is alive: OCC can split
+            # a sub-entity while keeping the parent's tag on one of
+            # the halves; the keep-as-is shortcut would capture that
+            # half but miss the newly-tagged sibling.
             pre_sig = pre_sigs.get(et)
-            geo_matches = _geometric_match(dim, pre_sig)
+            geo_matches, child_mass_sum = _geometric_match(dim, pre_sig)
             if geo_matches:
                 new_tags.extend(geo_matches)
-                _check_mass_balance(dim, pre_sig, geo_matches, name, et)
+                _check_mass_balance(
+                    dim, pre_sig, geo_matches, child_mass_sum, name, et,
+                )
             elif old_dt in current_entities:
                 # Signature couldn't be computed pre-op but the tag
                 # still resolves — keep it.
