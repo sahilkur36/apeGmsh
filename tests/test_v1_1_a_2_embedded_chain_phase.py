@@ -88,15 +88,12 @@ def _make_hex_with_embedded_node_fem(
         element_type=hex_info, ids=hex_ids, connectivity=hex_conn,
     )
 
-    # Element-side LABEL for the host (Tier 1).  Use a LabelSet rather
-    # than a PhysicalGroupSet here because the schema 2.9 H5 writer
-    # has a known snapshot-id drift bug for hand-constructed FEMData
-    # carrying element-side PGs (the round-trip recomputes a
-    # different snapshot_id and rejects the load).  Element-side
-    # LABELS round-trip cleanly.  Real-world meshes don't hit this
-    # because they come from gmsh extraction; this is a hand-built
-    # fixture limitation only.
-    elem_labels = {
+    # Element-side PG for the host (Tier 2).  Schema 2.10 (PR #398)
+    # closed the prior snapshot-id drift bug by splitting
+    # /physical_groups/ into node_side/ + element_side/ sub-trees, so
+    # hand-constructed element-side PhysicalGroupSets now round-trip
+    # cleanly.  Before B2 this had to use a LabelSet workaround.
+    elem_pgs = {
         (3, 99): {
             "name": host_label,
             "element_ids": hex_ids,
@@ -115,8 +112,8 @@ def _make_hex_with_embedded_node_fem(
 
     elements = ElementComposite(
         groups={5: hex_group},
-        physical=PhysicalGroupSet({}),
-        labels=LabelSet(elem_labels),
+        physical=PhysicalGroupSet(elem_pgs),
+        labels=LabelSet({}),
     )
     nodes = NodeComposite(
         node_ids=node_ids,
@@ -311,7 +308,7 @@ class TestHigherOrderHostFiresWarning:
             element_type=tet_info, ids=tet_ids, connectivity=tet_conn,
         )
 
-        elem_labels = {
+        elem_pgs = {
             (3, 99): {
                 "name": "concrete",
                 "element_ids": tet_ids,
@@ -328,8 +325,8 @@ class TestHigherOrderHostFiresWarning:
         }
         elements = ElementComposite(
             groups={11: tet_group},
-            physical=PhysicalGroupSet({}),
-            labels=LabelSet(elem_labels),
+            physical=PhysicalGroupSet(elem_pgs),
+            labels=LabelSet({}),
         )
         nodes = NodeComposite(
             node_ids=node_ids,
@@ -396,7 +393,7 @@ class TestMixedTypeHost:
         # include both element ids under "soil".
         new_groups = dict(fem.elements._groups)
         new_groups[4] = tet_group
-        new_labels = {
+        new_pgs = {
             (3, 99): {
                 "name": "soil",
                 "element_ids": np.array([100, 200], dtype=np.int64),
@@ -406,8 +403,8 @@ class TestMixedTypeHost:
         }
         new_elements = ElementComposite(
             groups=new_groups,
-            physical=PhysicalGroupSet({}),
-            labels=LabelSet(new_labels),
+            physical=PhysicalGroupSet(new_pgs),
+            labels=LabelSet({}),
         )
         fem2 = FEMData(
             nodes=fem.nodes,

@@ -123,11 +123,22 @@ def _stub_model_h5_path() -> Path:
     Built once per session at a stable temp location so Phase 8
     ``model_h5=`` calls on MPCO tests that don't have a real
     sibling model can point at SOMETHING the loader can parse.
+
+    Cache key includes ``NEUTRAL_SCHEMA_VERSION`` so a schema bump
+    (or hash-function widening — see B2 / PR #398) auto-invalidates
+    the prior cache rather than producing a ``MalformedH5Error`` on
+    next read. Stale cache directories from older schema versions
+    accumulate under ``%TEMP%`` until the OS cleans them up; they're
+    harmless.
     """
     import os
     import tempfile
+    from apeGmsh.mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
 
-    cache_dir = Path(tempfile.gettempdir()) / "apegmsh_stub_models"
+    cache_dir = (
+        Path(tempfile.gettempdir())
+        / f"apegmsh_stub_models_{NEUTRAL_SCHEMA_VERSION}"
+    )
     cache_dir.mkdir(exist_ok=True)
     path = cache_dir / "stub_model.h5"
     if path.is_file():
