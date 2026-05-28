@@ -13,6 +13,8 @@ from __future__ import annotations
 from .pyvista_qt import (
     PyVistaQtBackend,
     apply_visibility_mask,
+    cellblocks_from_grid,
+    mesh_layer_from_grid,
     mesh_layer_to_grid,
 )
 
@@ -20,4 +22,6 @@ __all__ = [
     "PyVistaQtBackend",
     "mesh_layer_to_grid",
     "apply_visibility_mask",
+    "cellblocks_from_grid",
+    "mesh_layer_from_grid",
 ]

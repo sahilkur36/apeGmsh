@@ -162,23 +162,21 @@ def test_deformed_actor_identity_stable_across_steps(
     diagram = DeformedShapeDiagram(spec, results_50_steps)
     diagram.attach(headless_plotter, results_50_steps.fem, scene)
 
-    initial_grid = diagram._deformed_grid
-    initial_grid_id = id(initial_grid)
-    initial_actor = diagram._deformed_actor
-    initial_actor_id = id(initial_actor)
+    # Post-migration (ADR 0042): the backend owns the actor; the diagram
+    # holds a layer handle. The perf contract is unchanged — the backend
+    # mutates the grid's points in place when topology is stable, so the
+    # handle's actor + dataset are the same objects across all steps (no
+    # per-step add_mesh re-creation).
+    handle = diagram._deformed_handle
+    initial_actor = handle.actor
+    initial_dataset = handle.dataset
 
     for step in range(50):
         diagram.update_to_step(step)
 
-    # Actor + grid identity stable. PyVista may re-bind the actor's
-    # mapper when ``mesh.points = ...`` is reassigned (it rebuilds
-    # the normals filter), so we don't pin the mapper id — the
-    # contract that matters is "no add_mesh re-creation per step",
-    # which actor + grid identity proves.
-    assert diagram._deformed_grid is initial_grid
-    assert id(diagram._deformed_grid) == initial_grid_id
-    assert diagram._deformed_actor is initial_actor
-    assert id(diagram._deformed_actor) == initial_actor_id
+    assert diagram._deformed_handle is handle
+    assert handle.actor is initial_actor
+    assert handle.dataset is initial_dataset
 
 
 def test_deformed_scale_change_does_not_re_add_actor(
@@ -193,11 +191,13 @@ def test_deformed_scale_change_does_not_re_add_actor(
     diagram = DeformedShapeDiagram(spec, results_50_steps)
     diagram.attach(headless_plotter, results_50_steps.fem, scene)
 
-    initial_actor = diagram._deformed_actor
-    initial_mapper = initial_actor.GetMapper()
+    handle = diagram._deformed_handle
+    initial_actor = handle.actor
+    initial_dataset = handle.dataset
 
     for s in (2.0, 5.0, 10.0, 0.5, 1.0):
         diagram.set_scale(s)
 
-    assert diagram._deformed_actor is initial_actor
-    assert diagram._deformed_actor.GetMapper() is initial_mapper
+    # No re-add on scale change — same actor + same underlying grid.
+    assert handle.actor is initial_actor
+    assert handle.dataset is initial_dataset

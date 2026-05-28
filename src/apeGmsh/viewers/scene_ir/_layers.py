@@ -201,6 +201,10 @@ class MeshLayer:
     opacity: float = 1.0
     show_edges: bool = False
     silhouette: bool = False
+    # Render the mesh as edges only (no filled faces) — the undeformed
+    # "ghost" reference and similar overlays. A backend maps this to its
+    # wireframe representation.
+    wireframe: bool = False
 
     def field_named(self, name: str) -> Optional[ScalarField]:
         for f in self.fields:
