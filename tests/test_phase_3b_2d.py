@@ -469,15 +469,17 @@ class TestChainPhaseRouting:
         chain-phase router's coverage.
 
         v1.1-A added ``EqualDOFDef`` / ``RigidLinkDef`` /
-        ``RigidDiaphragmDef`` coverage; ``EmbeddedDef`` and
-        ``TiedContactDef`` still need element-/face-connectivity
-        queries and remain on the bump-counter fallback (v1.1-A.2).
+        ``RigidDiaphragmDef`` coverage; v1.1-A.2 added ``EmbeddedDef``
+        + ``TiedContactDef`` (this PR).  ``KinematicCouplingDef``
+        remains on the bump-counter fallback — used here as the
+        canonical "unsupported in chain-phase" shape.
         """
-        from apeGmsh._kernel.defs.constraints import TiedContactDef
+        from apeGmsh._kernel.defs.constraints import KinematicCouplingDef
 
         fem = _make_fem()
-        defn = TiedContactDef(
-            master_label="a", slave_label="b", tolerance=1.0,
+        defn = KinematicCouplingDef(
+            master_label="a", slave_label="b",
+            master_point=(0.0, 0.0, 0.0),
         )
         result = route_def_to_fem(fem, defn)
         assert result is None
