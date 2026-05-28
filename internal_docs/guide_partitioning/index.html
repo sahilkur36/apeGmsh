@@ -812,6 +812,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="5. HDF5 round-trip and post-processing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1. MPCO recorder regions under partitioning (ADR 0027 INV-4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -844,6 +861,45 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="8. Single-process vs OpenSeesMP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runtime-conditional-numberer-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime-conditional numberer + system
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#overriding-the-auto-emit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overriding the auto-emit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#h5-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        H5 emission
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4089,6 +4145,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="5. HDF5 round-trip and post-processing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5.1. MPCO recorder regions under partitioning (ADR 0027 INV-4)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -4121,6 +4194,45 @@
       
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="8. Single-process vs OpenSeesMP">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#runtime-conditional-numberer-system" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Runtime-conditional numberer + system
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#overriding-the-auto-emit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Overriding the auto-emit
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#h5-emission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        H5 emission
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -4524,23 +4636,28 @@ fiber-section beams (expensive) with elastic beams (cheap):</p>
 </table>
 <h2 id="5-hdf5-round-trip-and-post-processing">5. HDF5 round-trip and post-processing<a class="headerlink" href="#5-hdf5-round-trip-and-post-processing" title="Permanent link">&para;</a></h2>
 <p><code>ops.h5(path)</code> writes the bridge's canonical <code>model.h5</code>. When
-<code>len(fem.partitions) &gt; 1</code>, the bridge populates the schema 2.10.0
+<code>len(fem.partitions) &gt; 1</code>, the bridge populates the schema 2.11.0
 partition zone:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>/meta                                 (carries opensees=2.10.0)
+<div class="language-text highlight"><pre><span></span><code><span id="__span-9-1"><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>/meta                                 (carries opensees=2.11.0)
 </span><span id="__span-9-2"><a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>/opensees/...                         (nodes, elements, materials, ...)
 </span><span id="__span-9-3"><a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>/opensees/partitions/                 (n_partitions = N attr)
-</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>  partition_01/
-</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    element_ids        int64 (n_elem_rank_1,)
-</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    node_ids           int64 (n_node_rank_1,)   # native + foreign decls
-</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    boundary_node_ids  int64 (n_boundary_1,)    # shared with another rank
-</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    @rank              = 1
+</span><span id="__span-9-4"><a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>  partition_00/
+</span><span id="__span-9-5"><a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>    element_ids        int64 (n_elem_rank_0,)
+</span><span id="__span-9-6"><a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a>    node_ids           int64 (n_node_rank_0,)   # native + foreign decls
+</span><span id="__span-9-7"><a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    boundary_node_ids  int64 (n_boundary_0,)    # shared with another rank
+</span><span id="__span-9-8"><a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    @rank              = 0
 </span><span id="__span-9-9"><a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a>    @n_elements        = ...
 </span><span id="__span-9-10"><a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a>    @n_nodes           = ...
-</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>  partition_02/
+</span><span id="__span-9-11"><a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a>  partition_01/
 </span><span id="__span-9-12"><a id="__codelineno-9-12" name="__codelineno-9-12" href="#__codelineno-9-12"></a>    ...
 </span><span id="__span-9-13"><a id="__codelineno-9-13" name="__codelineno-9-13" href="#__codelineno-9-13"></a>/opensees/element_meta/{type_token}/
 </span><span id="__span-9-14"><a id="__codelineno-9-14" name="__codelineno-9-14" href="#__codelineno-9-14"></a>  partition_ids        int64 (n_elem_of_type,)  # parallel to other columns
 </span></code></pre></div>
+<p>Group names and the <code>rank</code> attr / <code>partition_ids</code> values are
+<strong>0-based</strong> (matching <code>OpenSeesMP::getPID()</code>).  The broker's
+<code>PartitionRecord.id</code> remains Gmsh's 1-based label — that is
+Gmsh-side traceability metadata, not a runtime rank.  The mapping
+is <code>rank == i</code>, <code>PartitionRecord.id == fem.partitions[rank].id</code>.</p>
 <p>The new parallel <code>partition_ids</code> column on every
 <code>element_meta/{type}/</code> group lets a reader filter elements by rank
 in O(N) without re-reading the partition groups. Sentinel <code>-1</code>
@@ -4558,6 +4675,9 @@ which today is empty in the partition path).</p>
 </span><span id="__span-10-8"><a id="__codelineno-10-8" name="__codelineno-10-8" href="#__codelineno-10-8"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">rec</span><span class="p">)</span>
 </span><span id="__span-10-9"><a id="__codelineno-10-9" name="__codelineno-10-9" href="#__codelineno-10-9"></a><span class="c1"># PartitionRecord(id=1, n_nodes=12, n_elements=10)</span>
 </span><span id="__span-10-10"><a id="__codelineno-10-10" name="__codelineno-10-10" href="#__codelineno-10-10"></a><span class="c1"># ...</span>
+</span><span id="__span-10-11"><a id="__codelineno-10-11" name="__codelineno-10-11" href="#__codelineno-10-11"></a><span class="c1"># (PartitionRecord.id retains Gmsh&#39;s 1-based label;</span>
+</span><span id="__span-10-12"><a id="__codelineno-10-12" name="__codelineno-10-12" href="#__codelineno-10-12"></a><span class="c1"># the matching OpenSeesMP rank is the enumerate index — rank 0</span>
+</span><span id="__span-10-13"><a id="__codelineno-10-13" name="__codelineno-10-13" href="#__codelineno-10-13"></a><span class="c1"># is fem.partitions[0] is PartitionRecord(id=1, ...).)</span>
 </span></code></pre></div>
 <p><code>OpenSeesModel.from_h5</code> rehydrates the broker via
 <code>FEMData.from_h5(...)</code>, which restores <code>fem.partitions</code>. The
@@ -4572,9 +4692,33 @@ constraints) — use the <code>H5Model</code> reader directly:</p>
 </span><span id="__span-11-5"><a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a>        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;rank </span><span class="si">{</span><span class="n">rec</span><span class="o">.</span><span class="n">rank</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">element_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> elements, &quot;</span>
 </span><span id="__span-11-6"><a id="__codelineno-11-6" name="__codelineno-11-6" href="#__codelineno-11-6"></a>              <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">rec</span><span class="o">.</span><span class="n">boundary_node_ids</span><span class="p">)</span><span class="si">}</span><span class="s2"> boundary nodes&quot;</span><span class="p">)</span>
 </span></code></pre></div>
-<p>Schema version: <strong>opensees 2.10.0</strong> (per ADR 0023 two-version reader
-window — 2.9.x readers still open 2.10.x files, ignoring the new
-partition zone).</p>
+<p>Schema version: <strong>opensees 2.11.0</strong> (per ADR 0023 two-version
+reader window — 2.10.x readers still open 2.11.x files; rank attr
+/ <code>partition_ids</code> row values became 0-based in 2.11.0).</p>
+<h3 id="51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4">5.1. MPCO recorder regions under partitioning (ADR 0027 INV-4)<a class="headerlink" href="#51-mpco-recorder-regions-under-partitioning-adr-0027-inv-4" title="Permanent link">&para;</a></h3>
+<p>When a partitioned model declares
+<code>ops.recorder.MPCO(nodes_pg="...", elements_pg="...", file=...)</code>
+(or any filter form: <code>nodes=</code>, <code>elements=</code>, <code>*_pg=</code>), the bridge
+splits emission into two scopes per ADR 0027 INV-4:</p>
+<ul>
+<li>The <code>recorder mpco ... -R &lt;tag&gt;</code> <strong>declaration</strong> emits <strong>once</strong>
+  in global scope (outside every <code>if {[getPID] == K} {...}</code> block).
+  One MPCO declaration is sufficient under OpenSeesMP — the
+  recorder writes to disk, not to the model topology.</li>
+<li>The <code>region &lt;tag&gt; -node ... -ele ...</code> line emits <strong>per-rank</strong>
+  inside each rank's <code>partition_open(K)</code> block, carrying only the
+  intersection of the resolved filter ids with that rank's owned
+  nodes/elements. Ranks whose intersection is <strong>empty</strong> emit no
+  <code>region</code> line at all (MPCO handles a missing per-rank region as
+  a no-op — the recorder declaration's <code>-R &lt;tag&gt;</code> still resolves
+  on the ranks that did emit).</li>
+<li>The <code>&lt;tag&gt;</code> is the <strong>same scalar</strong> across every emitting rank
+  and on the global recorder line. MPCO post-processing stitches
+  the per-rank <code>.mpco</code> outputs by <code>&lt;tag&gt;</code> identity at read time.</li>
+</ul>
+<p>For un-partitioned models (<code>len(fem.partitions) &lt;= 1</code>) the emit
+is byte-identical to the pre-INV-4 behaviour — one <code>region</code> plus
+one <code>recorder mpco</code> in global scope, with the same tag.</p>
 <h2 id="6-viewer-integration">6. Viewer integration<a class="headerlink" href="#6-viewer-integration" title="Permanent link">&para;</a></h2>
 <p>The interactive Qt mesh viewer surfaces partition assignment in
 three places:</p>
@@ -4616,7 +4760,11 @@ the bridge follows the policy in ADR 0027:</p>
   rank K's block references a node tag K does not natively own, the
   bridge emits <code>node &lt;tag&gt; &lt;x&gt; &lt;y&gt; &lt;z&gt; -ndf 6</code> on K's block before
   the constraint line (INV-2). The coordinates and <code>ndf</code> come from
-  the broker — identical to those used on the natively-owning rank.</li>
+  the broker — identical to those used on the natively-owning rank —
+  via the per-foreign-node <code>fem.nodes.ndf_for(tag)</code> lookup in
+  <code>_internal/build.py::emit_mp_constraints_partitioned</code> (override-only
+  per ADR 0033; sentinel slots elide <code>-ndf</code> and fall back to the
+  envelope).</li>
 <li><strong>Phantom nodes get broker-deterministic tags</strong> (INV-3). When a
   <code>node_to_surface</code> constraint synthesises phantom nodes at
   build time, those tags and coordinates come from one canonical
@@ -4644,9 +4792,9 @@ rigid-floor diaphragm per storey:</p>
 ranks (the corners are far apart in the dual graph). The emitted
 deck contains the same <code>rigidDiaphragm</code> line on every rank that
 owns at least one slave corner:</p>
-<div class="language-tcl highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">1</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
+<div class="language-tcl highlight"><pre><span></span><code><span id="__span-14-1"><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">0</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
 </span><span id="__span-14-2"><a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="w">    </span><span class="nv">...</span>
-</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="c"># Foreign-node declarations for nodes rank 1 does not own.</span>
+</span><span id="__span-14-3"><a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="w">    </span><span class="c"># Foreign-node declarations for nodes rank 0 does not own.</span>
 </span><span id="__span-14-4"><a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">7</span><span class="w"> </span><span class="mf">5.0</span><span class="w"> </span><span class="mf">5.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
 </span><span id="__span-14-5"><a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">11</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
 </span><span id="__span-14-6"><a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a>
@@ -4655,7 +4803,7 @@ owns at least one slave corner:</p>
 </span><span id="__span-14-9"><a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="w">    </span><span class="nv">rigidDiaphragm</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="mi">7</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="mi">11</span>
 </span><span id="__span-14-10"><a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="k">}</span>
 </span><span id="__span-14-11"><a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a>
-</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">2</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
+</span><span id="__span-14-12"><a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="k">if</span><span class="w"> </span><span class="k">{[</span><span class="nv">getPID</span><span class="k">]</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="nv">1</span><span class="k">}</span><span class="w"> </span><span class="k">{</span>
 </span><span id="__span-14-13"><a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="w">    </span><span class="nv">...</span>
 </span><span id="__span-14-14"><a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
 </span><span id="__span-14-15"><a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="w">    </span><span class="nv">node</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="mf">5.0</span><span class="w"> </span><span class="mf">0.0</span><span class="w"> </span><span class="mf">3.0</span><span class="w"> </span><span class="o">-</span>ndf<span class="w"> </span><span class="mi">6</span>
@@ -4663,7 +4811,7 @@ owns at least one slave corner:</p>
 </span><span id="__span-14-17"><a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="w">    </span><span class="nv">rigidDiaphragm</span><span class="w"> </span><span class="mi">3</span><span class="w"> </span><span class="mi">5</span><span class="w"> </span><span class="mi">7</span><span class="w"> </span><span class="mi">9</span><span class="w"> </span><span class="mi">11</span>
 </span><span id="__span-14-18"><a id="__codelineno-14-18" name="__codelineno-14-18" href="#__codelineno-14-18"></a><span class="k">}</span>
 </span></code></pre></div>
-<p>Both rank 1 and rank 2 emit the <strong>same</strong> <code>rigidDiaphragm 3 5 7 9 11</code>
+<p>Both rank 0 and rank 1 emit the <strong>same</strong> <code>rigidDiaphragm 3 5 7 9 11</code>
 line; whichever ranks natively own which slaves, the foreign-side
 ranks declare the missing nodes before the line. The OpenSeesMP
 constraint handler dedupes equivalent declarations at solve time —
@@ -4680,50 +4828,63 @@ parseable under single-process OpenSees:</p>
 is unbound, the shim defines it to return 0, and only the rank-0
 block executes. Other ranks' blocks are skipped by the
 <code>if {[getPID] == K}</code> gate.</p>
-<blockquote>
-<p><strong>Current limitation (subject to change).</strong> Today —
-<code>apesees.py::_maybe_auto_emit_parallel_numberer</code>, commit
-<code>c9a8b2c</code> — when <code>len(fem.partitions) &gt; 1</code> the bridge
-<strong>unconditionally</strong> emits <code>numberer ParallelPlain</code> + <code>system
-Mumps</code> at the global scope. Those two commands are MP-only;
-single-process OpenSees rejects them with
-<code>No Numberer type exists, Plain, RCM only</code>. The shim handles the
-per-rank brackets but not the global analysis chain.</p>
-<p>Practical consequence: as of <code>c9a8b2c</code>, partitioned decks ship
-<strong>OpenSeesMP-runnable only.</strong> To run a partitioned deck under
-single-process OpenSees today, override before emit:</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">RCM</span><span class="p">()</span>
-</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">UmfPack</span><span class="p">()</span>
-</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1"># ... rest of analysis chain ...</span>
-</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>     <span class="c1"># MP-incompatible-user-choice warning fires</span>
+<h3 id="runtime-conditional-numberer-system">Runtime-conditional numberer + system<a class="headerlink" href="#runtime-conditional-numberer-system" title="Permanent link">&para;</a></h3>
+<p>When <code>len(fem.partitions) &gt; 1</code> and the user has not explicitly
+declared a numberer / system, the bridge auto-emits a <strong>runtime
+conditional</strong> (ADR 0027 INV-5, amended 2026-05-23) so the same deck
+runs under both OpenSeesMP and single-process OpenSees:</p>
+<div class="language-tcl highlight"><pre><span></span><code><span id="__span-16-1"><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a><span class="c"># ParallelPlain only exists in OpenSeesMP; fall back to RCM under single-process OpenSees.</span>
+</span><span id="__span-16-2"><a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a><span class="k">if</span><span class="w"> </span><span class="k">{[catch</span><span class="w"> </span><span class="k">{</span><span class="nv">numberer</span><span class="w"> </span>ParallelPlain<span class="k">}</span><span class="w"> </span>_err<span class="k">]}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="nv">numberer</span><span class="w"> </span>RCM<span class="w"> </span><span class="k">}</span>
+</span><span id="__span-16-3"><a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c"># Mumps requires OpenSeesMP + MPI; fall back to UmfPack under single-process OpenSees.</span>
+</span><span id="__span-16-4"><a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a><span class="k">if</span><span class="w"> </span><span class="k">{[catch</span><span class="w"> </span><span class="k">{</span><span class="nv">system</span><span class="w"> </span>Mumps<span class="k">}</span><span class="w"> </span>_err<span class="k">]}</span><span class="w"> </span><span class="k">{</span><span class="w"> </span><span class="nv">system</span><span class="w"> </span>UmfPack<span class="w"> </span><span class="k">}</span>
 </span></code></pre></div>
-<p>The bridge fires a <code>UserWarning</code> ("serial numberer 'RCM' explicitly
-declared … OpenSeesMP requires a parallel numberer") because your
-override is no longer MP-compatible; that is by design — you've
-opted into a single-process deck.</p>
-<p>A runtime-conditional fix is in flight on
-<code>feat/inv5-runtime-conditional</code> (task #17). When it lands, the
-bridge will emit a <code>catch</code> / try-except fallback that picks
-<code>ParallelPlain</code> / <code>Mumps</code> under MPI and <code>RCM</code> / <code>UmfPack</code>
-otherwise, so a single deck runs under both. Re-check this section
-against <code>_maybe_auto_emit_parallel_numberer</code> after that branch
-merges.</p>
-</blockquote>
+<p>The Py emitter produces the equivalent <code>try / except Exception</code>
+shape. The LiveOps emitter performs the same try/fallback
+in-process, emitting one <code>UserWarning</code> per fallback.</p>
+<p>Under regular OpenSees, the runtime prints two <code>WARNING</code> lines
+(<code>No Numberer type exists (Plain, RCM only)</code>, <code>system Mumps is
+unknown or not installed</code>); Tcl <code>catch</code> swallows them and the
+fallback executes. The deck reaches end-of-file and <code>analyze</code>
+converges. Under OpenSeesMP the primary <code>ParallelPlain</code> +
+<code>Mumps</code> apply.</p>
+<h3 id="overriding-the-auto-emit">Overriding the auto-emit<a class="headerlink" href="#overriding-the-auto-emit" title="Permanent link">&para;</a></h3>
+<p>Declare the analysis chain explicitly before <code>ops.tcl(...)</code> /
+<code>ops.py(...)</code> / <code>ops.h5(...)</code> to suppress the auto-emit:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-17-1"><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="n">ops</span><span class="o">.</span><span class="n">numberer</span><span class="o">.</span><span class="n">RCM</span><span class="p">()</span>         <span class="c1"># or ParallelPlain — your choice</span>
+</span><span id="__span-17-2"><a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="n">ops</span><span class="o">.</span><span class="n">system</span><span class="o">.</span><span class="n">UmfPack</span><span class="p">()</span>       <span class="c1"># or Mumps — your choice</span>
+</span><span id="__span-17-3"><a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="c1"># ... rest of analysis chain ...</span>
+</span><span id="__span-17-4"><a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="n">ops</span><span class="o">.</span><span class="n">tcl</span><span class="p">(</span><span class="s2">&quot;model.tcl&quot;</span><span class="p">)</span>
+</span></code></pre></div>
+<p>If your explicit override is MP-incompatible (e.g. <code>RCM</code> with
+<code>len(fem.partitions) &gt; 1</code>) the bridge fires a <code>UserWarning</code>
+("serial numberer 'RCM' explicitly declared … OpenSeesMP requires
+a parallel numberer") but respects your choice — you've opted
+into a single-process deck.</p>
+<h3 id="h5-emission">H5 emission<a class="headerlink" href="#h5-emission" title="Permanent link">&para;</a></h3>
+<p>The H5 emitter records the <strong>primary</strong> in <code>/opensees/analysis/</code>
+attrs (<code>numberer</code>, <code>system</code>) and the <strong>fallback</strong> in companion
+attrs (<code>numberer_runtime_fallback</code>, <code>system_runtime_fallback</code>).
+Readers see both choices; round-trip through <code>OpenSeesModel</code>
+preserves the pair.</p>
 <p>The shim itself, by contrast, has been stable since P4 and is not
 expected to change.</p>
 <h2 id="9-gotchas-and-known-limitations">9. Gotchas and known limitations<a class="headerlink" href="#9-gotchas-and-known-limitations" title="Permanent link">&para;</a></h2>
 <ul>
 <li>
-<p><strong>1-based partition IDs.</strong> Gmsh emits partition tags as <code>1..N</code>,
-  not <code>0..N-1</code>. The matching <code>if {[getPID] == K}</code> blocks in the
-  emitted Tcl also use 1-based ranks (matching Gmsh / <code>fem.partitions</code>).
-  <strong>However</strong>, OpenSeesMP's <code>getPID</code> returns 0-based ranks. The
-  bridge currently emits ranks as they land from <code>fem.partitions</code>
-  (1-based); under <code>mpiexec -np 4</code> only ranks that match the
-  emitted block IDs execute. If you are surprised by silent
-  no-execution on some ranks, this is the place to check —
-  prefer iterating <code>for rec in fem.partitions:</code> over hard-coding
-  rank IDs in your post-processing scripts.</p>
+<p><strong>Partition ID conventions: broker is 1-based, runtime is 0-based.</strong>
+  Gmsh assigns <code>PartitionRecord.id</code> as <code>1..N</code> (Gmsh-side label,
+  preserved on the broker for traceability).  The emitted Tcl /
+  Py runtime gates are <code>if {[getPID] == K}</code> with <code>K in 0..N-1</code>,
+  matching <code>OpenSeesMP::getPID()</code>.  The mapping is
+  <code>rank == i, fem.partitions[rank].id == rank + 1</code> — available
+  via plain <code>enumerate(fem.partitions)</code>.  This was a bug in
+  schema 2.10.0 (gates were 1-based, so rank 0 had no work and
+  partition N's content was silently dropped under <code>mpiexec -np
+  N</code>); schema 2.11.0 fixed it at the build-path seam.  Post-
+  processing scripts should iterate <code>for rank, rec in
+  enumerate(fem.partitions):</code> rather than hard-coding rank IDs,
+  and downstream HDF5 readers should treat <code>partition_NN/rank</code> /
+  <code>partition_ids</code> values as 0-based.</p>
 </li>
 <li>
 <p><strong><code>pymetis</code> has no PyPI Windows wheel.</strong> Install via
@@ -4751,14 +4912,38 @@ expected to change.</p>
   intersection on the read side.</p>
 </li>
 <li>
-<p><strong>Per-node <code>ndf</code> metadata is not yet on the broker.</strong> Foreign
-  node declarations under cross-partition replication (§ 7) use
-  the model-wide <code>ndf</code> declared via <code>ops.model(ndm=, ndf=)</code>.
-  This is fine for the homogeneous-ndf models apeGmsh supports
-  today (one <code>ndf</code> per session). Mixed-ndf models — <code>ndf=3</code> solid
-  nodes coexisting with <code>ndf=6</code> beam nodes in the same broker —
-  are not yet supported; tracked as task #16.</p>
+<p><strong>Per-node <code>ndf</code> metadata is on the broker.</strong> The top-level
+  <code>g.node_ndf</code> composite (sibling to <code>g.constraints</code> / <code>g.loads</code> /
+  <code>g.masses</code>) is the user-facing API for declaring DOF counts per
+  region; <code>fem.nodes.ndf_for(nid)</code> is the broker-side query.
+  Declarations are explicit-only — apeGmsh does not infer <code>ndf</code>
+  from element class — and <code>ndf_for</code> raises <code>LookupError</code> on
+  undeclared nodes naming both fixes
+  (<code>g.node_ndf.set(target, ndf=K)</code> and
+  <code>g.node_ndf.set_default(ndf=K)</code>). See
+  <a href="../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md">ADR 0032</a>
+  for the doctrine.</p>
 </li>
+</ul>
+<p>Foreign node declarations under cross-partition replication (§ 7)
+  now consume per-node <code>ndf</code> directly. The partitioned fan-out in
+  <code>_internal/build.py::emit_mp_constraints_partitioned</code> looks up
+  <code>fem.nodes.ndf_for(tag)</code> per foreign-node decl and passes <code>-ndf K</code>
+  on the <code>node(...)</code> call when the broker carries an override;
+  sentinel slots elide <code>-ndf</code> and OpenSees applies the envelope
+  (<code>apeSees(fem).model(ndm, ndf=K)</code>) — matching OpenSees-native
+  semantics. This unblocks mixed-ndf partitioned models such as
+  <code>ndf=3</code> solid nodes coexisting with <code>ndf=6</code> shell nodes across
+  rank boundaries.</p>
+<p>Cross-rank consistency is <strong>hash-guaranteed</strong> per
+  <a href="../src/apeGmsh/opensees/architecture/decisions/0021-lineage-chain-replaces-snapshot-id.md">ADR 0021</a>:
+  the resolved <code>_ndf</code> array folds into <code>fem_hash</code>, so every rank
+  deserialises identical declarations and agrees on per-node <code>ndf</code>
+  for shared nodes without explicit cross-rank communication. See
+  <a href="../src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md">ADR 0033</a>
+  for the full emit-wiring contract (override-only semantics +
+  validator at three materialisation sites + phantom carveout).</p>
+<ul>
 <li>
 <p><strong><code>partition()</code> after <code>renumber()</code> is the canonical order.</strong>
   Call <code>g.mesh.partitioning.renumber(dim=, method="simple",

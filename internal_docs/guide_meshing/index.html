@@ -4475,10 +4475,15 @@ and surviving ones are re-registered with <code>kind</code> equal to the operati
   or another solid.</li>
 <li><strong><code>fragment</code></strong> is the conformal-meshing primitive. It splits every shape at
   every intersection and keeps <em>all</em> sub-volumes, including the pieces of the
-  tools that are left over. The <code>cleanup_free=True</code> default also drops
-  surfaces that do not bound a volume after the operation — those are the
-  dangling remnants of cutting planes that sit outside the solid and would
-  otherwise show up as stray 2D elements in the mesh.</li>
+  tools that are left over. The default <code>cleanup_free=True</code> runs the
+  topology-driven <code>sweep_dangling</code> pass: dim≤2 entities that bound no
+  registered volume AND are not user-intentional (not in <code>model._metadata</code>,
+  no label) are reaped — typically the overhanging fragments of a cutting
+  plane that extended past the solid. Shells you explicitly created via
+  <code>add_rectangle</code> / <code>add_plane_surface</code> / <code>add_cutting_plane</code> are preserved
+  (their metadata entry marks them intentional), so shell-on-solid coupling
+  still works with the default. Pass <code>cleanup_free=False</code> only when you
+  need OCC's raw output for downstream inspection.</li>
 </ul>
 <p><strong>Conformal meshing in practice</strong> almost always means "fragment, then mesh".
 Without fragmentation, two touching parts will be meshed independently and
