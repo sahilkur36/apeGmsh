@@ -143,10 +143,23 @@ class TestComposeCouplePipeline:
 class TestAssembly:
     """The Assembly wrapper over the (de-risked) compose+couple pipeline."""
 
+    def test_assembly_is_subpath_only_not_top_level(self) -> None:
+        """Assembly lives at ``apeGmsh.assembly``, NOT top-level — the v1.0
+        'session IS the assembly' guard (test_library_contracts) stays
+        satisfied. Locks the slice-1.4 red/blue decision."""
+        import apeGmsh
+        from apeGmsh.assembly import Assembly as _SubPath
+
+        assert _SubPath is not None
+        assert not hasattr(apeGmsh, "Assembly"), (
+            "Assembly must not be a top-level export (v1.0 contract); import "
+            "it from apeGmsh.assembly."
+        )
+
     def test_materialize_applies_couple_like_raw_pipeline(
         self, host_and_module: tuple[Path, Path],
     ) -> None:
-        from apeGmsh import Assembly
+        from apeGmsh.assembly import Assembly
 
         host_p, a_p = host_and_module
         asm = Assembly("frame")
@@ -166,7 +179,7 @@ class TestAssembly:
     def test_chainable_declaration(
         self, host_and_module: tuple[Path, Path],
     ) -> None:
-        from apeGmsh import Assembly
+        from apeGmsh.assembly import Assembly
 
         host_p, a_p = host_and_module
         g = (
@@ -184,7 +197,7 @@ class TestAssembly:
     def test_fail_loud_on_unresolvable_port(
         self, host_and_module: tuple[Path, Path],
     ) -> None:
-        from apeGmsh import Assembly, AssemblyError
+        from apeGmsh.assembly import Assembly, AssemblyError
 
         host_p, a_p = host_and_module
         asm = Assembly("frame")
@@ -204,7 +217,7 @@ class TestAssembly:
     def test_couple_unknown_part_raises(
         self, host_and_module: tuple[Path, Path],
     ) -> None:
-        from apeGmsh import Assembly, AssemblyError
+        from apeGmsh.assembly import Assembly, AssemblyError
 
         host_p, a_p = host_and_module
         asm = Assembly("frame")
@@ -218,7 +231,7 @@ class TestAssembly:
             asm.materialize()
 
     def test_validation(self, host_and_module: tuple[Path, Path]) -> None:
-        from apeGmsh import Assembly, AssemblyError
+        from apeGmsh.assembly import Assembly, AssemblyError
 
         host_p, _ = host_and_module
         with pytest.raises(AssemblyError):

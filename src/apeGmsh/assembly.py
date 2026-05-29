@@ -6,9 +6,19 @@ apeGmsh models (``model.h5``) as **parts**, join them with interface
 **couples** (constraints), then :meth:`~Assembly.materialize` the whole
 graph into one composed session in a single pass.
 
+``Assembly`` is imported from this sub-module, **not** the top-level
+package (``from apeGmsh.assembly import Assembly``). The v1.0 API
+deliberately removed an earlier ``Assembly`` class and guards against a
+top-level export — "the session IS the assembly" (see
+``tests/test_library_contracts.py`` + the ADR 0043 "v1.0 Assembly
+removal" note). This declarative builder is sugar that *produces* a
+session, so it earns a sub-path home now; the top-level name is reserved
+until the graph / scheduler layer (slice 1.5+) exists and ADR 0043 is
+accepted.
+
 ::
 
-    from apeGmsh import Assembly
+    from apeGmsh.assembly import Assembly
 
     asm = Assembly("cerro_lindo")
     asm.add("pier", "pier.h5")                 # first add = host

@@ -52,7 +52,6 @@ Composition-based API with sub-composites for focused surfaces:
 
 from apeGmsh._session import _SessionBase
 from apeGmsh._core import apeGmsh
-from apeGmsh._assembly import Assembly, AssemblyError
 from apeGmsh.core.Part import Part
 from apeGmsh.core._parts_registry import PartsRegistry, Instance
 from apeGmsh.parts import Axis1D, DRMBox, DRMBoxResult
@@ -164,8 +163,6 @@ _print_banner()
 __all__ = [
     "_SessionBase",
     "apeGmsh",
-    "Assembly",
-    "AssemblyError",
     "Part",
     "PartsRegistry",
     "Instance",
