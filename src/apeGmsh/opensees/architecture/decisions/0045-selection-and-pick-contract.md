@@ -1,12 +1,12 @@
 # ADR 0045 — Selection & Pick Contract: `SelectionTarget` IR + `FilterController` + `SelectionLog` over an additively-widened `PickBackend`
 
-**Status:** Proposed (2026-05-30, head-engineer scoping session; born
+**Status:** Accepted (2026-05-30, head-engineer scoping session; born
 from a 13-agent design workflow — 6 grounding readers, a ParaView +
 Blender prior-art pass, 3 independent contract proposals, an
-adversarial critique round, and a synthesis). Four open questions in
-§Open questions are owed a deliberate resolution before adoption,
-mirroring how ADR 0042 was drafted Proposed and flipped to Accepted
-once its three questions were chosen. This is the **domain layer above
+adversarial critique round, and a synthesis). The four design forks
+were **ratified the same day** (see §Resolved decisions) — mirroring
+how ADR 0042 was drafted Proposed and flipped to Accepted once its
+three questions were chosen. This is the **domain layer above
 the pick boundary**: it sits on top of ADR 0044's `PickBackend`
 (geometric screen→cell seam) and reshapes 0044's sequencing — the
 foundational selection slices here land *before* 0044's web/export
@@ -214,6 +214,14 @@ _pickable_dims` guards at `pick_engine.py:307,324,382`), per-dim actor
 "dim to 0.1 opacity" vs. mesh's "hide" split). Every keypress emits a
 `MODE_SET` op (Part 5) for replay.
 
+**Ratified keystroke semantics (§Resolved decisions 1):** bare
+`0/1/2/3` **toggle/add** a dim bit — the dimensional filter is
+**multi-select by default**, so the keys and the checkbox panel are
+symmetric front-ends onto the same `frozenset` (a key flips its dim
+in/out of the active set). `4` selects all dims; a dedicated clear
+(`Esc`-class) resets to empty. There is no separate "single-dim
+replace" key mode — REPLACE was the rejected alternative.
+
 ### Part 4 — widened `PickBackend` (from ADR 0044)
 
 ADR 0044's `PickBackend` is widened **additively**: it keeps
@@ -267,7 +275,10 @@ abort-chain (10/9/11) is preserved untouched *below* the op layer.
 |---|---|---|
 | **MODEL_BREP** | `dim` = OCC dim, `key` = occ_tag (**= today's DimTag verbatim**) | Volume pick is **already grounded**: `brep_scene.py:461-555` builds dim=3 as merged volume boundary surfaces, registers a **separate dim=3 actor**, and at `:547-550` maps every boundary-face cell to its owning volume tag with real per-volume bboxes (`:551`). The breakage is *only* the coincident dim=2/dim=3 actors (both `pickable=True`) losing the depth-sort tie — fixed by the `FilterController` (Part 6 below). |
 | **MESH_TOPO** | element: `dim`=element dim, `key`=element_id; node: `dim`=0, `key`=node_id | Gives mesh element/node picks (today bare lists, `mesh_viewer.py:1417-1442`) first-class identity in `SelectionState`, so undo / box / staging / filter all apply. The brep-mode vs element/node-mode split collapses. BBox from mesh node coords the registry already holds; the `np.tile` fallback is **deleted**. |
-| **RESULTS_TOPO** | element: `dim`=`cell_dim`, `key`=element_id; node: `dim`=0; gauss: `key`=element_id+`sub`=gp_index, `parent`=element; fiber: `parent`=gauss | `fem_scene.build_fem_scene` has the element dim in hand (`fem_scene.py:248-257`) but discards it — store a parallel `cell_dim` ndarray + split the merged grid into per-dim sub-grids (fixes hex pick ambiguity). `PickMode` (node/element/gp/fiber) stays an **orthogonal semantic axis** composed with dim: dim scopes which cells are pickable, a post-hit resolver interprets the survivor. `set_pick_mode` is **kept** (it gates the GP/FIBER overlay actors — the `MODE_ALLOW` sets for NODE/ELEMENT are both empty, so node-vs-element is post-hit); only the controller-vs-engine desync is fixed. |
+| **RESULTS_TOPO** | element: `dim`=`cell_dim`, `key`=element_id; node: `dim`=0; gauss: `key`=element_id+`sub`=gp_index, `parent`=element; fiber: `parent`=gauss | `fem_scene.build_fem_scene` has the element dim in hand (`fem_scene.py:248-257`) but discards it — store a parallel `cell_dim` ndarray + split the merged grid into per-dim sub-grids (fixes hex pick ambiguity). `PickMode` (node/element/gp/fiber) stays an **orthogonal semantic axis** composed with dim: dim scopes which cells are pickable, a post-hit resolver interprets the survivor. *(Note: `PickMode`
+node/element/gp/fiber here is the results-only semantic axis — distinct
+from the dimensional `0/1/2/3/4` filter, which the `FilterController`
+owns.)* `set_pick_mode` is **kept** (it gates the GP/FIBER overlay actors — the `MODE_ALLOW` sets for NODE/ELEMENT are both empty, so node-vs-element is post-hit); only the controller-vs-engine desync is fixed. |
 
 ### Volume pick — the mechanism (verified, not asserted)
 
@@ -346,7 +357,7 @@ dim=4 means all dims pickable without down-flush.
 | Slice | Scope | Headless-verifiable? |
 |---|---|---|
 | **S0** | `scene_ir._targets` (`SelectionTarget`, `Substrate`) + `scene_ir._bbox` (`BBox`) value types; extend the AST purity guard. No behaviour change. | **Fully** — value-type + purity unit tests; no VTK/GPU. |
-| **S1** | `BBox` provider; `EntityRegistry.bbox` returns `BBox` from real geometry; **delete** the `np.tile` degenerate fallback (`entity_registry.py:155-158`); `mesh_scene` passes real AABBs into `register_dim`; fold `instance.bbox` / `_world_bbox` / `_compute_model_diagonal` onto `BBox.union`. | **Mostly** — `BBox` value parity on golden registries; orbit-pivot/clip-range asserted without render. Camera-fit pixels = eyeball. |
+| **S1** | `BBox` provider; `EntityRegistry.bbox` returns `BBox` from real geometry; **delete** the `np.tile` degenerate fallback (`entity_registry.py:155-158`); `mesh_scene` passes real AABBs into `register_dim`; fold `instance.bbox` / `_world_bbox` / `_compute_model_diagonal` onto `BBox.union`. **Per §Resolved decisions 4, also migrate the remaining `getBoundingBox` sites in v1** — `overlays/tangent_normal_overlay.py`, `overlays/mesh_tangent_normal_overlay.py`, and `_model_info_panel.py:98` — so the sweep is complete (no follow-up bbox debt). | **Mostly** — `BBox` value parity on golden registries; orbit-pivot/clip-range asserted without render. Camera-fit pixels = eyeball. |
 | **S2** | `FilterController`; move the inline `0/1/2/3/4` keys (`model_viewer.py:1657-1668`) into it; bind it in the mesh viewer (closes HARD REQ 2); route both `FilterTab` variants through `set_mode` (removes the `mesh_viewer.py:594` monkeypatch; adds the missing dim=0 row). **The cheapest user-visible win.** | **State headless** — assert `frozenset` transitions + the pick-resolution gate on a synthetic registry. Visual feedback = eyeball. |
 | **S3** | `SelectionState` holds `SelectionTarget`s + a `SelectionLog`; adapt `DimTag` → `SelectionTarget(MODEL_BREP)` for one release; migrate mesh element/node picks OFF bare lists INTO `SelectionState`; box pushes ONE op; add redo; `GROUP_ACTIVATE`/`GROUP_COMMIT` through the log with `flush_to_gmsh` as the freeze boundary. | **Fully** — replaying the op-log from empty reproduces the `SelectionState`; one-op-per-gesture undo/redo + staging deferral, no interactor. |
 | **S4** | Add `cell_dim` to `fem_scene` (the discarded dim at `fem_scene.py:248-257`) + split the results grid per-dim; write `ResultsSubstrate` implementing `SelectableSubstrate`; give results a `SelectionState` + `FilterController` + post-hit node/element resolver composed with the dim filter; fix the controller-vs-engine mode desync without deleting `set_pick_mode`. | **Mostly** — `cell_dim` tagging, `resolve_cell`, per-element `BBox`, dim-masked candidates on a golden FEM scene. Highlight pixels = eyeball. |
@@ -412,32 +423,39 @@ ADR 0027 per-rank cross-partition identity.
   empty (node-vs-element is post-hit), but `set_pick_mode` actively
   gates the GP/FIBER overlay actors. Keep it; fix only the desync.
 
-## Open questions (to resolve before adoption)
+## Resolved decisions (ratified 2026-05-30)
 
-Mirroring ADR 0042's three resolved decisions — drafted open here, to be
-chosen deliberately before S0 lands.
+The four design forks the synthesis left open were ratified the same day
+(two confirmed the synthesis lean, two overrode it). Recorded inline, as
+ADR 0042 recorded its three.
 
-1. **Single-dim REPLACE vs. multi-dim subset as the default keystroke
-   semantics.** *Lean:* bare `0/1/2/3` **replaces** the `frozenset`
-   (single-dim, matching today's model viewer and Blender); `Shift`+key
-   **adds** a dim bit (the multi-select the checkboxes express). Both
-   drive the same `frozenset`; the checkbox panel stays the multi-select
-   front-end.
-2. **Does the results viewer get full multi-select accumulation + undo,
-   or stay picks-replace behind a flag?** Adding a `SelectionState` +
-   op-log to results risks the picks-don't-accumulate assumption in
-   `_highlight_element_cells` (`results_viewer.py:2251`). *Lean:* ship
-   results pickability + dim-filter + `SelectionState`-as-store first;
-   put multi-select accumulation + undo behind an explicit toggle so the
-   existing replace-UX isn't silently changed.
-3. **Is `MODE_SET` on the undo stack at all?** *Lean:* no — keep it in
-   the serialized/replay log but off the user-facing undo cursor. Undo
-   touches selections; mode history is a separate replayable channel.
-4. **Does the canonical `BBox` migration include the overlay files and
-   `_model_info_panel.py:98` `getBoundingBox` sites in v1?** *Lean:* name
-   them as follow-up debt. v1 migrates `EntityRegistry`, `instance.bbox`,
-   `_world_bbox`, `_compute_model_diagonal`; INV-2 fixes the *type*, not
-   every producer.
+1. **Keystroke semantics — multi-select by default** *(overrode the
+   single-dim-replace lean).* Bare `0/1/2/3` **toggle/add** a dim bit;
+   the dimensional filter is multi-select, so the keystrokes and the
+   checkbox panel are symmetric front-ends onto one `frozenset`. `4` =
+   all. There is no separate `Shift`-to-add mode and no single-dim
+   REPLACE — wired into Part 3. Rationale: matches the existing
+   checkbox-panel muscle memory and keeps one mental model for "which
+   dims are active."
+2. **Results viewer scope — pickable + dim-filter + store now;
+   accumulation/undo behind a toggle** *(confirmed the lean).* Results
+   gains pickability, the `0/1/2/3/4` filter, and a `SelectionState`
+   store in S4; multi-select accumulation + undo go behind an explicit
+   toggle so the existing picks-replace UX
+   (`_highlight_element_cells`, `results_viewer.py:2251`) is not silently
+   changed.
+3. **`MODE_SET` is off the user-facing undo stack** *(confirmed the
+   lean).* It stays in the serialized/replay log (for whole-session
+   replay) but `Ctrl+Z` does not step back through dimension-mode
+   changes — undo touches selections; mode history is a separate
+   replayable channel. Wired into Part 5 / INV-5.
+4. **Canonical `BBox` migration is complete in v1** *(overrode the
+   follow-up-debt lean).* S1 migrates **every** `getBoundingBox` site,
+   including `overlays/tangent_normal_overlay.py`,
+   `overlays/mesh_tangent_normal_overlay.py`, and
+   `_model_info_panel.py:98` — no residual bbox debt. INV-2 still fixes
+   the *type* (per-substrate providers remain), but every producer lands
+   on `BBox` in the first pass.
 
 ## References
 
