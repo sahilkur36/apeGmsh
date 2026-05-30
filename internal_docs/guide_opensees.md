@@ -450,6 +450,17 @@ ops.analyze(steps=10, dt=0.01)  # drive the analysis chain
 `/opensees/` zone **plus** the broker neutral zone (which carries the
 session's loads/masses/constraints for the viewer / `Results`).
 
+> **Two zones vs. neutral-only.** `apeSees(fem).h5(path)` is the only
+> writer that emits **both** zones. The session-side persistence verbs
+> write the **neutral zone only** (no `/opensees/`): `g.save(path=None)`
+> (or `apeGmsh(..., save_to="model.h5")`, which autosaves on
+> context-exit) and the broker's own `fem.to_h5(path)`. Round-trip with
+> `FEMData.from_h5(path)` or rebuild a chain-phase session for
+> composition with `apeGmsh.from_h5(path)` (no gmsh — only
+> `compose`/`save`). A neutral-only file feeds the viewer / `Results`
+> but is **not** a runnable deck; emit Tcl/Py or call `apeSees(fem).h5`
+> for the solver zone.
+
 ### 6.4 Recorders
 
 ```python
