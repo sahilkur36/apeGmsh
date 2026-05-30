@@ -55,6 +55,7 @@ from ._internal.build import (
     is_partitioned,
     runtime_rank_from_partition_record,
     topological_order,
+    validate_node_ndf_element_compat,
 )
 from ._internal.build import _element_transf as _build_element_transf
 from ._internal.tag_resolution import (
@@ -643,6 +644,14 @@ class BuiltModel:
                 elements.append(p)
             else:
                 rest.append(p)
+
+        # Fail loud on the shell-on-solid node-sharing trap: a node
+        # shared by two elements with disjoint per-node ndf (shell 6 vs
+        # solid 3) corrupts OpenSees assembly (FE_Element::setID
+        # truncation) and silently loses load.  Runs once here so every
+        # emit path (flat / split / partitioned) is covered before any
+        # element is emitted.
+        validate_node_ndf_element_compat(self.fem, elements)
 
         # 4. Emit non-element / non-transform primitives in topo order.
         pre_element: list[Primitive] = []
@@ -3951,7 +3960,19 @@ class apeSees:
         resolved = spec._resolve_with_explicit_ndm_ndf(
             self._fem, ndm=self._ndm, ndf=self._ndf,
         )
-        return DomainCapture(resolved, path, self._fem, ops=ops)
+        # Pass the live bridge through so DomainCapture materialises a
+        # sidecar model.h5 and composes its ``/opensees/`` zone into the
+        # run file (ADR 0020 Composed-file pattern).  Without this the
+        # capture file carries only ``/model/`` + ``/stages/`` — and the
+        # broker's neutral ``/model/meta`` has no bridge ``ndf`` (the
+        # broker doesn't know the OpenSees envelope), so
+        # ``OpenSeesModel.from_h5(path, fem_root="/model")`` would read
+        # ``ndf=0`` and ``validate_envelope_covers_broker_ndf`` would
+        # reject any ``g.node_ndf`` model.  Forwarding the bridge lets
+        # ``NativeWriter.write_opensees_from`` propagate the envelope
+        # ndf onto ``/model/meta`` so node_ndf models round-trip through
+        # ``Results.from_native``.
+        return DomainCapture(resolved, path, self._fem, ops=ops, bridge=self)
 
     def fix(
         self,

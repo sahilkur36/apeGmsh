@@ -302,6 +302,44 @@ _ELEM_REGISTRY: dict[str, _ElemSpec] = {
 
 
 # ---------------------------------------------------------------------------
+# Per-node DOF requirement lookup (shell-on-solid node-sharing guard)
+# ---------------------------------------------------------------------------
+
+#: Python ``Element`` subclass name -> :data:`_ELEM_REGISTRY` token, for
+#: the handful of classes whose class name differs from the OpenSees
+#: token they emit (``ops.element(<token>, ...)``).  Every other element
+#: class name equals its token.
+_CLASS_TOKEN_ALIASES: dict[str, str] = {
+    "FourNodeQuad": "quad",
+    "Tri31": "tri31",
+    "SixNodeTri": "tri6n",
+    "Truss": "truss",
+    "CorotTruss": "corotTruss",
+}
+
+
+def element_class_ndf_ok(class_name: str) -> "frozenset[int] | None":
+    """Return the set of per-node ``ndf`` values an ``Element`` subclass
+    accepts, or ``None`` when the class is not in :data:`_ELEM_REGISTRY`.
+
+    Used by the build-time shell-on-solid node-sharing guard
+    (:func:`apeGmsh.opensees._internal.build.validate_node_ndf_element_compat`):
+    a node shared by two elements whose ``ndf_ok`` sets are disjoint
+    cannot be assembled by OpenSees (``FE_Element::setID`` sizes the
+    element's equation map to its own ``numDOF`` and truncates when a
+    node carries more DOFs than the element expects).
+
+    ``None`` is the conservative "unknown — do not constrain" answer:
+    the guard never fires on an element type it cannot classify, so a
+    missing registry entry yields a false negative (silent), never a
+    false positive (spurious raise).
+    """
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    spec = _ELEM_REGISTRY.get(token)
+    return spec.ndf_ok if spec is not None else None
+
+
+# ---------------------------------------------------------------------------
 # Element command renderers
 # ---------------------------------------------------------------------------
 

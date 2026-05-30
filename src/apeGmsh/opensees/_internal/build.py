@@ -89,6 +89,7 @@ __all__ = [
     "compute_vecxz_for_element",
     "emit_element_spec",
     "emit_element_spec_partitioned",
+    "validate_node_ndf_element_compat",
     "emit_initial_stress_addtoparameter",
     "emit_initial_stress_global",
     "resolve_initial_stress_elements",
@@ -163,6 +164,81 @@ def validate_envelope_covers_broker_ndf(
         f"g.node_ndf.set(...); raise ndf in "
         f"apeSees(fem).model(ndf=...) to at least {max_declared}."
     )
+
+
+def validate_node_ndf_element_compat(
+    fem: "FEMData", elements: "Iterable[Element]",
+) -> None:
+    """Fail loud when one mesh node is shared by two elements whose
+    per-node DOF requirements are mutually incompatible.
+
+    Root cause (verified against OpenSees ``FE_Element::setID``,
+    ``SRC/analysis/fe_ele/FE_Element.cpp``): an element sizes its
+    equation-map array ``myID`` to its OWN ``numDOF`` (e.g. a 4-node
+    tetrahedron declares ``numDOF = 12``).  When one of its nodes
+    carries MORE DOFs than the element expects — the canonical case is
+    a shell node (``ndf=6``) shared with a solid element (``ndf=3``),
+    produced by fragmenting a shell surface onto a solid volume so they
+    share interface nodes — the cumulative DOF count overflows
+    ``numDOF``, ``setID`` returns ``-3``, and the element's stiffness is
+    assembled into the WRONG global equations.  The result is a silent
+    equilibrium violation: the structure deflects plausibly but only a
+    fraction of the applied load reaches the supports
+    (``Σ reactions ≠ Σ loads``).  No constraint handler or rotation
+    clamp can repair it — the assembly itself is corrupt.
+
+    The check is conservative: it fires ONLY when two elements with
+    DISJOINT ``ndf_ok`` sets (e.g. shell ``{6}`` vs solid ``{3}``)
+    genuinely share a node — a configuration OpenSees can never
+    assemble.  Element types absent from the capability registry are
+    skipped (treated as unconstrained), so the guard never raises a
+    false positive.  The correct idiom for a real shell-on-solid
+    interface is SEPARATE coincident nodes (shell ``ndf=6`` + solid
+    ``ndf=3``) tied by ``g.constraints.equal_dof`` / ``tie`` on the
+    translational DOFs (plus a shell-edge rotation clamp for the
+    line-hinge), never shared nodes — see ADR 0033.
+    """
+    from .._element_capabilities import element_class_ndf_ok
+
+    # node tag -> (accumulated ndf_ok intersection, first element type seen)
+    acc: dict[int, "frozenset[int]"] = {}
+    owner: dict[int, str] = {}
+    for spec in elements:
+        etype = type(spec).__name__
+        ndf_ok = element_class_ndf_ok(etype)
+        if ndf_ok is None:
+            continue
+        for _eid, node_tags in expand_pg_to_elements(fem, spec.pg):  # type: ignore[attr-defined]
+            for raw in node_tags:
+                t = int(raw)
+                prev = acc.get(t)
+                if prev is None:
+                    acc[t] = ndf_ok
+                    owner[t] = etype
+                    continue
+                inter = prev & ndf_ok
+                if not inter:
+                    raise BridgeError(
+                        f"mesh node {t} is shared by element type "
+                        f"{owner[t]!r} (per-node ndf {sorted(prev)}) and "
+                        f"{etype!r} (per-node ndf {sorted(ndf_ok)}), whose "
+                        f"DOF requirements are incompatible. OpenSees cannot "
+                        f"assemble a node shared between elements with "
+                        f"disjoint ndf — FE_Element::setID truncates the "
+                        f"element's equation map, silently corrupting "
+                        f"assembly (lost load / equilibrium violation). This "
+                        f"is the classic shell-on-solid trap: a shell surface "
+                        f"fragmented onto a solid volume so they share "
+                        f"interface nodes. Fix: give the interface SEPARATE "
+                        f"coincident nodes (do NOT fragment the shell into "
+                        f"the solid) and tie their translational DOFs with "
+                        f"g.constraints.equal_dof (conformal) or "
+                        f"g.constraints.tie (non-matching), then clamp the "
+                        f"shell-edge rotations for the line hinge. See ADR "
+                        f"0033 / the shell-on-solid idiom."
+                    )
+                acc[t] = inter
+    return None
 
 
 def _emit_node_with_broker_ndf(
