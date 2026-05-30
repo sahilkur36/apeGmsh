@@ -23,6 +23,7 @@ import numpy as np
 
 
 from apeGmsh._types import DimTag
+from ..scene_ir import BBox
 
 
 class EntityRegistry:
@@ -85,7 +86,7 @@ class EntityRegistry:
         self._cell_to_dt: dict[int, dict[int, DimTag]] = {}   # dim -> {cell_idx: DimTag}
         self._dt_to_cells: dict[DimTag, list[int]] = {}       # DimTag -> [cell_indices]
         self.centroids: dict[DimTag, np.ndarray] = {}          # DimTag -> (3,) xyz
-        self._bboxes: dict[DimTag, np.ndarray] = {}            # DimTag -> (8, 3) corners
+        self._bboxes: dict[DimTag, BBox] = {}                  # DimTag -> canonical BBox
         self._add_mesh_kwargs: dict[int, dict] = {}            # dim -> kwargs for add_mesh
         self.origin_shift: np.ndarray = np.zeros(3)            # subtracted from world coords
         # Node-cloud rebuild support (populated by build_mesh_scene via
@@ -129,7 +130,8 @@ class EntityRegistry:
         centroids : dict, optional
             Mapping from ``DimTag`` to 3D centroid coordinates.
         bboxes : dict, optional
-            Mapping from ``DimTag`` to ``ndarray (8, 3)`` AABB corners.
+            Mapping from ``DimTag`` to a canonical
+            :class:`~apeGmsh.viewers.scene_ir.BBox` (ADR 0045 INV-2).
         add_mesh_kwargs : dict, optional
             The kwargs used in ``plotter.add_mesh`` (for actor recreation).
         """
@@ -152,10 +154,13 @@ class EntityRegistry:
 
         if bboxes:
             self._bboxes.update(bboxes)
-        elif centroids:
-            for dt, c in centroids.items():
-                if dt not in self._bboxes:
-                    self._bboxes[dt] = np.tile(c, (8, 1))
+        # ADR 0045 S1: the old centroid-tile fallback
+        # (``np.tile(centroid, (8, 1))``) is DELETED — a degenerate
+        # zero-size box was a real source of the volume box-select miss.
+        # An entity with no real bbox now resolves to ``bbox() is None``;
+        # box-select already falls back to representative mesh points and
+        # then the centroid (see PickEngine._do_box), so the effective
+        # result is unchanged for those entities, without a fake box.
 
     def register_wire(self, dim: int, mesh: Any, actor: Any) -> None:
         """Register the wireframe (corner-edge) layer for *dim*.
@@ -297,12 +302,13 @@ class EntityRegistry:
         """Return the 3D centroid of entity *dt*, or ``None``."""
         return self.centroids.get(dt)
 
-    def bbox(self, dt: DimTag) -> np.ndarray | None:
-        """Return the 8 corners of the 3D AABB for entity *dt*.
+    def bbox(self, dt: DimTag) -> BBox | None:
+        """Return the canonical :class:`BBox` for entity *dt*, or ``None``.
 
-        Returns ``ndarray (8, 3)`` or ``None`` if unknown.
-        Corners are ordered: all combinations of (xmin/xmax, ymin/ymax, zmin/zmax).
-        """
+        ADR 0045 INV-2: one bounding-box value type. Consumers that need
+        the 8 corners derive them via ``bbox(dt).corners8``. ``None`` means
+        the entity carries no real box (no degenerate centroid-tile is
+        synthesised any more)."""
         return self._bboxes.get(dt)
 
     def entity_points(self, dt: DimTag, max_points: int = 64) -> np.ndarray | None:

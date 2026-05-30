@@ -396,9 +396,10 @@ class PickEngine:
                     continue
             bbox = self._registry.bbox(dt)
             if bbox is not None:
+                corners = bbox.corners8   # canonical BBox → (8, 3) (ADR 0045)
                 entities.append(dt)
-                all_corners.append(bbox)
-                corner_counts.append(len(bbox))
+                all_corners.append(corners)
+                corner_counts.append(len(corners))
             else:
                 c = self._registry.centroid(dt)
                 if c is not None:

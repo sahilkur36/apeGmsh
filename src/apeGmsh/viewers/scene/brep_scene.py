@@ -157,21 +157,15 @@ def _generate_temp_mesh(diag: float) -> None:
 # ======================================================================
 
 def _compute_entity_bboxes(dims: list[int]) -> dict:
-    """Compute AABB corners for all entities from Gmsh bounding boxes."""
+    """Canonical :class:`BBox` per entity, from Gmsh bounding boxes
+    (ADR 0045 S1 — one bbox value type, INV-2)."""
+    from .bbox_source import gmsh_bbox
+
     bboxes = {}
     for dim in dims:
         for _, tag in gmsh.model.getEntities(dim=dim):
             try:
-                bb = gmsh.model.getBoundingBox(dim, tag)
-                xmin, ymin, zmin = bb[0], bb[1], bb[2]
-                xmax, ymax, zmax = bb[3], bb[4], bb[5]
-                corners = np.array([
-                    [xmin, ymin, zmin], [xmax, ymin, zmin],
-                    [xmin, ymax, zmin], [xmax, ymax, zmin],
-                    [xmin, ymin, zmax], [xmax, ymin, zmax],
-                    [xmin, ymax, zmax], [xmax, ymax, zmax],
-                ])
-                bboxes[(dim, tag)] = corners
+                bboxes[(dim, tag)] = gmsh_bbox(dim, tag)
             except Exception:
                 pass
     return bboxes
@@ -261,9 +255,16 @@ def build_brep_scene(
     )
 
     # ── precompute bounding boxes from Gmsh (shifted) ─────────────
+    # Shift into the same origin-translated frame as the rendered
+    # geometry. NOTE (ADR 0045 INV-2): the bbox *type* is now canonical
+    # (BBox); the world-frame/origin-shift-at-projection unification is a
+    # coordinated follow-up (it spans registry.origin_shift + the pick
+    # projection), so the box is stored pre-shifted here as before.
+    from ..scene_ir import BBox
+
     all_bboxes = _compute_entity_bboxes(dims)
-    for dt, corners in all_bboxes.items():
-        all_bboxes[dt] = corners - origin
+    for dt, bb in all_bboxes.items():
+        all_bboxes[dt] = BBox(bb.min - origin, bb.max - origin)
 
     n_entities = 0
 
