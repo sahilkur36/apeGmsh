@@ -693,7 +693,7 @@ expected to change.
   undeclared nodes naming both fixes
   (`g.node_ndf.set(target, ndf=K)` and
   `g.node_ndf.set_default(ndf=K)`). See
-  [ADR 0032](../src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md)
+  [ADR 0032](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md)
   for the doctrine.
 
   Foreign node declarations under cross-partition replication (§ 7)
@@ -708,11 +708,11 @@ expected to change.
   rank boundaries.
 
   Cross-rank consistency is **hash-guaranteed** per
-  [ADR 0021](../src/apeGmsh/opensees/architecture/decisions/0021-lineage-chain-replaces-snapshot-id.md):
+  [ADR 0021](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0021-lineage-chain-replaces-snapshot-id.md):
   the resolved `_ndf` array folds into `fem_hash`, so every rank
   deserialises identical declarations and agrees on per-node `ndf`
   for shared nodes without explicit cross-rank communication. See
-  [ADR 0033](../src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md)
+  [ADR 0033](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md)
   for the full emit-wiring contract (override-only semantics +
   validator at three materialisation sites + phantom carveout).
 
