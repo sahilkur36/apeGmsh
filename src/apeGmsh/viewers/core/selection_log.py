@@ -142,12 +142,22 @@ def _apply(st: GroupSnapshot, op: SelectionOp) -> None:
         st.pending.discard(op.name)
     elif k is OpKind.GROUP_RENAME:
         old, new = op.name, op.name2
+        # Reject a rename that would clobber a DISTINCT live group — the
+        # caller (UI) should prevent collisions; the reducer never
+        # silently merges or loses members.
+        if new != old and new in st.staged:
+            return
         if old in st.staged:
             st.staged[new] = st.staged.pop(old)
         if st.active == old:
             st.active = new
+        # Update creation order in place (preserve position), without
+        # ever duplicating a name.
         if old in st.order:
-            st.order[st.order.index(old)] = new
+            if new in st.order:
+                st.order.remove(old)
+            else:
+                st.order[st.order.index(old)] = new
         elif new not in st.order:
             st.order.append(new)
         st.pending.add(old)

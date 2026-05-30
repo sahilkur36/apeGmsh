@@ -206,12 +206,20 @@ class SelectionState:
             self.pick(t)
 
     def clear(self) -> None:
-        """Clear picks without affecting the active group's stored members."""
-        if self._picks:
+        """Clear the working selection — a replayable gesture (ADR 0045
+        S3c-2; no direct cache mutation).
+
+        With an active group, deactivating it (``GROUP_ACTIVATE`` None)
+        stages its current members and empties the working set, so the
+        group's stored members survive. With no active group, just empty
+        the loose picks."""
+        if self._active_group is not None:
+            self._log.record(SelectionOp(OpKind.GROUP_ACTIVATE, name=None))
+            self._sync()
+            self._fire()
+        elif self._picks:
             self._log.record(SelectionOp(OpKind.CLEAR))
             self._sync()
-            # Deactivate group so commit doesn't overwrite with empty
-            self._active_group = None
             self._fire()
 
     def undo(self) -> bool:

@@ -85,6 +85,52 @@ def test_stage_group_then_activate_loads_members() -> None:
     assert sel.picks == [A, B]
 
 
+def test_rename_onto_existing_group_is_rejected_not_clobbered() -> None:
+    # Adversarial-review finding: renaming A->B when B exists must NOT
+    # silently overwrite B's members or duplicate the order entry.
+    sel = SelectionState()
+    sel.set_active_group("A")
+    sel.pick(A)
+    sel.set_active_group("B")
+    sel.pick(B)
+    sel.set_active_group(None)
+    sel.rename_group("A", "B")             # B already exists — reject
+    assert {t.dimtag for t in sel.staged_groups["B"]} == {B}   # B intact
+    assert "A" in sel.staged_groups        # A unchanged
+    assert sel.group_order.count("B") == 1  # no duplicate in order
+
+
+def test_rename_preserves_order_position() -> None:
+    sel = SelectionState()
+    sel.set_active_group("A")
+    sel.pick(A)
+    sel.set_active_group("B")
+    sel.pick(B)
+    sel.set_active_group(None)
+    assert sel.group_order == ["A", "B"]
+    sel.rename_group("A", "Z")
+    assert sel.group_order == ["Z", "B"]   # in place, not moved to end
+
+
+def test_clear_with_active_group_preserves_members_and_no_drift() -> None:
+    # Adversarial-review finding: clear() must not directly mutate the
+    # active-group cache (drift) nor wipe the active group's members.
+    sel = SelectionState()
+    sel.set_active_group("G")
+    sel.pick(A)
+    sel.pick(B)
+    sel.clear()
+    assert sel.picks == []
+    assert sel.active_group is None
+    # The group's members survive the clear (deactivate stages them).
+    assert {t.dimtag for t in sel.staged_groups["G"]} == {A, B}
+    # No cache drift: the cache agrees with a fresh replay.
+    assert sel.active_group == sel._log.replay_state().active
+    # Clear is undoable — restores the active group + working set.
+    assert sel.undo()
+    assert sel.active_group == "G" and sel.picks == [A, B]
+
+
 def test_reactivating_deleted_name_starts_empty_and_revives() -> None:
     sel = SelectionState()
     sel.set_active_group("G")
