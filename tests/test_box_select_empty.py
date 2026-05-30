@@ -6,6 +6,7 @@ with an empty list. Previously the callback was gated behind
 import numpy as np
 
 from apeGmsh.viewers.core.pick_engine import PickEngine
+from apeGmsh.viewers.scene_ir import BBox
 
 
 class _StubRegistry:
@@ -16,14 +17,9 @@ class _StubRegistry:
         return [(3, 1)]
 
     def bbox(self, dt):
-        # 8 corners of an AABB way off-screen in world coords
-        return np.array(
-            [[1000, 1000, 1000], [1001, 1000, 1000],
-             [1000, 1001, 1000], [1001, 1001, 1000],
-             [1000, 1000, 1001], [1001, 1000, 1001],
-             [1000, 1001, 1001], [1001, 1001, 1001]],
-            dtype=float,
-        )
+        # Canonical BBox of an AABB way off-screen in world coords
+        # (ADR 0045 S1: registry.bbox returns a BBox, not (8, 3) corners).
+        return BBox([1000.0, 1000.0, 1000.0], [1001.0, 1001.0, 1001.0])
 
     def centroid(self, dt):
         return np.array([1000.5, 1000.5, 1000.5])
