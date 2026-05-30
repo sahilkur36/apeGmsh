@@ -22,10 +22,23 @@ import gmsh
 import numpy as np
 
 from .selection_log import OpKind, SelectionOp, SelectionLog
+from ..scene_ir import SelectionTarget
 
 if TYPE_CHECKING:
     from apeGmsh._types import DimTag
     from .entity_registry import EntityRegistry
+
+
+def _as_target(x: "DimTag | SelectionTarget") -> SelectionTarget:
+    """Normalise a caller token to a ``SelectionTarget``.
+
+    Accepts an already-built target or a legacy BREP ``(dim, tag)``
+    DimTag (wrapped as ``MODEL_BREP``). The single front door that lets
+    ``SelectionState`` hold targets while existing callers still pass
+    DimTags (ADR 0045 keystone)."""
+    if isinstance(x, SelectionTarget):
+        return x
+    return SelectionTarget.from_dimtag(x)
 
 _log = logging.getLogger("apeGmsh.viewer.selection")
 
@@ -62,15 +75,26 @@ def _delete_group_by_name(name: str) -> None:
             )
 
 
-def _write_group(name: str, members: list["DimTag"]) -> None:
+def _load_targets(name: str) -> list[SelectionTarget]:
+    """Load existing physical group members as ``MODEL_BREP`` targets."""
+    return [_as_target(dt) for dt in _load_group_members(name)]
+
+
+def _write_group(
+    name: str, members: list["SelectionTarget | DimTag"],
+) -> None:
     """Write a physical group to Gmsh (replaces existing with same name).
 
     A physical-group name maps to a single dimension.  Members
     spanning more than one dimension are rejected — multi-dimensional
     physical groups are not supported.
+
+    Accepts ``SelectionTarget`` (the ``SelectionState`` internal form)
+    or a bare ``(dim, tag)`` DimTag (the direct-call/test contract).
     """
     by_dim: dict[int, list[int]] = {}
-    for dim, tag in members:
+    for m in members:
+        dim, tag = _as_target(m).dimtag
         by_dim.setdefault(dim, []).append(tag)
     if len(by_dim) > 1:
         raise ValueError(
@@ -104,15 +128,19 @@ class SelectionState:
     )
 
     def __init__(self) -> None:
-        self._picks: list["DimTag"] = []
+        # ADR 0045 keystone: ``_picks`` holds ``SelectionTarget`` (the
+        # unified, substrate-tagged identity), not bare DimTags. Callers
+        # may still pass DimTags — they are normalised to ``MODEL_BREP``
+        # targets at the front door (``_as_target``).
+        self._picks: list[SelectionTarget] = []
         # ADR 0045 S3a: the serialized op-log replaces the flat
         # per-entity ``_history`` LIFO. ``_picks`` is always == the
         # log's replay of its active op prefix.
         self._log: SelectionLog = SelectionLog()
         self._active_group: str | None = None
-        self._staged_groups: dict[str, list["DimTag"]] = {}
+        self._staged_groups: dict[str, list[SelectionTarget]] = {}
         self._group_order: list[str] = []  # creation order
-        self._tab_candidates: list["DimTag"] = []
+        self._tab_candidates: list[SelectionTarget] = []
         self._tab_index: int = 0
         self.on_changed: list[Callable[[], None]] = []
 
@@ -122,6 +150,16 @@ class SelectionState:
 
     @property
     def picks(self) -> list["DimTag"]:
+        """BREP-compat view: the picked targets as gmsh DimTags.
+
+        Shim for one release (ADR 0045 keystone). New, substrate-aware
+        consumers should read :attr:`targets`; this raises if a non-BREP
+        target is present (only BREP targets have a DimTag)."""
+        return [t.dimtag for t in self._picks]
+
+    @property
+    def targets(self) -> list[SelectionTarget]:
+        """The picked entities as unified ``SelectionTarget`` values."""
         return list(self._picks)
 
     def _sync(self) -> None:
@@ -129,23 +167,26 @@ class SelectionState:
         truth). Keeps the legacy ``picks`` reads O(1) without drift."""
         self._picks = self._log.replay()
 
-    def pick(self, dt: "DimTag") -> None:
-        if dt not in self._picks:
-            self._log.record(SelectionOp(OpKind.ADD, (dt,)))
+    def pick(self, dt: "DimTag | SelectionTarget") -> None:
+        t = _as_target(dt)
+        if t not in self._picks:
+            self._log.record(SelectionOp(OpKind.ADD, (t,)))
             self._sync()
             self._fire()
 
-    def unpick(self, dt: "DimTag") -> None:
-        if dt in self._picks:
-            self._log.record(SelectionOp(OpKind.REMOVE, (dt,)))
+    def unpick(self, dt: "DimTag | SelectionTarget") -> None:
+        t = _as_target(dt)
+        if t in self._picks:
+            self._log.record(SelectionOp(OpKind.REMOVE, (t,)))
             self._sync()
             self._fire()
 
-    def toggle(self, dt: "DimTag") -> None:
-        if dt in self._picks:
-            self.unpick(dt)
+    def toggle(self, dt: "DimTag | SelectionTarget") -> None:
+        t = _as_target(dt)
+        if t in self._picks:
+            self.unpick(t)
         else:
-            self.pick(dt)
+            self.pick(t)
 
     def clear(self) -> None:
         """Clear picks without affecting the active group's stored members."""
@@ -177,48 +218,51 @@ class SelectionState:
         return True
 
     def select_batch(
-        self, dts: list["DimTag"], *, replace: bool = False,
+        self, dts: list["DimTag | SelectionTarget"], *, replace: bool = False,
     ) -> None:
+        targets = [_as_target(d) for d in dts]
         # Compute the prospective result and only record a gesture when
         # it actually changes the working set — otherwise a no-op batch
         # (e.g. re-selecting already-picked entities by double-clicking a
         # tree/part item) would leave a dead undo step behind.
         if replace:
-            new: list["DimTag"] = []
-            for dt in dts:
-                if dt not in new:
-                    new.append(dt)
+            new: list[SelectionTarget] = []
+            for t in targets:
+                if t not in new:
+                    new.append(t)
         else:
             new = list(self._picks)
-            for dt in dts:
-                if dt not in new:
-                    new.append(dt)
+            for t in targets:
+                if t not in new:
+                    new.append(t)
         if new == self._picks:
             return
         kind = OpKind.SET if replace else OpKind.ADD
-        self._log.record(SelectionOp(kind, tuple(dts)))
+        self._log.record(SelectionOp(kind, tuple(targets)))
         self._sync()
         self._fire()
 
-    def box_add(self, dts: list["DimTag"]) -> int:
+    def box_add(self, dts: list["DimTag | SelectionTarget"]) -> int:
         """Add entities from box-select. Returns count added.
 
         Counts the *distinct* new entities (== the state delta), so a
         duplicate-bearing input list does not over-count."""
+        targets = [_as_target(d) for d in dts]
         old = set(self._picks)
-        added = len(set(dts) - old)
+        added = len(set(targets) - old)
         if added:
-            self._log.record(SelectionOp(OpKind.BOX_ADD, tuple(dts)))
+            self._log.record(SelectionOp(OpKind.BOX_ADD, tuple(targets)))
             self._sync()
             self._fire()
         return added
 
-    def box_remove(self, dts: list["DimTag"]) -> int:
+    def box_remove(self, dts: list["DimTag | SelectionTarget"]) -> int:
         """Remove entities from Ctrl+box-select. Returns count removed."""
+        targets = [_as_target(d) for d in dts]
         old = set(self._picks)
-        removed = len(set(dts) & old)
+        removed = len(set(targets) & old)
         if removed:
-            self._log.record(SelectionOp(OpKind.BOX_REMOVE, tuple(dts)))
+            self._log.record(SelectionOp(OpKind.BOX_REMOVE, tuple(targets)))
             self._sync()
             self._fire()
         return removed
@@ -227,8 +271,10 @@ class SelectionState:
     # Tab cycling
     # ------------------------------------------------------------------
 
-    def set_tab_candidates(self, candidates: list["DimTag"]) -> None:
-        self._tab_candidates = list(candidates)
+    def set_tab_candidates(
+        self, candidates: list["DimTag | SelectionTarget"],
+    ) -> None:
+        self._tab_candidates = [_as_target(c) for c in candidates]
         self._tab_index = 0
 
     def cycle_tab(self) -> "DimTag | None":
@@ -250,7 +296,7 @@ class SelectionState:
             self._log.record(SelectionOp(OpKind.SET, tuple(new)))
             self._sync()
             self._fire()
-        return nxt
+        return nxt.dimtag
 
     # ------------------------------------------------------------------
     # Physical group management
@@ -261,7 +307,7 @@ class SelectionState:
         return self._active_group
 
     @property
-    def staged_groups(self) -> dict[str, list["DimTag"]]:
+    def staged_groups(self) -> dict[str, list[SelectionTarget]]:
         return dict(self._staged_groups)
 
     @property
@@ -281,7 +327,7 @@ class SelectionState:
             if name in self._staged_groups:
                 self._picks = list(self._staged_groups[name])
             else:
-                self._picks = _load_group_members(name)
+                self._picks = _load_targets(name)
             self._log.reset(self._picks)
             self._fire()
             return
@@ -303,7 +349,7 @@ class SelectionState:
         elif name in self._staged_groups:
             self._picks = list(self._staged_groups[name])
         else:
-            self._picks = _load_group_members(name)
+            self._picks = _load_targets(name)
         # Group load is the new undo floor — undo does not cross a switch.
         self._log.reset(self._picks)
         self._fire()
@@ -333,7 +379,7 @@ class SelectionState:
         if old == new:
             return
 
-        members: list["DimTag"] = []
+        members: list[SelectionTarget] = []
         if old in self._staged_groups:
             members = self._staged_groups.pop(old)
             self._staged_groups[new] = members
@@ -398,8 +444,8 @@ class SelectionState:
         if not self._picks:
             return None
         pts = []
-        for dt in self._picks:
-            c = registry.centroid(dt)
+        for t in self._picks:
+            c = registry.centroid(t.dimtag)
             if c is not None:
                 pts.append(c)
         if not pts:

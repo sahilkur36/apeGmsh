@@ -258,12 +258,12 @@ class ModelViewer:
 
         def _on_new_group():
             from qtpy import QtWidgets
-            current_picks = list(sel._picks)
+            current_picks = list(sel.targets)
             # A Gmsh physical group is dimension-scoped. A mixed-dim
             # selection would be written as one PG per dimension under
             # the same name (looks duplicated, wrong for FEM export),
             # so reject it up front rather than silently splitting.
-            dims = sorted({dt[0] for dt in current_picks})
+            dims = sorted({t.dim for t in current_picks})
             if len(dims) > 1:
                 QtWidgets.QMessageBox.warning(
                     win.window,
@@ -298,7 +298,7 @@ class ModelViewer:
             # ``_label:`` PG per dimension (PGs are dimension-scoped),
             # which the outline merges into one row.
             from qtpy import QtWidgets
-            picks = list(sel._picks)
+            picks = list(sel.picks)
             if not picks:
                 QtWidgets.QMessageBox.information(
                     win.window, "New Label",
@@ -849,7 +849,7 @@ class ModelViewer:
                 return
             color_mgr.set_pick_color(rgb)
             color_mgr.recolor_all(
-                picks=set(sel._picks),
+                picks=set(sel.picks),
                 hidden=vis_mgr.hidden,
                 hover=pick_engine.hover_entity,
             )
@@ -1390,10 +1390,10 @@ class ModelViewer:
             old = _prev_hover[0]
             _prev_hover[0] = dt
             if old is not None and old != dt:
-                is_picked = old in sel._picks
+                is_picked = old in sel.picks
                 color_mgr.set_entity_state(old, picked=is_picked)
             if dt is not None:
-                is_picked = dt in sel._picks
+                is_picked = dt in sel.picks
                 if not is_picked:
                     color_mgr.set_entity_state(dt, hovered=True)
             plotter.render()
@@ -1403,7 +1403,7 @@ class ModelViewer:
         # Selection changed -> batch recolor + refresh UI
         def _on_sel_changed():
             color_mgr.recolor_all(
-                picks=set(sel._picks),
+                picks=set(sel.picks),
                 hidden=vis_mgr.hidden,
                 hover=pick_engine.hover_entity,
             )
