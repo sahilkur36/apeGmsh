@@ -21,6 +21,7 @@ import gmsh
 import numpy as np
 
 from apeGmsh._types import DimTag
+from .scene_ir import SelectionTarget, Substrate
 
 if TYPE_CHECKING:
     from apeGmsh._core import apeGmsh as _SessionBase
@@ -191,8 +192,12 @@ class MeshViewer:
         }
         self._moment_template: Any = None
         self._pick_mode: list[str] = ["brep"]   # "brep", "element", "node"
-        self._picked_elems: list[int] = []
-        self._picked_nodes: list[int] = []
+        # ADR 0045 S3b: FE element/node picks live in a dedicated
+        # SelectionState as MESH_TOPO targets (nodes dim=0, elements
+        # dim=element-topo-dim), giving them undo/redo on the unified
+        # target contract. Kept separate from ``_sel`` (BREP DimTags) so
+        # the BREP ``.picks`` shim never sees a non-BREP target.
+        self._fe_sel: "SelectionState | None" = None
         self._prev_hover: list[DimTag | None] = [None]
         self._hover_label: Any = None
 
@@ -234,6 +239,10 @@ class MeshViewer:
         sel = SelectionState()
         self._selection_state = sel
         self._sel = sel
+        # FE-topology pick set (elements + nodes), ADR 0045 S3b.
+        fe_sel = SelectionState()
+        self._fe_sel = fe_sel
+        fe_sel.on_changed.append(self._refresh_fe_status)
 
         # ── Window (creates QApplication) ───────────────────────────
         # ``window_key`` opts into layout persistence under
@@ -666,9 +675,11 @@ class MeshViewer:
         plotter.add_key_event("h", self._act_hide)
         plotter.add_key_event("i", self._act_isolate)
         plotter.add_key_event("r", self._act_reveal_all)
-        plotter.add_key_event("u", lambda: sel.undo())
+        # Undo / clear route to the active pick set: FE-topo in
+        # element/node mode, BREP entities in brep mode (ADR 0045 S3b).
+        plotter.add_key_event("u", self._handle_undo)
 
-        win.add_shortcut("Escape", lambda: sel.clear())
+        win.add_shortcut("Escape", self._handle_clear)
         win.add_shortcut("Q", lambda: win.window.close())
 
         plotter.add_key_event("e", lambda: self._set_pick_mode("element"))
@@ -1407,6 +1418,45 @@ class MeshViewer:
     # Pick / hover / selection callbacks
     # ==================================================================
 
+    def _active_pick_sel(self) -> "SelectionState | None":
+        """The SelectionState the current pick mode acts on: the FE-topo
+        set in element/node mode, the BREP entity set in brep mode."""
+        if self._pick_mode[0] in ("element", "node"):
+            return self._fe_sel
+        return self._sel
+
+    def _fe_pick_counts(self) -> tuple[int, int]:
+        """``(n_elements, n_nodes)`` currently picked in the FE-topo set.
+
+        Elements are MESH_TOPO targets with dim >= 1; nodes have dim 0."""
+        if self._fe_sel is None:
+            return (0, 0)
+        n_node = sum(1 for t in self._fe_sel.targets if t.dim == 0)
+        n_elem = len(self._fe_sel.targets) - n_node
+        return (n_elem, n_node)
+
+    def _refresh_fe_status(self) -> None:
+        """Keep the status bar in sync after an FE-set change (e.g. undo,
+        which has no other UI feedback for element/node picks)."""
+        win = self._win
+        if win is None or self._pick_mode[0] not in ("element", "node"):
+            return
+        n_elem, n_node = self._fe_pick_counts()
+        if self._pick_mode[0] == "element":
+            win.set_status(f"{n_elem} elements picked")
+        else:
+            win.set_status(f"{n_node} nodes picked")
+
+    def _handle_undo(self) -> None:
+        sel = self._active_pick_sel()
+        if sel is not None:
+            sel.undo()
+
+    def _handle_clear(self) -> None:
+        sel = self._active_pick_sel()
+        if sel is not None:
+            sel.clear()
+
     def _handle_pick(self, dt: DimTag, ctrl: bool) -> None:
         sel = self._sel
         scene = self._scene
@@ -1432,11 +1482,11 @@ class MeshViewer:
             elem_tag: int | None = None
             if cell_map is not None and 0 <= cell_id < len(cell_map):
                 elem_tag = int(cell_map[cell_id])
-            if elem_tag is not None:
-                if elem_tag in self._picked_elems:
-                    self._picked_elems.remove(elem_tag)
-                else:
-                    self._picked_elems.append(elem_tag)
+            if elem_tag is not None and self._fe_sel is not None:
+                # MESH_TOPO target: dim = element topological dim (1/2/3).
+                self._fe_sel.toggle(
+                    SelectionTarget(Substrate.MESH_TOPO, dim, elem_tag)
+                )
                 edata = scene.elem_data.get(elem_tag, {})
                 if info_tab is not None:
                     info_tab.show_element(elem_tag, edata)
@@ -1444,10 +1494,8 @@ class MeshViewer:
                         f"Elem {elem_tag} ({edata.get('type_name', '?')})"
                     )
                 if win is not None:
-                    win.set_status(
-                        f"Element {elem_tag} | "
-                        f"{len(self._picked_elems)} picked"
-                    )
+                    n_elem, _ = self._fe_pick_counts()
+                    win.set_status(f"Element {elem_tag} | {n_elem} picked")
         elif mode == "node":
             if scene.node_tree is not None:
                 picker = pick_engine._click_picker
@@ -1455,10 +1503,11 @@ class MeshViewer:
                 if pos:
                     _, idx = scene.node_tree.query(pos)
                     node_tag = int(scene.node_tags[idx])
-                    if node_tag in self._picked_nodes:
-                        self._picked_nodes.remove(node_tag)
-                    else:
-                        self._picked_nodes.append(node_tag)
+                    if self._fe_sel is not None:
+                        # MESH_TOPO node target: dim = 0.
+                        self._fe_sel.toggle(
+                            SelectionTarget(Substrate.MESH_TOPO, 0, node_tag)
+                        )
                     coords = scene.node_coords[idx]
                     if info_tab is not None:
                         info_tab.show_node(node_tag, coords)
@@ -1467,10 +1516,8 @@ class MeshViewer:
                             f"({coords[0]:.2f}, {coords[1]:.2f}, {coords[2]:.2f})"
                         )
                     if win is not None:
-                        win.set_status(
-                            f"Node {node_tag} | "
-                            f"{len(self._picked_nodes)} picked"
-                        )
+                        _, n_node = self._fe_pick_counts()
+                        win.set_status(f"Node {node_tag} | {n_node} picked")
 
     def _handle_hover(self, dt: DimTag | None) -> None:
         sel = self._sel
