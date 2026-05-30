@@ -1481,10 +1481,10 @@ class MeshViewer:
         old = self._prev_hover[0]
         self._prev_hover[0] = dt
         if old is not None and old != dt:
-            is_picked = old in sel._picks
+            is_picked = old in sel.picks
             color_mgr.set_entity_state(old, picked=is_picked)
         if dt is not None:
-            is_picked = dt in sel._picks
+            is_picked = dt in sel.picks
             if not is_picked:
                 color_mgr.set_entity_state(dt, hovered=True)
         plotter.render()
@@ -1553,7 +1553,7 @@ class MeshViewer:
                 or vis_mgr is None or plotter is None):
             return
         for entity_dt in registry.all_entities():
-            is_picked = entity_dt in sel._picks
+            is_picked = entity_dt in sel.picks
             is_hidden = vis_mgr.is_hidden(entity_dt)
             color_mgr.set_entity_state(
                 entity_dt, picked=is_picked, hidden=is_hidden,

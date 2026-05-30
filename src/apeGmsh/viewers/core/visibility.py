@@ -158,7 +158,7 @@ class VisibilityManager:
         """Reset all visible entity colors to idle, re-apply pick highlights."""
         self._color_mgr.reset_all_idle()
         # Re-apply pick state for any remaining picks
-        for dt in self._selection._picks:
+        for dt in self._selection.picks:
             self._color_mgr.set_entity_state(dt, picked=True)
 
     def _expanded_hidden(self) -> set["DimTag"]:

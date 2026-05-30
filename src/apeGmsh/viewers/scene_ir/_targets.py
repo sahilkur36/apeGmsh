@@ -88,5 +88,33 @@ class SelectionTarget:
         if self.sub is not None:
             object.__setattr__(self, "sub", int(self.sub))
 
+    # ------------------------------------------------------------------
+    # DimTag bridge (ADR 0045 keystone — the ``SelectionState`` identity
+    # migration). Lets a BREP ``(dim, occ_tag)`` round-trip through the
+    # unified target type so ``SelectionState`` can hold targets while the
+    # gmsh group-write path still speaks ``(dim, tag)``. A shim for one
+    # release: new consumers read the structured fields directly.
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_dimtag(cls, dimtag: tuple) -> "SelectionTarget":
+        """Wrap a gmsh ``(dim, occ_tag)`` as a ``MODEL_BREP`` target."""
+        dim, tag = dimtag
+        return cls(Substrate.MODEL_BREP, int(dim), int(tag))
+
+    @property
+    def dimtag(self) -> tuple:
+        """The ``(dim, occ_tag)`` of a BREP target.
+
+        Only defined for ``MODEL_BREP`` — mesh/results targets have no
+        gmsh DimTag, so asking for one is a programming error (fail-loud,
+        not a silent wrong answer)."""
+        if self.substrate is not Substrate.MODEL_BREP:
+            raise ValueError(
+                "SelectionTarget.dimtag is defined only for MODEL_BREP "
+                f"targets; got substrate={self.substrate.value!r}."
+            )
+        return (self.dim, self.key)
+
 
 __all__ = ["Substrate", "SelectionTarget"]
