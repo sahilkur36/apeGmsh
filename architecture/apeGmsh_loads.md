@@ -48,7 +48,7 @@ The two-stage model keeps both at their own layer:
 
 ```mermaid
 flowchart LR
-    UI["g.loads.surface('slab', magnitude=-3e3)"] --> DEF["LoadDef
+    UI["g.loads.surface.pressure('slab', -3e3)"] --> DEF["LoadDef
 (pre-mesh, intent)"]
     DEF --> STORE["LoadsComposite.load_defs[]
 (list, ordered)"]
@@ -83,7 +83,7 @@ name (for grouping), and — for distributed loads — a `reduction` and
 | `PointLoadDef`           | node(s)                    | `force_xyz`, `moment_xyz`                                       |
 | `PointClosestLoadDef`    | nearest mesh node(s) to xyz | `xyz_request`, `within`, `tol`, `snap_distance` (writeback)   |
 | `LineLoadDef`            | curve / 1-D entity         | `magnitude`+`direction`/`q_xyz`; `normal`+`away_from`           |
-| `SurfaceLoadDef`         | face / 2-D entity          | `magnitude`, `normal: bool`, `direction`                        |
+| `SurfaceLoadDef`         | face / 2-D entity          | `magnitude`, `mode: "pressure"\|"traction"\|"shear"`, `direction` |
 | `GravityLoadDef`         | volume / 3-D entity        | `g=(gx,gy,gz)`, `density` (or ``None`` to defer to the solver)  |
 | `BodyLoadDef`            | volume / 3-D entity        | `force_per_volume=(bx,by,bz)`                                   |
 | `FaceLoadDef`            | single face, centroid load | `force_xyz`, `moment_xyz` (least-norm to nodes)                 |
@@ -130,26 +130,44 @@ method either appends a `LoadDef` or consumes one at resolve-time.
 Each mirrors the Def subclass it builds:
 
 ```python
-g.loads.point         (target, *, pg=None, label=None, tag=None,
-                       force_xyz=None, moment_xyz=None, name=None)
-g.loads.point_closest (xyz, *, within=None, pg=None, label=None, tag=None,
-                       force_xyz=None, moment_xyz=None,
-                       tol=None, name=None)
+g.loads.point.force   (target, force=None, *, pg=None, label=None, tag=None,
+                       name=None)
+g.loads.point.moment  (target, moment=None, *, pg=None, label=None, tag=None,
+                       name=None)
+g.loads.point.force_closest  (xyz, force=None, *, within=None,
+                       pg=None, label=None, tag=None, tol=None, name=None)
+g.loads.point.moment_closest (xyz, moment=None, *, within=None,
+                       pg=None, label=None, tag=None, tol=None, name=None)
 g.loads.line          (target, *, magnitude=None, direction=(0,0,-1),
                        q_xyz=None, reduction="tributary",
                        target_form="nodal", name=None)
-g.loads.surface       (target, *, magnitude=0., normal=True,
-                       direction=(0,0,-1), reduction="tributary",
+g.loads.surface.pressure  (target, magnitude=0., *, reduction="tributary",
                        target_form="nodal", name=None)
+g.loads.surface.traction  (target, vector=(0,0,0), *, reduction="tributary",
+                       target_form="nodal", name=None)
+g.loads.surface.shear     (target, vector=(1,0,0), *, reduction="tributary",
+                       name=None)   # strict in-plane; nodal-only
+g.loads.surface.force_resultant_center_mass
+                      (target, *, force=None, moment=None, name=None)
 g.loads.gravity       (target, *, g=(0,0,-9.81), density=None,
                        reduction="tributary", target_form="nodal", name=None)
-g.loads.body          (target, *, force_per_volume=(0,0,0),
+g.loads.volume        (target, *, force_per_volume=(0,0,0),
                        reduction="tributary", target_form="nodal", name=None)
-g.loads.face_load     (target, *, force_xyz=None, moment_xyz=None, name=None)
-g.loads.face_sp       (target, *, dofs=None, disp_xyz=None, rot_xyz=None, name=None)
+g.displacements.surface (target, *, dofs=None, disp_xyz=None, rot_xyz=None,
+                       magnitude=None, normal=None, direction=None, name=None)
+g.displacements.point   (target, *, dofs=None, values=None, name=None)
 ```
 
-> [!tip] `point_closest` — coordinate-driven point loads
+> [!note] Prescribed displacements moved to `g.displacements` (ADR 0050 P2)
+> The authoring entry point for face SPs is now `g.displacements.surface`
+> (same signature as the former `face_sp` method on `g.loads`).
+> `g.displacements.point`
+> applies a prescribed value verbatim at every node of the target (no
+> centroid mapping). The underlying `FaceSPDef` (kind `face_sp`) and
+> `LoadResolver.resolve_face_sp` are unchanged — they are now reached via
+> `DisplacementsComposite`.
+
+> [!tip] `point.force_closest` — coordinate-driven point loads
 > When the load point doesn't live on a named PG/label, give a
 > world-coordinate `xyz` and let the composite snap to the nearest
 > mesh node at resolve time. `within=` (PG / label / part / DimTag
@@ -179,16 +197,16 @@ PG because it's checked first. To pin a specific source, use the
 keyword form:
 
 ```python
-g.loads.point("top",            force_xyz=(0, 0, -1))   # auto
-g.loads.point(pg="top",         force_xyz=(0, 0, -1))   # force PG
-g.loads.point(label="top",      force_xyz=(0, 0, -1))   # force label
-g.loads.point(tag=[(0, 7)],     force_xyz=(0, 0, -1))   # direct DimTag
+g.loads.point.force("top",            (0, 0, -1))   # auto
+g.loads.point.force(pg="top",         force=(0, 0, -1))   # force PG
+g.loads.point.force(label="top",      force=(0, 0, -1))   # force label
+g.loads.point.force(tag=[(0, 7)],     force=(0, 0, -1))   # direct DimTag
 ```
 
-> [!warning] Target is resolved at `resolve()` time, not at `point()` time.
+> [!warning] Target is resolved at `resolve()` time, not at `point.force()` time.
 > The factory stores the *name*, not the resolved entities. If you
 > add a label after storing the def, the lookup still succeeds. If
-> you rename something between `g.loads.point(...)` and
+> you rename something between `g.loads.point.force(...)` and
 > `g.mesh.get_fem_data()`, the lookup will fail with a `KeyError`.
 > This is [[apeGmsh_principles|tenet (iii)]] "names survive
 > operations": intent is *declared* against names, resolved against
@@ -214,7 +232,7 @@ GravityLoadDef        │ {trib,cons} × nodal   → _resolve_gravity_{tributary
 BodyLoadDef           │ {trib,cons} × nodal   → _resolve_body_tributary
                       │ {trib,cons} × element → _resolve_body_element
 FaceLoadDef           │ tributary / nodal     → _resolve_face_load
-FaceSPDef             │ tributary / nodal     → _resolve_face_sp
+FaceSPDef             │ tributary / nodal     → _resolve_face_sp (on DisplacementsComposite)
 ```
 
 Each `_resolve_<kind>` method is a thin shim: it queries Gmsh for the
@@ -273,7 +291,7 @@ with g.loads.pattern("dead"):
     g.loads.line("beams", magnitude=-2e3, direction="z")
 
 with g.loads.pattern("live"):
-    g.loads.surface("slabs", magnitude=-3e3)
+    g.loads.surface.pressure("slabs", -3e3)
 ```
 
 `_active_pattern` is a single string attribute on the composite. Each
@@ -349,7 +367,7 @@ Three record types, all inheriting from `LoadRecord`:
 | -------------------- | -------------------------------------------------------------- | ------------------------------------------------------ |
 | `NodalLoadRecord`    | `node_id`, `force_xyz`, `moment_xyz`                           | point, line/surface/gravity/body (nodal form), face_load |
 | `ElementLoadRecord`  | `element_id`, `load_type`, `params: dict`                      | line/surface/gravity/body (element form)               |
-| `SPRecord`           | `node_id`, `dof` (1-based), `value`, `is_homogeneous`          | face_sp only                                           |
+| `SPRecord`           | `node_id`, `dof` (1-based), `value`, `is_homogeneous`          | `face_sp` kind, authored via `g.displacements`         |
 
 Records are **solver-agnostic**: `force_xyz` and `moment_xyz` are pure
 3D spatial vectors, not 6-DOF slices. Zero sub-vectors are stored as
@@ -388,7 +406,7 @@ with ape.apeGmsh("bridge.geo") as g:
         g.loads.gravity("pier2", g=(0, 0, -9.81), density=2400)
 
     with g.loads.pattern("live"):
-        g.loads.surface(label="deck_top", magnitude=-5e3,
+        g.loads.surface.pressure(label="deck_top", magnitude=-5e3,
                         reduction="consistent")
 
     g.mesh.generate(size=0.5)

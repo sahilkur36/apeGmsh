@@ -29,7 +29,6 @@ if TYPE_CHECKING:
 from apeGmsh.core.loads.defs import (
     BodyLoadDef,
     FaceLoadDef,
-    FaceSPDef,
     GravityLoadDef,
     LineLoadDef,
     LoadDef,
@@ -79,9 +78,6 @@ _DISPATCH: dict[type, dict[tuple[str, str], str]] = {
     FaceLoadDef: {
         ("tributary",  "nodal"):   "_resolve_face_load",
     },
-    FaceSPDef: {
-        ("tributary",  "nodal"):   "_resolve_face_sp",
-    },
 }
 
 _LoadT = TypeVar("_LoadT", bound=LoadDef)
@@ -90,16 +86,26 @@ _LoadT = TypeVar("_LoadT", bound=LoadDef)
 class LoadsComposite:
     """Loads composite — define + resolve loads.
 
+    Surface (dimension-indexed, ADR 0050)
+    -------------------------------------
+    Load verbs are grouped by the dimension of their target. Single-verb
+    dimensions are plain callables; multi-verb dimensions are namespaces::
+
+        g.loads.point.force / .moment / .force_closest / .moment_closest
+        g.loads.line(...)                                  # distributed q
+        g.loads.surface.pressure / .traction / .force_resultant_center_mass
+        g.loads.volume(...)                               # body force
+        g.loads.gravity(...)                              # self-weight
+
     Target resolution
     -----------------
-    All factory methods (``point``, ``line``, ``surface``, ``gravity``,
-    ``body``, ``face_load``, ``face_sp``) accept a flexible positional
-    ``target`` argument plus three explicit keyword overrides::
+    Every load verb accepts a flexible positional ``target`` argument
+    plus three explicit keyword overrides::
 
-        g.loads.point("my_pt",     force_xyz=(0, 0, -1))   # auto
-        g.loads.point(pg="my_pg",  force_xyz=(0, 0, -1))   # force PG
-        g.loads.point(label="top", force_xyz=(0, 0, -1))   # force label
-        g.loads.point(tag=[(0, 7)], force_xyz=(0, 0, -1))  # raw DimTag
+        g.loads.point.force("my_pt",     force=(0, 0, -1))   # auto
+        g.loads.point.force(pg="my_pg",  force=(0, 0, -1))   # force PG
+        g.loads.point.force(label="top", force=(0, 0, -1))   # force label
+        g.loads.point.force(tag=[(0, 7)], force=(0, 0, -1))  # raw DimTag
 
     When the caller passes ``target=...`` (the auto path),
     :meth:`_resolve_target` tries each of these in order until one
@@ -137,6 +143,9 @@ class LoadsComposite:
         self.load_defs: list[LoadDef] = []
         self.load_records: list[LoadRecord] = []
         self._active_pattern: str = "default"
+        # Dimension-indexed verb namespaces (ADR 0050).
+        self.point = _PointLoads(self)
+        self.surface = _SurfaceLoads(self)
 
     # ------------------------------------------------------------------
     # Pattern grouping
@@ -155,7 +164,7 @@ class LoadsComposite:
                 g.loads.line("beams", magnitude=-2e3, direction="z")
 
             with g.loads.pattern("live"):
-                g.loads.surface("slabs", magnitude=-3e3)
+                g.loads.surface.pressure("slabs", magnitude=-3e3)
         """
         prev = self._active_pattern
         self._active_pattern = name
@@ -168,104 +177,19 @@ class LoadsComposite:
     # Factory methods
     # ------------------------------------------------------------------
 
-    def point(self, target=None, *, pg=None, label=None, tag=None,
-              force_xyz=None, moment_xyz=None,
-              name=None) -> PointLoadDef:
-        """Concentrated force and/or moment applied at every node of
-        *target*.
+    def _point_closest_def(self, xyz, *, force_xyz=None, moment_xyz=None,
+                           within=None, pg=None, label=None, tag=None,
+                           tol=None, name=None) -> PointClosestLoadDef:
+        """Build a coordinate-snapped concentrated-load def.
 
-        Each node in the resolved target receives the **same** force
-        and moment vectors. Use this when the load point lives on a
-        named entity (a physical group, label, part, mesh selection,
-        or raw `(dim, tag)` list); use :meth:`point_closest` instead
-        when you only have world coordinates.
-
-        Resolution emits one
-        :class:`~apeGmsh.solvers.Loads.NodalLoadRecord` per
-        targeted node onto ``fem.nodes.loads``. Both ``force_xyz``
-        and ``moment_xyz`` may be supplied (or either alone), but
-        at least one of the two must be non-``None`` for the load
-        to do anything useful.
-
-        Parameters
-        ----------
-        target : str or list of (dim, tag), optional
-            Auto-resolved positional target — see the
-            :class:`LoadsComposite` docstring for the lookup order.
-            Pass ``pg=``, ``label=``, or ``tag=`` to bypass
-            auto-resolution.
-        pg, label, tag :
-            Explicit-source overrides. See the class docstring.
-        force_xyz : (Fx, Fy, Fz), optional
-            Concentrated force vector applied at each targeted
-            node, in model force units.
-        moment_xyz : (Mx, My, Mz), optional
-            Concentrated moment vector. For 2-D models pass a
-            length-1 tuple ``(Mz,)`` — the resolver will accept it.
-        name : str, optional
-            Friendly name for :meth:`summary` and the viewer.
-
-        Returns
-        -------
-        PointLoadDef
-            The stored definition (also appended to
-            ``self.load_defs``).
-
-        Raises
-        ------
-        KeyError
-            If ``target`` is a string that doesn't resolve to any
-            of label, physical group, part, or mesh selection.
-        ValueError
-            If neither ``target`` nor an explicit-source kwarg is
-            given.
-
-        See Also
-        --------
-        point_closest : Coordinate-driven variant — snap to the
-            nearest mesh node.
-        face_load : Apply a centroidal force/moment to a whole
-            face without rigidising it.
-
-        Examples
-        --------
-        >>> with g.loads.pattern("Lateral"):
-        ...     g.loads.point(
-        ...         "ColTop",
-        ...         force_xyz=(120e3, 0.0, 0.0),
-        ...     )
-        """
-        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
-        return self._add_def(PointLoadDef(
-            target=t, target_source=src,
-            pattern=self._active_pattern, name=name,
-            force_xyz=force_xyz, moment_xyz=moment_xyz,
-        ))
-
-    def point_closest(self, xyz, *, within=None,
-                      pg=None, label=None, tag=None,
-                      force_xyz=None, moment_xyz=None,
-                      tol=None, name=None) -> PointClosestLoadDef:
-        """Concentrated load at the mesh node closest to ``xyz``.
-
-        Coordinate-driven targeting — useful when the load point doesn't
-        live on a named PG/label. The snap happens at :meth:`resolve`,
-        and the snap distance is recorded back on the def.
-
-        Parameters
-        ----------
-        xyz : (x, y, z)
-            World-coordinate target.
-        within : str | list, optional
-            Restrict the snap pool to nodes inside this PG/label/part/
-            DimTag list. ``pg=``/``label=``/``tag=`` force the source.
-            Default = global (search every mesh node).
-        tol : float, optional
-            If given, every node within ``tol`` of ``xyz`` receives the
-            load. Default ``None`` = single nearest node.
+        Shared by ``g.loads.point.force_closest`` and
+        ``.moment_closest``.  The snap happens at :meth:`resolve`, and
+        the snap distance is recorded back on the def.
         """
         if force_xyz is None and moment_xyz is None:
-            raise ValueError("point_closest() requires force_xyz or moment_xyz.")
+            raise ValueError(
+                "point.force_closest()/moment_closest() requires a "
+                "force or moment vector.")
         w_t, w_src = (None, "auto")
         if any(v is not None for v in (within, pg, label, tag)):
             w_t, w_src = self._coalesce_target(within, pg=pg, label=label, tag=tag)
@@ -442,113 +366,13 @@ class LoadsComposite:
             reduction=reduction, target_form=target_form,
         ))
 
-    def surface(self, target=None, *, pg=None, label=None, tag=None,
-                magnitude=0.0, normal=True,
-                direction=(0., 0., -1.), reduction="tributary",
-                target_form="nodal", name=None) -> SurfaceLoadDef:
-        """Pressure or traction on the surface(s) of *target*.
-
-        Two regimes selected by ``normal``:
-
-        * ``normal=True`` (default): scalar pressure normal to each
-          face. The face normal is computed at resolution time from
-          the mesh; positive ``magnitude`` *pushes into* the face
-          (i.e. acts opposite to the outward normal).
-        * ``normal=False``: vector traction along ``direction``,
-          independent of face orientation.
-
-        Reduction and emission form
-        ---------------------------
-        * ``reduction="tributary"`` (default): split each face's
-          area-weighted load equally among its corner nodes
-          (tri3 / quad4 corner mass).
-        * ``reduction="consistent"``: shape-function integration
-          via Gauss quadrature on the curved face — required for
-          tri6, quad8, quad9. For ``normal=True``, the curved
-          normal at each Gauss point is used.
-        * ``target_form="element"``: emit one
-          ``ElementLoadRecord`` per face with
-          ``load_type="surfacePressure"`` and let the solver's
-          element handle integration.
-
-        Parameters
-        ----------
-        target : str or list of (dim, tag)
-            Surface(s) to load.
-        pg, label, tag :
-            Explicit-source overrides.
-        magnitude : float, default 0.0
-            Pressure (force per unit area) when ``normal=True``,
-            or traction magnitude along ``direction`` otherwise.
-        normal : bool, default True
-            ``True`` → normal pressure; ``False`` → vector
-            traction.
-        direction : (dx, dy, dz), default ``(0, 0, -1)``
-            Unit traction direction. Ignored when ``normal=True``.
-        reduction : ``"tributary"`` or ``"consistent"``, default
-            ``"tributary"``
-            Lumping scheme.
-        target_form : ``"nodal"`` or ``"element"``, default
-            ``"nodal"``
-            Output record type.
-        name : str, optional
-            Friendly name.
-
-        Returns
-        -------
-        SurfaceLoadDef
-
-        Raises
-        ------
-        KeyError
-            If ``target`` doesn't resolve.
-
-        Examples
-        --------
-        Wind pressure on a vertical façade (positive into the
-        face)::
-
-            g.loads.surface(
-                "Facade",
-                magnitude=1.2e3,
-                normal=True,
-            )
-
-        Vertical live load on a slab (vector traction, not
-        pressure)::
-
-            g.loads.surface(
-                "Slab",
-                magnitude=2.5e3,
-                normal=False,
-                direction=(0, 0, -1),
-            )
-
-        Higher-order pressure with consistent reduction on a
-        quad8 mesh::
-
-            g.loads.surface(
-                "CurvedShell",
-                magnitude=p,
-                normal=True,
-                reduction="consistent",
-            )
-        """
-        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
-        return self._add_def(SurfaceLoadDef(
-            target=t, target_source=src,
-            pattern=self._active_pattern, name=name,
-            magnitude=magnitude, normal=normal, direction=direction,
-            reduction=reduction, target_form=target_form,
-        ))
-
     def gravity(self, target=None, *, pg=None, label=None, tag=None,
                 g=(0., 0., -9.81), density=None,
                 reduction="tributary", target_form="nodal",
                 name=None) -> GravityLoadDef:
         """Body weight (``ρ · g``) over the volume(s) of *target*.
 
-        Convenience wrapper over :meth:`body` for the common case of
+        Convenience wrapper over :meth:`volume` for the common case of
         gravity loading. The total per-element load is
         ``density × element_volume × g_vec``, distributed to the
         element's nodes.
@@ -604,7 +428,7 @@ class LoadsComposite:
 
         See Also
         --------
-        body : Generic per-volume body force vector.
+        volume : Generic per-volume body force vector.
         masses.volume : Add the same density as nodal mass for
             inertial response (don't double-count if the OpenSees
             material already carries ``rho``).
@@ -631,10 +455,10 @@ class LoadsComposite:
             reduction=reduction, target_form=target_form,
         ))
 
-    def body(self, target=None, *, pg=None, label=None, tag=None,
-             force_per_volume=(0., 0., 0.),
-             reduction="tributary", target_form="nodal",
-             name=None) -> BodyLoadDef:
+    def volume(self, target=None, *, pg=None, label=None, tag=None,
+               force_per_volume=(0., 0., 0.),
+               reduction="tributary", target_form="nodal",
+               name=None) -> BodyLoadDef:
         """Generic per-volume body force on the volume(s) of *target*.
 
         General sibling of :meth:`gravity` — accepts an arbitrary
@@ -683,7 +507,7 @@ class LoadsComposite:
         Centrifugal body force ``ρ · ω² · r`` evaluated as a
         constant approximation::
 
-            g.loads.body(
+            g.loads.volume(
                 "Rotor",
                 force_per_volume=(omega**2 * rho * r_cg, 0, 0),
             )
@@ -696,11 +520,13 @@ class LoadsComposite:
             reduction=reduction, target_form=target_form,
         ))
 
-    def face_load(self, target=None, *, pg=None, label=None, tag=None,
-                  force_xyz=None, moment_xyz=None,
-                  magnitude=0.0, normal=False, direction=None,
-                  name=None) -> FaceLoadDef:
+    def _face_load_def(self, target=None, *, pg=None, label=None, tag=None,
+                       force_xyz=None, moment_xyz=None,
+                       magnitude=0.0, normal=False, direction=None,
+                       name=None) -> FaceLoadDef:
         """Concentrated force/moment at face centroid, distributed to nodes.
+
+        Backs ``g.loads.surface.force_resultant_center_mass``.
 
         ``force_xyz`` is split equally among all face nodes.
         ``moment_xyz`` is converted to statically equivalent nodal
@@ -747,27 +573,30 @@ class LoadsComposite:
         bonded body (opening the crack)::
 
             with m.loads.pattern("Open"):
-                m.loads.face_load("Crack_normal",   magnitude=-1e3, normal=True)
-                m.loads.face_load("Crack_inverted", magnitude=-1e3, normal=True)
+                m.loads.surface.force_resultant_center_mass(
+                    "Crack_normal",   magnitude=-1e3, normal=True)
+                m.loads.surface.force_resultant_center_mass(
+                    "Crack_inverted", magnitude=-1e3, normal=True)
         """
+        _v = "surface.force_resultant_center_mass"
         nothing_set = (
             force_xyz is None and moment_xyz is None and magnitude == 0.0
         )
         if nothing_set:
             raise ValueError(
-                "face_load() requires force_xyz, moment_xyz, or magnitude."
+                f"{_v}() requires force, moment, or magnitude."
             )
         if force_xyz is not None and magnitude != 0.0:
             raise ValueError(
-                "face_load(): pass either force_xyz or magnitude, not both."
+                f"{_v}(): pass either force or magnitude, not both."
             )
         if normal and direction is not None:
             raise ValueError(
-                "face_load(): pass either normal=True or direction=, not both."
+                f"{_v}(): pass either normal=True or direction=, not both."
             )
         if magnitude != 0.0 and not normal and direction is None:
             raise ValueError(
-                "face_load(magnitude=...) requires normal=True or "
+                f"{_v}(magnitude=...) requires normal=True or "
                 "direction=(dx, dy, dz)."
             )
         t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
@@ -775,68 +604,6 @@ class LoadsComposite:
             target=t, target_source=src,
             pattern=self._active_pattern, name=name,
             force_xyz=force_xyz, moment_xyz=moment_xyz,
-            magnitude=magnitude, normal=normal, direction=direction,
-        ))
-
-    def face_sp(self, target=None, *, pg=None, label=None, tag=None,
-                dofs=None, disp_xyz=None, rot_xyz=None,
-                magnitude=0.0, normal=False, direction=None,
-                name=None) -> FaceSPDef:
-        """Prescribed displacement/rotation at face centroid, mapped to nodes.
-
-        Each face node receives ``u_i = disp_xyz + rot_xyz x r_i``
-        where ``r_i`` is the arm from the face centroid to node *i*.
-
-        When ``disp_xyz``, ``rot_xyz``, and ``magnitude`` are all
-        zero / ``None``, the result is a homogeneous fix (equivalent
-        to ``fix()``).
-
-        ``magnitude`` (a scalar centroid translation, in mesh length
-        units) combined with ``normal=True`` or an explicit
-        ``direction`` produces the equivalent ``disp_xyz`` without
-        manually computing the face normal.  Sign convention matches
-        :meth:`face_load`: total = ``magnitude * unit_direction``,
-        along ``+n_avg`` for ``normal=True``.  Combining ``magnitude``
-        with ``disp_xyz`` is an error; combining with ``rot_xyz`` is
-        fine.
-
-        Parameters
-        ----------
-        target : str or list[(dim, tag)]
-            Surface to constrain.
-        dofs : list[int], optional
-            Restraint mask (``1`` = constrained, ``0`` = free).
-            Defaults to ``[1, 1, 1]``.
-        disp_xyz : tuple, optional
-            Prescribed translation ``(ux, uy, uz)`` at centroid.
-        rot_xyz : tuple, optional
-            Prescribed rotation ``(θx, θy, θz)`` about centroid.
-        magnitude : float, default 0.0
-            Scalar centroid translation routed by ``normal``/``direction``.
-        normal : bool, default False
-            When True, area-weighted face normal supplies the direction.
-        direction : (dx, dy, dz), optional
-            Explicit unit-direction override for the ``magnitude`` path.
-        """
-        if disp_xyz is not None and magnitude != 0.0:
-            raise ValueError(
-                "face_sp(): pass either disp_xyz or magnitude, not both."
-            )
-        if normal and direction is not None:
-            raise ValueError(
-                "face_sp(): pass either normal=True or direction=, not both."
-            )
-        if magnitude != 0.0 and not normal and direction is None:
-            raise ValueError(
-                "face_sp(magnitude=...) requires normal=True or "
-                "direction=(dx, dy, dz)."
-            )
-        t, src = self._coalesce_target(target, pg=pg, label=label, tag=tag)
-        return self._add_def(FaceSPDef(
-            target=t, target_source=src,
-            pattern=self._active_pattern, name=name,
-            dofs=dofs or [1, 1, 1],
-            disp_xyz=disp_xyz, rot_xyz=rot_xyz,
             magnitude=magnitude, normal=normal, direction=direction,
         ))
 
@@ -1723,8 +1490,12 @@ class LoadsComposite:
     def _resolve_surface_tributary(self, resolver, defn, node_map, all_nodes):
         src = getattr(defn, 'target_source', 'auto')
         faces = self._target_faces(defn.target, source=src)
+        # Only normal pressure needs the per-face physical outward; shear
+        # projects against the (sign-independent) connectivity normal in
+        # the resolver, and traction is orientation-free.
         outwards = (
-            self._face_outward_normals(faces) if defn.normal else None
+            self._face_outward_normals(faces)
+            if defn.mode == "pressure" else None
         )
         return resolver.resolve_surface_tributary(
             defn, faces, outwards=outwards,
@@ -1789,19 +1560,6 @@ class LoadsComposite:
             faces = self._target_faces(defn.target, source=src)
             outwards = self._face_outward_normals(faces)
         return resolver.resolve_face_load(
-            defn, sorted(nodes), faces=faces, outwards=outwards,
-        )
-
-    def _resolve_face_sp(self, resolver, defn, node_map, all_nodes):
-        src = getattr(defn, 'target_source', 'auto')
-        nodes = self._target_nodes(defn.target, node_map, all_nodes,
-                                   source=src, expected_dim=2)
-        faces: list[list[int]] | None = None
-        outwards: list[np.ndarray] | None = None
-        if defn.magnitude != 0.0 and defn.normal:
-            faces = self._target_faces(defn.target, source=src)
-            outwards = self._face_outward_normals(faces)
-        return resolver.resolve_face_sp(
             defn, sorted(nodes), faces=faces, outwards=outwards,
         )
 
@@ -1876,3 +1634,157 @@ class LoadsComposite:
             f"LoadsComposite({len(self.load_defs)} defs, "
             f"{len(self.patterns())} pattern(s))"
         )
+
+
+# ----------------------------------------------------------------------
+# Dimension-indexed verb namespaces (ADR 0050)
+# ----------------------------------------------------------------------
+
+class _PointLoads:
+    """Concentrated nodal loads — the ``g.loads.point`` namespace.
+
+    Force and moment, each on a named target or snapped to the nearest
+    mesh node (``*_closest``).  All four verbs accept the flexible
+    ``target`` plus ``pg=``/``label=``/``tag=`` overrides documented on
+    :class:`LoadsComposite`.
+    """
+    __slots__ = ("_c",)
+
+    def __init__(self, composite: "LoadsComposite") -> None:
+        self._c = composite
+
+    def force(self, target=None, force=None, *, pg=None, label=None,
+              tag=None, name=None) -> PointLoadDef:
+        """Concentrated force applied at every node of *target*."""
+        t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
+        return self._c._add_def(PointLoadDef(
+            target=t, target_source=src,
+            pattern=self._c._active_pattern, name=name,
+            force_xyz=force,
+        ))
+
+    def moment(self, target=None, moment=None, *, pg=None, label=None,
+               tag=None, name=None) -> PointLoadDef:
+        """Concentrated moment applied at every node of *target*.
+
+        For 2-D models pass a length-1 tuple ``(Mz,)``.
+        """
+        t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
+        return self._c._add_def(PointLoadDef(
+            target=t, target_source=src,
+            pattern=self._c._active_pattern, name=name,
+            moment_xyz=moment,
+        ))
+
+    def force_closest(self, xyz, force=None, *, within=None, pg=None,
+                      label=None, tag=None, tol=None,
+                      name=None) -> PointClosestLoadDef:
+        """Concentrated force at the mesh node(s) closest to ``xyz``.
+
+        ``within`` (+ ``pg=``/``label=``/``tag=``) restricts the snap
+        pool; ``tol`` (if given) loads every node within that radius.
+        """
+        return self._c._point_closest_def(
+            xyz, force_xyz=force, within=within,
+            pg=pg, label=label, tag=tag, tol=tol, name=name)
+
+    def moment_closest(self, xyz, moment=None, *, within=None, pg=None,
+                       label=None, tag=None, tol=None,
+                       name=None) -> PointClosestLoadDef:
+        """Concentrated moment at the mesh node(s) closest to ``xyz``."""
+        return self._c._point_closest_def(
+            xyz, moment_xyz=moment, within=within,
+            pg=pg, label=label, tag=tag, tol=tol, name=name)
+
+
+class _SurfaceLoads:
+    """Surface loads — the ``g.loads.surface`` namespace.
+
+    Per-area **fields** (:meth:`pressure`, :meth:`traction`) carry the
+    ``reduction`` / ``target_form`` knobs; the lumped
+    :meth:`force_resultant_center_mass` does not.  (``shear`` — strict
+    in-plane traction — lands in ADR 0050 P3.)
+    """
+    __slots__ = ("_c",)
+
+    def __init__(self, composite: "LoadsComposite") -> None:
+        self._c = composite
+
+    def pressure(self, target=None, magnitude=0.0, *, pg=None, label=None,
+                 tag=None, reduction="tributary", target_form="nodal",
+                 name=None) -> SurfaceLoadDef:
+        """Scalar pressure normal to each face.
+
+        Positive ``magnitude`` pushes *into* the face (opposite the
+        outward normal).  The normal is computed from the mesh at
+        resolution time.
+        """
+        t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
+        return self._c._add_def(SurfaceLoadDef(
+            target=t, target_source=src,
+            pattern=self._c._active_pattern, name=name,
+            magnitude=magnitude, mode="pressure",
+            reduction=reduction, target_form=target_form,
+        ))
+
+    def traction(self, target=None, vector=(0., 0., -1.), *, pg=None,
+                 label=None, tag=None, reduction="tributary",
+                 target_form="nodal", name=None) -> SurfaceLoadDef:
+        """Vector traction per unit area, in **global** coordinates.
+
+        Independent of face orientation — e.g. a slab live load that is
+        always ``(0, 0, -w)`` regardless of how the face is tilted.
+        """
+        t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
+        v = tuple(float(x) for x in vector)
+        mag = float(np.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2))
+        return self._c._add_def(SurfaceLoadDef(
+            target=t, target_source=src,
+            pattern=self._c._active_pattern, name=name,
+            magnitude=mag, mode="traction", direction=v,
+            reduction=reduction, target_form=target_form,
+        ))
+
+    def shear(self, target=None, vector=(1., 0., 0.), *, pg=None,
+              label=None, tag=None, reduction="tributary",
+              name=None) -> SurfaceLoadDef:
+        """Strict **in-plane** (tangential) traction per unit area.
+
+        ``vector`` is a global reference traction; on each face only its
+        **in-plane** component is applied — the normal component is
+        projected out against the face's tangent plane at resolve time,
+        so one call works across a faceted/curved surface. A face where
+        the projection vanishes (the vector is normal there) is
+        fail-loud.
+
+        Has no ``target_form="element"`` — OpenSees ``surfacePressure``
+        is normal-only, so an in-plane shear has no element-load form;
+        use the default nodal reduction.
+        """
+        t, src = self._c._coalesce_target(target, pg=pg, label=label, tag=tag)
+        v = tuple(float(x) for x in vector)
+        mag = float(np.sqrt(v[0] ** 2 + v[1] ** 2 + v[2] ** 2))
+        return self._c._add_def(SurfaceLoadDef(
+            target=t, target_source=src,
+            pattern=self._c._active_pattern, name=name,
+            magnitude=mag, mode="shear", direction=v,
+            reduction=reduction, target_form="nodal",
+        ))
+
+    def force_resultant_center_mass(
+            self, target=None, *, force=None, moment=None,
+            magnitude=0.0, normal=False, direction=None,
+            pg=None, label=None, tag=None, name=None) -> FaceLoadDef:
+        """Total force/moment at the face area-centroid, lumped to nodes.
+
+        A **resultant**, not a per-area field: ``force`` is split equally
+        among the face nodes and ``moment`` becomes statically equivalent
+        nodal forces.  A scalar ``magnitude`` (Newtons) routed by
+        ``normal=True`` or ``direction=`` produces the equivalent total
+        without computing the face normal by hand.
+        """
+        return self._c._face_load_def(
+            target, pg=pg, label=label, tag=tag,
+            force_xyz=force, moment_xyz=moment,
+            magnitude=magnitude, normal=normal, direction=direction,
+            name=name)

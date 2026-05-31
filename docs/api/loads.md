@@ -7,8 +7,10 @@ Solver-agnostic load definitions, records, and resolver. Loads are
 ## Two-stage pipeline
 
 Stage 1 — **declare** before meshing. The factory methods on
-`g.loads` (`point`, `point_closest`, `line`, `surface`, `gravity`,
-`body`, `face_load`, `face_sp`) store
+`g.loads` (`point.force`, `point.moment`, `point.force_closest`,
+`point.moment_closest`, `line`, `surface.pressure`,
+`surface.traction`, `surface.force_resultant_center_mass`, `gravity`,
+`volume`) store
 [`LoadDef`][apeGmsh._kernel.defs.loads.LoadDef] dataclasses describing
 intent at the geometry level. The active
 [`pattern`][apeGmsh.core.LoadsComposite.LoadsComposite.pattern]
@@ -23,7 +25,7 @@ according to type:
 | ------------------------- | ------------------------------ | --------------------------------------- |
 | `NodalLoadRecord`         | `fem.nodes.loads`              | tributary / consistent reductions       |
 | `ElementLoadRecord`       | `fem.elements.loads`           | `target_form="element"` (eleLoad style) |
-| `SPRecord`                | `fem.nodes.sp`                 | `face_sp` only                          |
+| `SPRecord`                | `fem.nodes.sp`                 | prescribed displacements via `g.displacements` (no longer a `g.loads` method) |
 
 ## Patterns
 
@@ -38,7 +40,7 @@ with g.loads.pattern("Dead"):
     g.loads.line("BeamEdge", magnitude=-15e3)
 
 with g.loads.pattern("Live"):
-    g.loads.surface("Slab", magnitude=-2.5e3, normal=False)
+    g.loads.surface.pressure("Slab", -2.5e3)
 ```
 
 Defs declared outside any `pattern` block belong to the implicit
@@ -48,7 +50,7 @@ Defs declared outside any `pattern` block belong to the implicit
 ## Reduction & emission form
 
 Three of the distributed-load factories (`line`, `surface`,
-`gravity`, `body`) accept two orthogonal flags that change how the
+`gravity`, `volume`) accept two orthogonal flags that change how the
 load is converted to records:
 
 | `reduction`     | `target_form` | Effect                                                                              |
@@ -88,9 +90,9 @@ with apeGmsh(model_name="frame") as g:
                      reduction="tributary")
 
     with g.loads.pattern("Push"):
-        g.loads.point_closest(                           # snaps to
+        g.loads.point.force_closest(                     # snaps to
             xyz=(5.0, 2.5, 3.0), within="Slab",          # nearest
-            force_xyz=(120e3, 0.0, 0.0),                 # mesh node
+            force=(120e3, 0.0, 0.0),                     # mesh node
         )
 
     g.mesh.generation.generate(dim=3)

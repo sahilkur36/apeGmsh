@@ -91,15 +91,23 @@ class LineLoadDef(LoadDef):
 
 @dataclass
 class SurfaceLoadDef(LoadDef):
-    """Pressure or traction on a 2-D entity.
+    """Pressure, traction, or in-plane shear on a 2-D entity (ADR 0050).
 
-    * ``normal=True``: scalar pressure perpendicular to the face
-      (positive into the face).
-    * ``normal=False``: vector traction in the given direction.
+    ``mode`` selects the regime (replaces the old ``normal`` bool —
+    a bool can't carry three states):
+
+    * ``"pressure"``: scalar ``magnitude`` perpendicular to each face
+      (positive into the face). ``direction`` ignored.
+    * ``"traction"``: free vector per area in **global** coordinates;
+      ``direction`` is the full vector, ``magnitude`` its norm.
+    * ``"shear"``: strict **in-plane** traction — ``direction`` is a
+      global reference vector projected onto each face's tangent plane
+      (normal component removed). Fail-loud where the projection
+      vanishes (purely-normal input).
     """
     kind: str = field(init=False, default="surface")
     magnitude: float = 0.0
-    normal: bool = True
+    mode: str = "pressure"          # "pressure" | "traction" | "shear"
     direction: tuple[float, float, float] = (0.0, 0.0, -1.0)
 
 
@@ -196,6 +204,23 @@ class FaceSPDef(LoadDef):
     direction: tuple[float, float, float] | None = None
 
 
+@dataclass
+class PointSPDef(LoadDef):
+    """Prescribed displacement/rotation applied directly at node(s).
+
+    Each targeted node receives one ``SPRecord`` per DOF marked in
+    ``dofs`` (1 = constrained, 0 = free). ``values`` gives the prescribed
+    value per DOF index (aligned with ``dofs``); ``None`` = homogeneous
+    (all zero). Authored via ``g.displacements.point`` (ADR 0050).
+
+    Unlike :class:`FaceSPDef` there is no centroid / rigid-body mapping —
+    the value is applied verbatim at every targeted node.
+    """
+    kind: str = field(init=False, default="point_sp")
+    dofs: list[int] = field(default_factory=lambda: [1, 1, 1])
+    values: tuple[float, ...] | None = None
+
+
 __all__ = [
     "LoadDef",
     "PointLoadDef",
@@ -206,4 +231,5 @@ __all__ = [
     "BodyLoadDef",
     "FaceLoadDef",
     "FaceSPDef",
+    "PointSPDef",
 ]

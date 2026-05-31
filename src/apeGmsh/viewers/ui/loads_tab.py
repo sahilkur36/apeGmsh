@@ -99,7 +99,7 @@ class LoadsTabPanel:
         # ── empty state ───────────────────────────────────────
         self._empty_label = QtWidgets.QLabel(
             "No loads defined.\n\n"
-            "Use g.loads.point(), g.loads.gravity(), etc.\n"
+            "Use g.loads.point.force(), g.loads.gravity(), etc.\n"
             "inside a g.loads.pattern(name) block."
         )
         from .theme import THEME as _THEME
@@ -263,7 +263,7 @@ class LoadsTabPanel:
                 return f"q={tuple(d.q_xyz)} N/m"
             return f"{_fmt_magnitude(d.magnitude)} N/m, dir={d.direction}"
         if isinstance(d, SurfaceLoadDef):
-            kind = "pressure" if d.normal else "traction"
+            kind = d.mode
             return f"{_fmt_magnitude(d.magnitude)} Pa ({kind})"
         if isinstance(d, GravityLoadDef):
             rho = f", ρ={d.density}" if d.density else ""
