@@ -414,28 +414,28 @@ def test_single_stamp_file_fallback_lineage_is_envelope(tmp_path: Any) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_opensees_reader_version_is_2_12_0() -> None:
-    """Schema 2.12.0 — ASDEmbeddedNodeElement option exposure (ADR 0035)."""
-    assert reader_version(OPENSEES) == SchemaVersion(2, 12, 0)
+def test_opensees_reader_version_is_2_13_0() -> None:
+    """Schema 2.13.0 — bridge-side name-alias sidecar (/opensees/names)."""
+    assert reader_version(OPENSEES) == SchemaVersion(2, 13, 0)
 
 
-def test_two_version_window_at_2_12_accepts_2_11_and_2_12() -> None:
-    """Reader at 2.12.0 accepts 2.11.x and 2.12.x (window: prev minor + current)."""
-    reader = SchemaVersion(2, 12, 0)
+def test_two_version_window_at_2_13_accepts_2_12_and_2_13() -> None:
+    """Reader at 2.13.0 accepts 2.12.x and 2.13.x (window: prev minor + current)."""
+    reader = SchemaVersion(2, 13, 0)
     for patch in (0, 1, 99):
-        validate_zone_version(
-            SchemaVersion(2, 11, patch), reader, zone=OPENSEES,
-        )
         validate_zone_version(
             SchemaVersion(2, 12, patch), reader, zone=OPENSEES,
         )
+        validate_zone_version(
+            SchemaVersion(2, 13, patch), reader, zone=OPENSEES,
+        )
 
 
-def test_two_version_window_at_2_12_refuses_2_10() -> None:
-    """Reader at 2.12.0 refuses 2.10.x (outside window)."""
+def test_two_version_window_at_2_13_refuses_2_11() -> None:
+    """Reader at 2.13.0 refuses 2.11.x (outside window)."""
     with pytest.raises(_PerZoneSchemaError) as exc:
         validate_zone_version(
-            SchemaVersion(2, 10, 0), SchemaVersion(2, 12, 0), zone=OPENSEES,
+            SchemaVersion(2, 11, 0), SchemaVersion(2, 13, 0), zone=OPENSEES,
         )
     assert "too old" in str(exc.value)
 

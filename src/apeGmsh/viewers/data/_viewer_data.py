@@ -87,7 +87,7 @@ class ViewerData:
     elements : :class:`ViewerElements`
     """
 
-    __slots__ = ("_snapshot_id", "_source_kind", "nodes", "elements")
+    __slots__ = ("_snapshot_id", "_source_kind", "nodes", "elements", "_names")
 
     def __init__(
         self,
@@ -96,11 +96,13 @@ class ViewerData:
         source_kind: Literal["fem", "h5"],
         nodes: ViewerNodes,
         elements: ViewerElements,
+        names: tuple[tuple[str, str, int], ...] = (),
     ) -> None:
         self._snapshot_id = str(snapshot_id)
         self._source_kind = source_kind
         self.nodes = nodes
         self.elements = elements
+        self._names = tuple(names)
 
     @property
     def snapshot_id(self) -> str:
@@ -109,6 +111,23 @@ class ViewerData:
     @property
     def source_kind(self) -> Literal["fem", "h5"]:
         return self._source_kind
+
+    @property
+    def names(self) -> tuple[tuple[str, str, int], ...]:
+        """Bridge-side ``(name, kind, tag)`` aliases (empty for live-FEM
+        snapshots — names are an emit-time concept persisted to h5)."""
+        return self._names
+
+    def name_for(self, kind: str, tag: int) -> "str | None":
+        """Return the human alias for ``(kind, tag)``, or ``None``.
+
+        Lets a viewer label a primitive (e.g. a material) by its
+        registered name instead of the bare integer tag.
+        """
+        for nm, k, t in self._names:
+            if k == kind and t == tag:
+                return nm
+        return None
 
     # ------------------------------------------------------------------
     # Builders
@@ -269,6 +288,7 @@ class ViewerData:
             source_kind="h5",
             nodes=nodes,
             elements=elements,
+            names=_decode_names(model),
         )
 
     # ------------------------------------------------------------------
@@ -287,6 +307,23 @@ class ViewerData:
 # =====================================================================
 # H5-side decoders
 # =====================================================================
+
+
+def _decode_names(model: Any) -> tuple[tuple[str, str, int], ...]:
+    """Read the bridge-side name aliases via ``H5Model.names()``.
+
+    Degrades silently to empty for pre-2.13.0 archives and for
+    foreign-format adapters that don't implement ``names()`` — the
+    missing surface looks the same at this layer (mirrors the
+    ``element_local_axes_vecxz`` / partition / module decoders).
+    """
+    fn = getattr(model, "names", None)
+    if fn is None:
+        return ()
+    try:
+        return tuple((str(n), str(k), int(t)) for n, k, t in fn())
+    except Exception:
+        return ()
 
 
 def _named_view_from_h5_index(

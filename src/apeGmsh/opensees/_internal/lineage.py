@@ -85,8 +85,11 @@ WARNING_PREFIX: str = "[lineage] "
 #: ``elements_pg`` on every MPCO emit and not loaded by the broker,
 #: so ``from_h5 → to_h5`` cycles produce files without regions; we
 #: must elide them to keep ``model_hash`` stable across the round-trip.
+#: ``names`` is the bridge-side alias sidecar (name→kind+tag): a label,
+#: not structure — relabelling a primitive must not invalidate results
+#: lineage, so it is excluded on the same grounds.
 MODEL_HASH_EXCLUDED_CHILDREN: frozenset[str] = frozenset(
-    {"cuts", "sweeps", "regions"}
+    {"cuts", "sweeps", "regions", "names"}
 )
 
 #: blake2b digest size — matches today's ``snapshot_id`` (16 bytes ⇒

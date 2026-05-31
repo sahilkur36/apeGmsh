@@ -33,10 +33,11 @@ class _NDMaterialNS(_BridgeNamespace):
         E: float,
         nu: float,
         rho: float = 0.0,
+        name: str | None = None,
     ) -> ElasticIsotropic:
         """Register an :class:`ElasticIsotropic` continuum material."""
         return self._bridge._register(
-            ElasticIsotropic(E=E, nu=nu, rho=rho)
+            ElasticIsotropic(E=E, nu=nu, rho=rho), name=name
         )
 
     def J2Plasticity(
@@ -49,6 +50,7 @@ class _NDMaterialNS(_BridgeNamespace):
         delta: float,
         H: float,
         eta: float = 0.0,
+        name: str | None = None,
     ) -> J2Plasticity:
         """Register a :class:`J2Plasticity` continuum material."""
         return self._bridge._register(
@@ -60,7 +62,8 @@ class _NDMaterialNS(_BridgeNamespace):
                 delta=delta,
                 H=H,
                 eta=eta,
-            )
+            ),
+            name=name,
         )
 
     def DruckerPrager(
@@ -77,6 +80,7 @@ class _NDMaterialNS(_BridgeNamespace):
         delta2: float,
         H: float,
         theta: float,
+        name: str | None = None,
     ) -> DruckerPrager:
         """Register a :class:`DruckerPrager` continuum material."""
         return self._bridge._register(
@@ -92,7 +96,8 @@ class _NDMaterialNS(_BridgeNamespace):
                 delta2=delta2,
                 H=H,
                 theta=theta,
-            )
+            ),
+            name=name,
         )
 
     # -- ASDPlasticMaterial3D family (Phase SSI-1.5) ----------------------
@@ -107,6 +112,7 @@ class _NDMaterialNS(_BridgeNamespace):
         internal_variables: dict[str, float | tuple[float, ...]] | None = None,
         model_parameters: dict[str, float] | None = None,
         integration_options: dict[str, float | int | str] | None = None,
+        name: str | None = None,
     ) -> ASDPlasticMaterial3D:
         """Register a generic :class:`ASDPlasticMaterial3D`.
 
@@ -146,7 +152,8 @@ class _NDMaterialNS(_BridgeNamespace):
                 internal_variables=iv_tuples,
                 model_parameters=mp_tuples,
                 integration_options=io_tuples,
-            )
+            ),
+            name=name,
         )
 
     def ASDConcrete3D(
@@ -164,6 +171,7 @@ class _NDMaterialNS(_BridgeNamespace):
         eta: float = 0.0,
         cdf: float = 0.0,
         implex: bool = False,
+        name: str | None = None,
     ) -> ASDConcrete3D:
         """Register a Petracca plastic-damage :class:`ASDConcrete3D` from physics.
 
@@ -178,18 +186,22 @@ class _NDMaterialNS(_BridgeNamespace):
             ASDConcrete3D.from_fc(
                 E=E, v=v, fc=fc, ft=ft, Gf=Gf, Gc=Gc, lch_ref=lch_ref,
                 rho=rho, Kc=Kc, eta=eta, cdf=cdf, implex=implex,
-            )
+            ),
+            name=name,
         )
 
-    def PlaneStrain(self, *, base: NDMaterial) -> PlaneStrain:
+    def PlaneStrain(
+        self, *, base: NDMaterial | str, name: str | None = None
+    ) -> PlaneStrain:
         """Register a :class:`PlaneStrain` 2-D wrapper around a 3-D nDMaterial.
 
         Use whenever a 2-D element (``FourNodeQuad``, ``Tri31``) needs
         to consume a 3-D-only constitutive law (e.g.
-        ``ASDPlasticMaterial3D``).  The ``base`` must be the registered
-        primitive instance — not a tag.
+        ``ASDPlasticMaterial3D``).  ``base`` accepts the registered
+        nDMaterial handle or the name it was registered under.
         """
-        return self._bridge._register(PlaneStrain(base=base))
+        base = self._bridge._resolve(base, base=NDMaterial)
+        return self._bridge._register(PlaneStrain(base=base), name=name)
 
     def MohrCoulombSoil(
         self,
@@ -211,6 +223,7 @@ class _NDMaterialNS(_BridgeNamespace):
         return_to_yield_surface: str = "Disabled",
         rk45_dT_min: float = 0.01,
         rk45_niter_max: int = 100,
+        name: str | None = None,
     ) -> ASDPlasticMaterial3D:
         """Register an ASDPlasticMaterial3D wired for Mohr-Coulomb soil/rock.
 
@@ -232,5 +245,6 @@ class _NDMaterialNS(_BridgeNamespace):
                 return_to_yield_surface=return_to_yield_surface,
                 rk45_dT_min=rk45_dT_min,
                 rk45_niter_max=rk45_niter_max,
-            )
+            ),
+            name=name,
         )

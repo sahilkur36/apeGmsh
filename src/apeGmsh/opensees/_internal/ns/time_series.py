@@ -28,14 +28,16 @@ class _TimeSeriesNS(_BridgeNamespace):
     """``ops.timeSeries.<Type>(...)`` — typed methods for Phase 1D-extra."""
 
     # -- Linear ---------------------------------------------------------
-    def Linear(self, *, factor: float = 1.0) -> Linear:
+    def Linear(self, *, factor: float = 1.0, name: str | None = None) -> Linear:
         """Construct + register a ``timeSeries Linear`` (linear ramp)."""
-        return self._bridge._register(Linear(factor=factor))
+        return self._bridge._register(Linear(factor=factor), name=name)
 
     # -- Constant -------------------------------------------------------
-    def Constant(self, *, factor: float = 1.0) -> Constant:
+    def Constant(
+        self, *, factor: float = 1.0, name: str | None = None
+    ) -> Constant:
         """Construct + register a ``timeSeries Constant`` (step)."""
-        return self._bridge._register(Constant(factor=factor))
+        return self._bridge._register(Constant(factor=factor), name=name)
 
     # -- Path -----------------------------------------------------------
     def Path(
@@ -48,6 +50,7 @@ class _TimeSeriesNS(_BridgeNamespace):
         factor: float = 1.0,
         start_time: float = 0.0,
         prepend_zero: bool = False,
+        name: str | None = None,
     ) -> Path:
         """Construct + register a ``timeSeries Path`` (time-history).
 
@@ -64,7 +67,8 @@ class _TimeSeriesNS(_BridgeNamespace):
                 factor=factor,
                 start_time=start_time,
                 prepend_zero=prepend_zero,
-            )
+            ),
+            name=name,
         )
 
     # -- Trig -----------------------------------------------------------
@@ -77,6 +81,7 @@ class _TimeSeriesNS(_BridgeNamespace):
         factor: float = 1.0,
         shift: float = 0.0,
         zero_shift: float = 0.0,
+        name: str | None = None,
     ) -> Trig:
         """Construct + register a ``timeSeries Trig`` (sinusoidal)."""
         return self._bridge._register(
@@ -87,7 +92,8 @@ class _TimeSeriesNS(_BridgeNamespace):
                 factor=factor,
                 shift=shift,
                 zero_shift=zero_shift,
-            )
+            ),
+            name=name,
         )
 
     # -- Pulse ----------------------------------------------------------
@@ -101,6 +107,7 @@ class _TimeSeriesNS(_BridgeNamespace):
         factor: float = 1.0,
         shift: float = 0.0,
         zero_shift: float = 0.0,
+        name: str | None = None,
     ) -> Pulse:
         """Construct + register a ``timeSeries Pulse`` (square wave)."""
         return self._bridge._register(
@@ -112,5 +119,6 @@ class _TimeSeriesNS(_BridgeNamespace):
                 factor=factor,
                 shift=shift,
                 zero_shift=zero_shift,
-            )
+            ),
+            name=name,
         )

@@ -60,11 +60,13 @@ class _GeomTransfNS(_BridgeNamespace):
         orientation: Orientation | None = None,
         vecxz: tuple[float, float, float] | None = None,
         roll_deg: float = 0.0,
+        name: str | None = None,
     ) -> Linear:
         """Register a ``geomTransf Linear``. See :class:`Linear`."""
         orientation = self._resolve_orientation(orientation, vecxz)
         return self._bridge._register(
-            Linear(orientation=orientation, vecxz=vecxz, roll_deg=roll_deg)
+            Linear(orientation=orientation, vecxz=vecxz, roll_deg=roll_deg),
+            name=name,
         )
 
     def PDelta(
@@ -73,11 +75,13 @@ class _GeomTransfNS(_BridgeNamespace):
         orientation: Orientation | None = None,
         vecxz: tuple[float, float, float] | None = None,
         roll_deg: float = 0.0,
+        name: str | None = None,
     ) -> PDelta:
         """Register a ``geomTransf PDelta``. See :class:`PDelta`."""
         orientation = self._resolve_orientation(orientation, vecxz)
         return self._bridge._register(
-            PDelta(orientation=orientation, vecxz=vecxz, roll_deg=roll_deg)
+            PDelta(orientation=orientation, vecxz=vecxz, roll_deg=roll_deg),
+            name=name,
         )
 
     def Corotational(
@@ -86,9 +90,11 @@ class _GeomTransfNS(_BridgeNamespace):
         orientation: Orientation | None = None,
         vecxz: tuple[float, float, float] | None = None,
         roll_deg: float = 0.0,
+        name: str | None = None,
     ) -> Corotational:
         """Register a ``geomTransf Corotational``. See :class:`Corotational`."""
         orientation = self._resolve_orientation(orientation, vecxz)
         return self._bridge._register(
-            Corotational(orientation=orientation, vecxz=vecxz, roll_deg=roll_deg)
+            Corotational(orientation=orientation, vecxz=vecxz, roll_deg=roll_deg),
+            name=name,
         )

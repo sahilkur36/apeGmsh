@@ -43,7 +43,13 @@ from ...section.plate import (
     LayeredShellFiberSection,
 )
 from ...transform import Corotational, Linear, PDelta
-from ..types import BeamIntegration, NDMaterial, Section, UniaxialMaterial
+from ..types import (
+    BeamIntegration,
+    GeomTransf,
+    NDMaterial,
+    Section,
+    UniaxialMaterial,
+)
 from ._base import _BridgeNamespace
 
 
@@ -71,7 +77,7 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        transf: _AnyTransf,
+        transf: _AnyTransf | str,
         A: float,
         E: float,
         Iz: float,
@@ -81,6 +87,7 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         c_mass: bool = False,
     ) -> elasticBeamColumn:
+        transf = self._bridge._resolve(transf, base=GeomTransf)
         return self._bridge._register(
             elasticBeamColumn(
                 pg=pg, transf=transf,
@@ -94,8 +101,8 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        transf: _AnyTransf,
-        integration: BeamIntegration,
+        transf: _AnyTransf | str,
+        integration: BeamIntegration | str,
         mass: float | None = None,
         max_iter: int | None = None,
         tol: float | None = None,
@@ -103,8 +110,12 @@ class _ElementNS(_BridgeNamespace):
         """``element forceBeamColumn`` — force-based distributed-plasticity.
 
         Compose the integration rule first (e.g. ``ops.beamIntegration.Lobatto(
-        section=sec, n_ip=5)``) and pass it as ``integration=``.
+        section=sec, n_ip=5)``) and pass it as ``integration=``.  Both
+        ``transf`` and ``integration`` accept object handles or
+        registered names.
         """
+        transf = self._bridge._resolve(transf, base=GeomTransf)
+        integration = self._bridge._resolve(integration, base=BeamIntegration)
         return self._bridge._register(
             forceBeamColumn(
                 pg=pg, transf=transf, integration=integration,
@@ -116,12 +127,14 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        transf: _AnyTransf,
-        integration: BeamIntegration,
+        transf: _AnyTransf | str,
+        integration: BeamIntegration | str,
         mass: float | None = None,
         c_mass: bool = False,
     ) -> dispBeamColumn:
         """``element dispBeamColumn`` — displacement-based distributed-plasticity."""
+        transf = self._bridge._resolve(transf, base=GeomTransf)
+        integration = self._bridge._resolve(integration, base=BeamIntegration)
         return self._bridge._register(
             dispBeamColumn(
                 pg=pg, transf=transf, integration=integration,
@@ -133,7 +146,7 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        transf: _AnyTransf,
+        transf: _AnyTransf | str,
         E: float,
         G: float,
         A: float,
@@ -145,6 +158,7 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         c_mass: bool = False,
     ) -> ElasticTimoshenkoBeam:
+        transf = self._bridge._resolve(transf, base=GeomTransf)
         return self._bridge._register(
             ElasticTimoshenkoBeam(
                 pg=pg, transf=transf,
@@ -161,11 +175,12 @@ class _ElementNS(_BridgeNamespace):
         *,
         pg: str,
         A: float,
-        material: UniaxialMaterial,
+        material: UniaxialMaterial | str,
         rho: float | None = None,
         c_mass: bool = False,
         do_rayleigh: bool = False,
     ) -> Truss:
+        material = self._bridge._resolve(material, base=UniaxialMaterial)
         return self._bridge._register(
             Truss(
                 pg=pg, A=A, material=material,
@@ -178,11 +193,12 @@ class _ElementNS(_BridgeNamespace):
         *,
         pg: str,
         A: float,
-        material: UniaxialMaterial,
+        material: UniaxialMaterial | str,
         rho: float | None = None,
         c_mass: bool = False,
         do_rayleigh: bool = False,
     ) -> CorotTruss:
+        material = self._bridge._resolve(material, base=UniaxialMaterial)
         return self._bridge._register(
             CorotTruss(
                 pg=pg, A=A, material=material,
@@ -222,11 +238,12 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        section: Section,
+        section: Section | str,
         orient: tuple[float, float, float, float, float, float]
         | None = None,
         do_rayleigh: bool = False,
     ) -> ZeroLengthSection:
+        section = self._bridge._resolve(section, base=Section)
         return self._bridge._register(
             ZeroLengthSection(
                 pg=pg,
@@ -238,17 +255,26 @@ class _ElementNS(_BridgeNamespace):
 
     # -- Shell family (Phase 2γ) ----------------------------------------
 
-    def ShellMITC3(self, *, pg: str, section: _ShellSection) -> ShellMITC3:
+    def ShellMITC3(
+        self, *, pg: str, section: _ShellSection | str
+    ) -> ShellMITC3:
+        section = self._bridge._resolve(section, base=Section)
         return self._bridge._register(
             ShellMITC3(pg=pg, section=section)
         )
 
-    def ShellMITC4(self, *, pg: str, section: _ShellSection) -> ShellMITC4:
+    def ShellMITC4(
+        self, *, pg: str, section: _ShellSection | str
+    ) -> ShellMITC4:
+        section = self._bridge._resolve(section, base=Section)
         return self._bridge._register(
             ShellMITC4(pg=pg, section=section)
         )
 
-    def ShellDKGQ(self, *, pg: str, section: _ShellSection) -> ShellDKGQ:
+    def ShellDKGQ(
+        self, *, pg: str, section: _ShellSection | str
+    ) -> ShellDKGQ:
+        section = self._bridge._resolve(section, base=Section)
         return self._bridge._register(
             ShellDKGQ(pg=pg, section=section)
         )
@@ -257,11 +283,12 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        section: _ShellSection,
+        section: _ShellSection | str,
         corotational: bool = False,
         drilling_nt_alpha: float | None = None,
         local_cs: tuple[float, ...] | None = None,
     ) -> ASDShellQ4:
+        section = self._bridge._resolve(section, base=Section)
         return self._bridge._register(
             ASDShellQ4(
                 pg=pg,
@@ -276,11 +303,12 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        section: _ShellSection,
+        section: _ShellSection | str,
         corotational: bool = False,
         drilling_dof: int | None = None,
         local_cs: tuple[float, ...] | None = None,
     ) -> ASDShellT3:
+        section = self._bridge._resolve(section, base=Section)
         return self._bridge._register(
             ASDShellT3(
                 pg=pg,
@@ -297,9 +325,10 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        material: NDMaterial,
+        material: NDMaterial | str,
         body_force: tuple[float, float, float] | None = None,
     ) -> FourNodeTetrahedron:
+        material = self._bridge._resolve(material, base=NDMaterial)
         return self._bridge._register(
             FourNodeTetrahedron(
                 pg=pg, material=material, body_force=body_force,
@@ -310,9 +339,10 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        material: NDMaterial,
+        material: NDMaterial | str,
         body_force: tuple[float, float, float] | None = None,
     ) -> TenNodeTetrahedron:
+        material = self._bridge._resolve(material, base=NDMaterial)
         return self._bridge._register(
             TenNodeTetrahedron(
                 pg=pg, material=material, body_force=body_force,
@@ -323,9 +353,10 @@ class _ElementNS(_BridgeNamespace):
         self,
         *,
         pg: str,
-        material: NDMaterial,
+        material: NDMaterial | str,
         body_force: tuple[float, float, float] | None = None,
     ) -> stdBrick:
+        material = self._bridge._resolve(material, base=NDMaterial)
         return self._bridge._register(
             stdBrick(
                 pg=pg, material=material, body_force=body_force,
@@ -337,12 +368,13 @@ class _ElementNS(_BridgeNamespace):
         *,
         pg: str,
         thickness: float,
-        material: NDMaterial,
+        material: NDMaterial | str,
         plane_type: str = "PlaneStrain",
         pressure: float | None = None,
         rho: float | None = None,
         body_force: tuple[float, float] | None = None,
     ) -> FourNodeQuad:
+        material = self._bridge._resolve(material, base=NDMaterial)
         return self._bridge._register(
             FourNodeQuad(
                 pg=pg,
@@ -360,12 +392,13 @@ class _ElementNS(_BridgeNamespace):
         *,
         pg: str,
         thickness: float,
-        material: NDMaterial,
+        material: NDMaterial | str,
         plane_type: str = "PlaneStrain",
         pressure: float | None = None,
         rho: float | None = None,
         body_force: tuple[float, float] | None = None,
     ) -> Tri31:
+        material = self._bridge._resolve(material, base=NDMaterial)
         return self._bridge._register(
             Tri31(
                 pg=pg,
@@ -383,12 +416,13 @@ class _ElementNS(_BridgeNamespace):
         *,
         pg: str,
         thickness: float,
-        material: NDMaterial,
+        material: NDMaterial | str,
         plane_type: str = "PlaneStrain",
         pressure: float | None = None,
         rho: float | None = None,
         body_force: tuple[float, float] | None = None,
     ) -> SixNodeTri:
+        material = self._bridge._resolve(material, base=NDMaterial)
         return self._bridge._register(
             SixNodeTri(
                 pg=pg,

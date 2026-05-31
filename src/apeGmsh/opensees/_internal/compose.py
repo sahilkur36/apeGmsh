@@ -38,6 +38,7 @@ def _compose_model_h5(
     ndf: int,
     cuts: "Sequence[Any]" = (),
     sweeps: "Sequence[Any]" = (),
+    names: "Sequence[tuple[str, str, int]]" = (),
     snapshot_id: str | None = None,
 ) -> None:
     """Compose a ``model.h5`` from a broker ``fem`` + a populated ``emitter``.
@@ -60,6 +61,10 @@ def _compose_model_h5(
         Written into ``/meta`` by the broker writer.
     cuts, sweeps
         apeGmsh.cuts v4 sequences; empty ⇒ no cuts/sweeps groups.
+    names
+        Bridge-side ``(name, kind, tag)`` alias records; empty ⇒ no
+        ``/opensees/names`` group (byte-equivalent to the pre-sidecar
+        layout).  Excluded from ``model_hash`` (INV-4 carve-out).
     snapshot_id
         When not ``None``, overwrite ``/meta/snapshot_id`` with this
         exact string after meta is written (ADR 0018 INV-8 — opaque
@@ -72,6 +77,7 @@ def _compose_model_h5(
     from ...cuts._h5_io import write_cuts_into
     from ...mesh._femdata_h5_io import NEUTRAL_SCHEMA_VERSION
     from ..emitter.h5 import SCHEMA_VERSION
+    from ._names_h5 import write_names_into
     from .lineage import (
         compute_fem_hash,
         compute_model_hash,
@@ -112,6 +118,9 @@ def _compose_model_h5(
         # /opensees/cuts/ nor /opensees/sweeps/ is created when nothing
         # was supplied.
         write_cuts_into(f, cuts=cuts, sweeps=sweeps)
+        # Bridge-side name aliases (also a no-op when empty); excluded
+        # from model_hash so relabelling never drifts lineage.
+        write_names_into(f, names)
 
         # ADR 0021 — stamp the lineage triple ``/meta/lineage/...``
         # after every zone is written.  ``fem_hash`` is recomputed

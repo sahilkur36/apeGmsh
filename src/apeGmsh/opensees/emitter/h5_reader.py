@@ -585,6 +585,25 @@ class H5Model:
                 out[family] = recs
         return out
 
+    def names(self) -> list[tuple[str, str, int]]:
+        """Return the bridge-side ``(name, kind, tag)`` aliases from
+        ``/opensees/names`` (empty when none were registered).
+
+        This is the read-protocol channel through which the viewers
+        (ADR 0026 — they consume only ``h5_reader``) resolve a
+        primitive's human name back to its ``(kind, tag)`` for labelling.
+        """
+        out: list[tuple[str, str, int]] = []
+        if "opensees" not in self._f:
+            return out
+        ops = self._f["opensees"]
+        if "names" not in ops:
+            return out
+        g = ops["names"]
+        for nm, kd, tg in zip(g["name"][()], g["kind"][()], g["tag"][()]):
+            out.append((str(_decode_bytes(nm)), str(_decode_bytes(kd)), int(tg)))
+        return out
+
     def sections(
         self,
     ) -> list[SectionSimpleRecord | SectionComplexRecord]:
