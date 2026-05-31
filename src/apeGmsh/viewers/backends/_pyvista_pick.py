@@ -102,8 +102,9 @@ class PyVistaPickBackend:
     gesture machine over it.
     """
 
-    def __init__(self, plotter: Any) -> None:
+    def __init__(self, plotter: Any, *, drag_threshold: int = 8) -> None:
         self._plotter = plotter
+        self._drag_threshold = max(2, int(drag_threshold))
         self._iren: Any = None
         self._click_picker: Any = None
         self._hover_picker: Any = None
@@ -277,7 +278,7 @@ class PyVistaPickBackend:
             sx, sy = self._press_pos
             if not self._dragging:
                 dist2 = (px - sx) ** 2 + (py - sy) ** 2
-                if dist2 > 8 ** 2:
+                if dist2 > self._drag_threshold ** 2:
                     self._dragging = True
             if self._dragging:
                 self._update_rubberband(sx, sy, px, py)
