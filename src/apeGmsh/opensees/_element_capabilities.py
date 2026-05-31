@@ -424,6 +424,23 @@ def element_required_floor(
     return None
 
 
+def element_class_ndm_ok(class_name: str) -> "frozenset[int] | None":
+    """Return the set of ``ndm`` values an ``Element`` subclass supports, or
+    ``None`` when unclassifiable (no :data:`_ELEM_REGISTRY` entry).
+
+    Used by the ADR 0048 ``ndm`` compatibility guard: a model's declared
+    ``ndm`` must lie in the intersection of every element's ``ndm_ok``; an
+    empty intersection (a 2D ``quad`` and a 3D ``stdBrick``) is a coordinate-
+    dimension mix OpenSees cannot host. ``None`` is skipped by the guard
+    (conservative — never a false positive on an unregistered class).
+    """
+    token = _CLASS_TOKEN_ALIASES.get(class_name, class_name)
+    spec = _ELEM_REGISTRY.get(token)
+    if spec is not None:
+        return spec.ndm_ok
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Element command renderers
 # ---------------------------------------------------------------------------
