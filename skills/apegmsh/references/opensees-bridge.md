@@ -332,6 +332,18 @@ The canonical component vocabulary is the neutral top-level
 `Recorders` fluent helper was deleted (legacy paths raise
 `ImportError`).
 
+> **Ladruno fork recorder (`.ladruno`).** On the **Ladruno fork**
+> (`nmorabowen/OpenSees@ladruno`) there is a fork-only recorder distinct from
+> STKO's `.mpco`: command **`recorder ladruno …`**, writing **`.ladruno`** HDF5
+> (`GENERATOR="Ladruno"`, `FORMAT_VERSION=1`). It is self-describing (elements
+> declare basis/quadrature) and — unlike `.mpco` — **writes `MODEL/LOCAL_AXES`**
+> (per-class quaternion `FRAME`) for beams, so beam `line_force`/section diagrams
+> can be oriented straight from the file. apeGmsh can emit it via `ops.tcl/py`
+> (`recorder ladruno`); a typed `ops.recorder.Ladruno` and a `Results.from_ladruno`
+> reader are the **recommended** apeGmsh-side additions (not yet shipped). Full
+> emit/read contract: `Ladruno_implementation/ladruno_apegmsh_contract.md` in the
+> fork. The fork is opt-in; stock `openseespy` (no `.ladruno`) stays first-class.
+
 ## Native model.h5 — two zones + schema constants
 
 `ops.h5(path, *, model_name=None, cuts=(), sweeps=())` writes a
