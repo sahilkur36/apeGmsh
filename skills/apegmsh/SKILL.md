@@ -76,6 +76,17 @@ references are tight; reading them is cheap.
 - **`references/workflows.md`** — end-to-end patterns: single-session,
   multi-part assembly, solid–frame coupling, pushover, staged SSI. Read when
   the user asks for a complete example or a workflow they haven't built.
+- **OpenSees fork (Ladruno) features** — this OpenSees is the **Ladruno fork**
+  (`nmorabowen/OpenSees@ladruno`), which adds fork-only features stock `openseespy`
+  lacks: **BezierTri6**, **ExplicitBathe / ExplicitBatheLNVD / CentralDifferenceLadruno**,
+  the **EnergyBalance** recorder, and the **Ladruno `.ladruno` recorder**
+  (`recorder ladruno`, sibling of `.mpco`). Their emit/read contracts (command grammar,
+  `_ELEM_REGISTRY` / `_response_catalog` / `Results.from_ladruno`, the ≥33000 class-tag
+  band, the `.ladruno` schema) live in the fork's own doc:
+  `Ladruno_implementation/ladruno_apegmsh_contract.md` in `nmorabowen/OpenSees@ladruno`.
+  **Read it before wiring any fork-only emitter/reader.** Note: the `.ladruno` recorder
+  **does** write `MODEL/LOCAL_AXES` (per-class quaternion `FRAME`) for beams — unlike
+  vanilla `.mpco`. The fork is opt-in; stock `openseespy` stays first-class.
 
 If the user asks to modify the library itself (not just use it), also skim
 `internal_docs/guide_*.md` in the project — they are the authoritative
