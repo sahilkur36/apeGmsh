@@ -145,6 +145,9 @@ class OpenSeesModel:
     _cuts: tuple["SectionCutDef", ...]
     _sweeps: tuple["SectionSweepDef", ...]
     _lineage: Lineage = field(default_factory=Lineage)
+    #: Bridge-side name aliases — ``(name, kind, tag)`` records read
+    #: from ``/opensees/names`` (ADR sidecar; empty when none registered).
+    _names: tuple[tuple[str, str, int], ...] = field(default_factory=tuple)
 
     # ------------------------------------------------------------------
     # Construction
@@ -223,6 +226,10 @@ class OpenSeesModel:
 
         cuts, sweeps = read_cuts_and_sweeps(spath, meta_path=meta_path)
 
+        from ._internal._names_h5 import read_names
+
+        names = read_names(spath, opensees_root=opensees_root)
+
         with h5_reader.open(spath, meta_path=meta_path) as model:
             meta = model.meta()
             model_name = str(meta.get("model_name", "model"))
@@ -294,6 +301,7 @@ class OpenSeesModel:
             _cuts=tuple(cuts),
             _sweeps=tuple(sweeps),
             _lineage=lineage,
+            _names=tuple(names),
         )
 
     @classmethod
@@ -614,6 +622,38 @@ class OpenSeesModel:
     def sweeps(self) -> tuple["SectionSweepDef", ...]:
         """Return the apeGmsh.cuts ``SectionSweepDef`` records."""
         return self._sweeps
+
+    def names(self) -> tuple[tuple[str, str, int], ...]:
+        """Return the bridge-side ``(name, kind, tag)`` alias records.
+
+        The persisted ``ops.<family>.<Type>(..., name=...)`` aliases
+        (empty when none were registered).  Use :meth:`tag_for_name` /
+        :meth:`name_for` for keyed lookups.
+        """
+        return self._names
+
+    def tag_for_name(self, name: str) -> "tuple[str, int] | None":
+        """Resolve a registered name to ``(kind, tag)``, or ``None``.
+
+        The downstream counterpart of the bridge's authoring-time
+        ``name=`` — lets a results / viewer caller turn ``"rebar"`` back
+        into the OpenSees ``(kind, tag)`` it was emitted as.
+        """
+        for nm, kind, tag in self._names:
+            if nm == name:
+                return kind, tag
+        return None
+
+    def name_for(self, tag: int, kind: str) -> "str | None":
+        """Reverse lookup: the alias for ``(kind, tag)``, or ``None``.
+
+        Useful for labelling a primitive in the viewer / a plot legend
+        by its human name instead of the bare integer tag.
+        """
+        for nm, k, t in self._names:
+            if t == tag and k == kind:
+                return nm
+        return None
 
     # ==================================================================
     # Private — internal construction helpers
@@ -996,6 +1036,7 @@ class OpenSeesModel:
             ndf=int(self._ndf),
             cuts=self._cuts,
             sweeps=self._sweeps,
+            names=self._names,
             snapshot_id=self._snapshot_id or None,
         )
 

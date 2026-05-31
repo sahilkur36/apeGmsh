@@ -3742,6 +3742,12 @@ class apeSees:
     ) -> None:
         self._fem: "FEMData" = fem
         self._primitives: list[Primitive] = []
+        # name -> primitive alias table (bridge-side; the primitive
+        # stays pure/tag-less, so names never touch the lineage hash or
+        # the h5 schema).  Populated by ``_register(..., name=...)`` and
+        # read by ``_resolve`` so reference kwargs accept a name string
+        # as well as the object handle.
+        self._names: dict[str, Primitive] = {}
         self._tags = TagAllocator()
         self._ndm: int | None = None
         self._ndf: int | None = None
@@ -4755,24 +4761,91 @@ class apeSees:
             ndf=int(self._ndf or 0),
             cuts=cuts,
             sweeps=sweeps,
+            names=self._name_records(),
         )
 
     # -- Registration -----------------------------------------------------
 
-    def _register(self, prim: _P) -> _P:
-        """Add ``prim`` to the bridge, allocate its tag, return it."""
+    def _register(self, prim: _P, *, name: str | None = None) -> _P:
+        """Add ``prim`` to the bridge, allocate its tag, return it.
+
+        When ``name`` is given, register it as a bridge-side alias for
+        ``prim`` so reference kwargs (``series=``, ``material=``,
+        ``transf=``, …) can later refer to it by string as well as by
+        the returned handle.  Names are unique per bridge instance; a
+        duplicate raises ``ValueError`` (fail-loud — no silent
+        last-wins).
+        """
         kind = _kind_of(prim)
         self._tags.allocate_for(prim, kind)
         self._primitives.append(prim)
+        if name is not None:
+            existing = self._names.get(name)
+            if existing is not None and existing is not prim:
+                raise ValueError(
+                    f"apeSees: name {name!r} is already registered to a "
+                    f"{type(existing).__name__}; names must be unique per "
+                    "bridge.  Pick a different name= (or pass the object "
+                    "handle directly)."
+                )
+            self._names[name] = prim
         return prim
 
     def register(self, prim: _P) -> _P:
         """Register a standalone primitive with the bridge (P11)."""
         return self._register(prim)
 
+    def _resolve(
+        self,
+        ref: "_P | str",
+        *,
+        base: type[Primitive] = Primitive,
+    ) -> "_P":
+        """Resolve a reference that may be a primitive handle OR a name.
+
+        This is what makes every reference kwarg dual-mode (object or
+        name), mirroring the session side where composites return an
+        object that can also be addressed by its registered name.  A
+        non-string ``ref`` is returned untouched (the common
+        pass-the-handle path).  A ``str`` is looked up in the alias
+        table; an unknown name or a kind mismatch fails loud.
+        """
+        if not isinstance(ref, str):
+            return ref  # type: ignore[return-value]
+        prim = self._names.get(ref)
+        if prim is None:
+            known = ", ".join(sorted(self._names)) or "<none registered>"
+            raise KeyError(
+                f"apeSees: no primitive registered under name {ref!r}.  "
+                f"Known names: {known}.  Pass name= when constructing the "
+                "primitive, or hand the object handle directly."
+            )
+        if not isinstance(prim, base):
+            raise TypeError(
+                f"apeSees: name {ref!r} refers to a {type(prim).__name__}, "
+                f"but a {base.__name__} is required here."
+            )
+        return prim  # type: ignore[return-value]
+
     def tag_for(self, prim: Primitive) -> int | None:
         """Return ``prim``'s allocated tag, or ``None`` if unregistered."""
         return self._tags.tag_for(prim)
+
+    def _name_records(self) -> tuple[tuple[str, str, int], ...]:
+        """Resolve the name-alias table to ``(name, kind, tag)`` records.
+
+        Sorted by name for a deterministic ``/opensees/names`` layout.
+        Skips any alias whose primitive somehow lost its tag (defensive
+        — registration always allocates one).
+        """
+        records: list[tuple[str, str, int]] = []
+        for name, prim in self._names.items():
+            tag = self._tags.tag_for(prim)
+            if tag is None:
+                continue
+            records.append((name, _kind_of(prim), int(tag)))
+        records.sort(key=lambda r: r[0])
+        return tuple(records)
 
     # -- Build -----------------------------------------------------------
 

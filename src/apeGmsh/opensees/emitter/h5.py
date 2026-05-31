@@ -249,7 +249,18 @@ __all__ = ["H5Emitter", "SCHEMA_VERSION"]
 #:     old 2.11.x readers ignore the new columns.  Per ADR 0023 two-
 #:     version reader window, both 2.11.x and 2.12.x files are
 #:     accepted.
-SCHEMA_VERSION: str = "2.12.0"
+#:   * 2.13.0 — bridge-side name aliases: a ``/opensees/names`` sidecar
+#:     group (``name`` / ``kind`` / ``tag`` datasets) persists the
+#:     ``ops.<family>.<Type>(..., name=...)`` aliases so the read side
+#:     (``OpenSeesModel`` / ``Results`` / viewer) can resolve a name
+#:     back to its kind+tag.  Names are labels, not structure: the
+#:     group is in ``MODEL_HASH_EXCLUDED_CHILDREN``, so relabelling
+#:     never perturbs ``model_hash`` (same carve-out as cuts / sweeps /
+#:     regions).  Written only when at least one name is registered, so
+#:     name-free files stay byte-identical to 2.12.x.  Additive — old
+#:     2.12.x readers ignore the group.  Per ADR 0023 two-version
+#:     reader window, both 2.12.x and 2.13.x files are accepted.
+SCHEMA_VERSION: str = "2.13.0"
 
 
 # Map known time-series type tokens to "is path-bearing": for a Path

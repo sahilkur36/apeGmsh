@@ -145,6 +145,7 @@ class ResultsViewer:
         self._details_panel: Any = None
         self._geometry_panel: Any = None
         self._session_panel: Any = None
+        self._definitions_panel: Any = None
         # diagram instance -> side panel; lifecycle tied to registry.
         self._diagram_side_panels: dict = {}
         # (node_id, component) -> TimeHistoryPanel; user-closable from
@@ -336,12 +337,21 @@ class ResultsViewer:
         color_editor, color_editor_spec = make_color_map_editor_dock()
         self._color_editor = color_editor
 
+        # ── Definitions extension dock — bridge-side named primitives ──
+        # Lists the model's ops.<family>.<Type>(..., name=…) aliases by
+        # kind+tag, fed from the ViewerData read seam (H5Model.names).
+        # Hidden by default; surfaced via the View menu like the other
+        # extension docks. Empty (idle hint) for live-FEM snapshots.
+        from .ui._definitions_panel import make_definitions_dock
+        definitions_panel, definitions_spec = make_definitions_dock(view)
+        self._definitions_panel = definitions_panel
+
         # ── Window (creates QApplication) ───────────────────────────
         title = self._title or self._default_title()
         win = ResultsWindow(
             title=title,
             on_close=self._on_close,
-            extension_docks=[output_spec, color_editor_spec],
+            extension_docks=[output_spec, color_editor_spec, definitions_spec],
         )
         self._win = win
 

@@ -40,9 +40,10 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         a2: float | None = None,
         a3: float | None = None,
         a4: float | None = None,
+        name: str | None = None,
     ) -> Steel01:
         return self._bridge._register(
-            Steel01(fy=fy, E=E, b=b, a1=a1, a2=a2, a3=a3, a4=a4)
+            Steel01(fy=fy, E=E, b=b, a1=a1, a2=a2, a3=a3, a4=a4), name=name
         )
 
     def Steel02(
@@ -58,6 +59,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         a3:       float | None = None,
         a4:       float | None = None,
         sig_init: float | None = None,
+        name: str | None = None,
     ) -> Steel02:
         return self._bridge._register(
             Steel02(
@@ -65,7 +67,8 @@ class _UniaxialMaterialNS(_BridgeNamespace):
                 R0=R0, cR1=cR1, cR2=cR2,
                 a1=a1, a2=a2, a3=a3, a4=a4,
                 sig_init=sig_init,
-            )
+            ),
+            name=name,
         )
 
     def ASDSteel1D(
@@ -79,18 +82,23 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         auto_regularization: bool = False,
         buckling_lch: float | None = None,
         fracture: bool = False,
-        slip_material: UniaxialMaterial | None = None,
+        slip_material: UniaxialMaterial | str | None = None,
         radius: float | None = None,
         K_alpha:  float | None = None,
         max_iter: int | None = None,
         tolU: float | None = None,
         tolR: float | None = None,
+        name: str | None = None,
     ) -> ASDSteel1D:
         """``uniaxialMaterial ASDSteel1D`` — ASDEA plastic-damage steel.
 
         Backbone hardening is derived internally from ``(E, sy, su,
-        eu)``. See :class:`ASDSteel1D` for the full contract.
+        eu)``. ``slip_material`` accepts a UniaxialMaterial handle or its
+        registered name. See :class:`ASDSteel1D` for the full contract.
         """
+        slip_material = self._bridge._resolve(
+            slip_material, base=UniaxialMaterial
+        )
         return self._bridge._register(
             ASDSteel1D(
                 E=E, sy=sy, su=su, eu=eu,
@@ -105,7 +113,8 @@ class _UniaxialMaterialNS(_BridgeNamespace):
                 max_iter=max_iter,
                 tolU=tolU,
                 tolR=tolR,
-            )
+            ),
+            name=name,
         )
 
     def ASDConcrete1D(
@@ -118,6 +127,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         lch_ref: float | None = None,
         eta: float = 0.0,
         implex: bool = False,
+        name: str | None = None,
     ) -> ASDConcrete1D:
         """``uniaxialMaterial ASDConcrete1D`` — Petracca plastic-damage (1-D).
 
@@ -131,7 +141,8 @@ class _UniaxialMaterialNS(_BridgeNamespace):
             ASDConcrete1D.from_fc(
                 E=E, fc=fc, ft=ft, Gf=Gf, Gc=Gc, lch_ref=lch_ref,
                 eta=eta, implex=implex,
-            )
+            ),
+            name=name,
         )
 
     def ConfinedConcrete1D(
@@ -150,6 +161,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         auto_regularize: bool = False,
         eta: float = 0.0,
         implex: bool = False,
+        name: str | None = None,
     ) -> ASDConcrete1D:
         """``ASDConcrete1D`` with a Mander confined-concrete backbone.
 
@@ -166,7 +178,8 @@ class _UniaxialMaterialNS(_BridgeNamespace):
                 plastic_ratio=plastic_ratio, n_comp=n_comp,
                 ft=ft, Gf=Gf, lch_ref=lch_ref, auto_regularize=auto_regularize,
                 eta=eta, implex=implex,
-            )
+            ),
+            name=name,
         )
 
     def Concrete01(
@@ -175,9 +188,10 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         epsc0: float,
         fpcu:  float,
         epsU:  float,
+        name: str | None = None,
     ) -> Concrete01:
         return self._bridge._register(
-            Concrete01(fpc=fpc, epsc0=epsc0, fpcu=fpcu, epsU=epsU)
+            Concrete01(fpc=fpc, epsc0=epsc0, fpcu=fpcu, epsU=epsU), name=name
         )
 
     def Concrete02(
@@ -189,12 +203,14 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         lambda_val: float,
         ft:         float,
         Ets:        float,
+        name: str | None = None,
     ) -> Concrete02:
         return self._bridge._register(
             Concrete02(
                 fpc=fpc, epsc0=epsc0, fpcu=fpcu, epsU=epsU,
                 lambda_val=lambda_val, ft=ft, Ets=Ets,
-            )
+            ),
+            name=name,
         )
 
     def Hysteretic(
@@ -216,6 +232,7 @@ class _UniaxialMaterialNS(_BridgeNamespace):
         s3n:     float | None = None,
         e3n:     float | None = None,
         beta:    float = 0.0,
+        name: str | None = None,
     ) -> Hysteretic:
         return self._bridge._register(
             Hysteretic(
@@ -225,29 +242,40 @@ class _UniaxialMaterialNS(_BridgeNamespace):
                 damage1=damage1, damage2=damage2,
                 s3p=s3p, e3p=e3p, s3n=s3n, e3n=e3n,
                 beta=beta,
-            )
+            ),
+            name=name,
         )
 
     def ElasticMaterial(
         self, *,
         E:   float,
         eta: float = 0.0,
+        name: str | None = None,
     ) -> ElasticMaterial:
-        return self._bridge._register(ElasticMaterial(E=E, eta=eta))
+        return self._bridge._register(
+            ElasticMaterial(E=E, eta=eta), name=name
+        )
 
-    def ENT(self, *, E: float) -> ENT:
-        return self._bridge._register(ENT(E=E))
+    def ENT(self, *, E: float, name: str | None = None) -> ENT:
+        return self._bridge._register(ENT(E=E), name=name)
 
     def InitialStress(
         self, *,
-        base_material: UniaxialMaterial,
+        base_material: UniaxialMaterial | str,
         sigma_init:    float,
+        name: str | None = None,
     ) -> InitialStress:
         """``uniaxialMaterial InitialStressMaterial`` — wrap a uniaxial
         material with a per-fiber initial stress.
 
-        See :class:`InitialStress` for the full contract.
+        ``base_material`` accepts a UniaxialMaterial handle or its
+        registered name. See :class:`InitialStress` for the full
+        contract.
         """
+        base_material = self._bridge._resolve(
+            base_material, base=UniaxialMaterial
+        )
         return self._bridge._register(
-            InitialStress(base_material=base_material, sigma_init=sigma_init)
+            InitialStress(base_material=base_material, sigma_init=sigma_init),
+            name=name,
         )

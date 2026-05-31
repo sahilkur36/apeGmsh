@@ -18,6 +18,7 @@ from ...time_series.time_series import (
     Pulse,
     Trig,
 )
+from ..types import TimeSeries
 from ._base import _BridgeNamespace
 
 
@@ -35,31 +36,44 @@ class _PatternNS(_BridgeNamespace):
     """``ops.pattern.<Type>(...)`` — typed methods for Phase 3A."""
 
     # -- Plain ----------------------------------------------------------
-    def Plain(self, *, series: _AnyTimeSeries) -> Plain:
+    def Plain(
+        self,
+        *,
+        series: _AnyTimeSeries | str,
+        name: str | None = None,
+    ) -> Plain:
         """Construct + register a ``pattern Plain``.
+
+        ``series=`` accepts either a TimeSeries handle or the name a
+        TimeSeries was registered under (``ops.timeSeries.Linear(name=...)``).
 
         The returned instance is a context manager: open it with a
         ``with`` block and call ``p.load(...)`` / ``p.sp(...)`` to
         record the loads / prescribed displacements that the pattern
         carries.
         """
-        return self._bridge._register(Plain(series=series))
+        series = self._bridge._resolve(series, base=TimeSeries)
+        return self._bridge._register(Plain(series=series), name=name)
 
     # -- UniformExcitation ---------------------------------------------
     def UniformExcitation(
         self,
         *,
         direction: int,
-        series: _AnyTimeSeries,
+        series: _AnyTimeSeries | str,
+        name: str | None = None,
     ) -> UniformExcitation:
         """Construct + register a ``pattern UniformExcitation``.
 
         Ground-motion pattern; the ``direction`` is a 1-based DOF index
         (1, 2, 3 = translations; 4, 5, 6 = rotations) per the OpenSees
-        manual. The returned instance is technically a context manager
-        for symmetry with :class:`Plain`, but the body is empty —
-        the pattern's payload is the acceleration history itself.
+        manual. ``series=`` accepts a TimeSeries handle or its
+        registered name. The returned instance is technically a context
+        manager for symmetry with :class:`Plain`, but the body is empty
+        — the pattern's payload is the acceleration history itself.
         """
+        series = self._bridge._resolve(series, base=TimeSeries)
         return self._bridge._register(
-            UniformExcitation(direction=direction, series=series)
+            UniformExcitation(direction=direction, series=series),
+            name=name,
         )

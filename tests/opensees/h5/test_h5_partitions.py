@@ -38,18 +38,17 @@ from apeGmsh.opensees.emitter.h5_reader import (
 # ---------------------------------------------------------------------------
 
 def test_schema_version_bumped() -> None:
-    """Schema bumped 2.11.0 -> 2.12.0 per ADR 0035 (ASDEmbeddedNodeElement
-    option exposure).
+    """Schema bumped 2.12.0 -> 2.13.0 (bridge-side name-alias sidecar).
 
-    The 2.11.0 bump (0-based runtime ranks) is now the prior minor;
-    2.12.0 adds five typed columns to /opensees/constraints/embeddedNode
-    so the ASDEmbeddedNodeElement -K/-KP/-rot/-p flags round-trip.
-    Additive — old 2.11.x readers ignore the new columns.  The
-    bridge's :data:`SCHEMA_VERSION` is the single source for the
-    OPENSEES zone (``schema_version.reader_version(OPENSEES)``
-    reads it).
+    2.12.0 (ADR 0035 embeddedNode columns) is now the prior minor;
+    2.13.0 adds the additive ``/opensees/names`` group persisting
+    ``ops.<family>.<Type>(..., name=...)`` aliases.  Additive — old
+    2.12.x readers ignore the new group; it is excluded from
+    ``model_hash`` so relabelling never drifts lineage.  The bridge's
+    :data:`SCHEMA_VERSION` is the single source for the OPENSEES zone
+    (``schema_version.reader_version(OPENSEES)`` reads it).
     """
-    assert SCHEMA_VERSION == "2.12.0"
+    assert SCHEMA_VERSION == "2.13.0"
 
 
 # ---------------------------------------------------------------------------
@@ -236,19 +235,18 @@ def test_h5_reader_round_trip_partitions(tmp_path: Path) -> None:
 def test_h5_reader_back_compat_pre_partition_schema(
     tmp_path: Path,
 ) -> None:
-    """A file written under the previous opensees-zone schema (2.11.0,
-    pre-ADR-0035) opens cleanly under the current reader and
+    """A file written under the previous opensees-zone schema (2.12.0,
+    the prior minor) opens cleanly under the current reader and
     ``H5Model.partitions()`` returns ``[]`` when no partition brackets
     were emitted.
 
-    The 2.11.0 → 2.12.0 bump (ADR 0035) is additive — old readers
-    ignore the new columns on /opensees/constraints/embeddedNode.
-    For files with no embeddedNode rows the two versions are
-    byte-shape-equivalent, so a 2.11.0 stamp on such a file is honored
-    by the two-version reader window from
-    :mod:`apeGmsh.opensees._internal.schema_version`.
+    The 2.12.0 → 2.13.0 bump (name-alias sidecar) is additive — old
+    readers ignore the new ``/opensees/names`` group.  For files with
+    no names the two versions are byte-shape-equivalent, so a 2.12.0
+    stamp on such a file is honored by the two-version reader window
+    from :mod:`apeGmsh.opensees._internal.schema_version`.
     """
-    e = H5Emitter(schema_version="2.11.0")
+    e = H5Emitter(schema_version="2.12.0")
     e.model(ndm=3, ndf=6)
     e.node(1, 0.0, 0.0, 0.0)
     e.node(2, 1.0, 0.0, 0.0)
@@ -259,7 +257,7 @@ def test_h5_reader_back_compat_pre_partition_schema(
     e.write(str(out))
 
     with h5_reader.open(str(out)) as m:
-        assert m.schema_version == "2.11.0"
+        assert m.schema_version == "2.12.0"
         recs = m.partitions()
         assert recs == []
 
