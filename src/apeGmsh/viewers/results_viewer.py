@@ -301,12 +301,12 @@ class ResultsViewer:
         view = self._build_viewer_data()
         scene = build_fem_scene(view)
         self._scene = scene
-        # PickEngine actor inventory — set on the scene before any
-        # diagram attaches so GaussPointDiagram (and future fiber/etc.)
-        # can register their actor in their own attach() instead of
-        # the picker having to walk every active diagram on every click.
-        from .core.results_pick_engine import PickEngine as _PickEngine
-        scene.pick_engine = _PickEngine()
+        # Pick actor inventory — set on the scene before any diagram
+        # attaches so GaussPointDiagram (and future fiber/etc.) can
+        # register their actor in their own attach() instead of the
+        # picker having to walk every active diagram on every click.
+        from .core.results_pick_engine import PickInventory as _PickInventory
+        scene.pick_engine = _PickInventory()
         # ElementVisibility — per-cell hide via the substrate
         # ``vtkGhostType`` array. Box-pick consults the ghost mask,
         # renderers / VTK pickers natively skip ghost-hidden cells.
@@ -1039,10 +1039,10 @@ class ResultsViewer:
         )
         director.dispatcher = dispatcher
         self._dispatcher = dispatcher
-        # Inject the dispatcher into the PickEngine so set_pick_mode
-        # can publish PICK_MODE_CHANGED through the event bus.
-        scene.pick_engine.dispatcher = dispatcher
-        # Same for ElementVisibility so hide/show fires ELEMENT_VISIBILITY_CHANGED.
+        # (ADR 0047 R-D.2b: the PickInventory no longer carries a
+        # dispatcher — the dead set_pick_mode / PICK_MODE_CHANGED path is
+        # gone.)
+        # ElementVisibility gets the dispatcher so hide/show fires ELEMENT_VISIBILITY_CHANGED.
         scene.element_visibility.dispatcher = dispatcher
         # And OpacityController for OPACITY_CHANGED.
         if scene.opacity_controller is not None:
