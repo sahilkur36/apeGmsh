@@ -21,7 +21,7 @@ the only mitigation is global VTK state that also disturbs the
 wireframe overlay. Real spheres sit a finite radius above / below the
 plane and render unambiguously.
 
-Picking stays on the legacy ``PickEngine`` path (deferred to R-D): the
+Picking stays on the legacy ``PickInventory`` path (deferred to R-D): the
 diagram registers the backend's glyph actor and reverse-maps a picked
 cell index back to a GP. Because the backend rebuilds the glyph actor
 on each ``update_layer``, the registration is refreshed whenever the
@@ -89,7 +89,7 @@ class GaussPointDiagram(ScalarBarSupport, Diagram):
         # a plain ColorSpec through the backend.
         self._lut: Any = None
         self._lut_conn: Any = None
-        # The glyph actor currently registered on the scene PickEngine.
+        # The glyph actor currently registered on the scene PickInventory.
         self._registered_actor: Any = None
 
     # ------------------------------------------------------------------
@@ -274,7 +274,7 @@ class GaussPointDiagram(ScalarBarSupport, Diagram):
                 pass
         self._lut = None
         self._lut_conn = None
-        # Drop the GP actor from the PickEngine inventory before
+        # Drop the GP actor from the PickInventory inventory before
         # clearing local state.
         self._unregister_pick()
         if self._backend is not None and self._handle is not None:
@@ -353,7 +353,7 @@ class GaussPointDiagram(ScalarBarSupport, Diagram):
 
     def _register_pick(self) -> None:
         """(Re)register the current backend glyph actor with the
-        scene's :class:`PickEngine`.
+        scene's :class:`PickInventory`.
 
         The backend rebuilds the glyph actor on every ``update_layer``,
         so the registration is refreshed whenever the actor identity

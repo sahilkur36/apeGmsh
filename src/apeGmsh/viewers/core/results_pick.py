@@ -19,7 +19,6 @@ the trackball's spin gesture untouched.
 """
 from __future__ import annotations
 
-from contextlib import nullcontext
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Optional
 
@@ -306,6 +305,13 @@ def install_results_pick(
     # when the scene carries no cell_dim (older builds) → gate is inert.
     cell_dim = np.asarray(getattr(scene, "cell_dim", np.array([], dtype=np.int8)))
 
+    # element_id -> representative substrate cell index. ADR 0047 R-D.2b:
+    # GP markers are now always pickable, so an element-mode click can land
+    # on a GP glyph (which has no substrate cell). We resolve it to the
+    # GP's owning element and highlight that element via this cell. Reuses
+    # the scene's existing inverse map.
+    element_id_to_cell = getattr(scene, "element_id_to_cell", {}) or {}
+
     _press_pos: list[tuple | None] = [None]
     _dragging: list[bool] = [False]
     _tags: dict[str, int] = {}
@@ -385,8 +391,30 @@ def install_results_pick(
         if mode == MODE_NODE:
             return PickResult(kind=MODE_NODE, world=world)
         if mode == MODE_ELEMENT:
-            # Dim-pick gate: a click on a cell whose dim is filtered out
-            # resolves to nothing (ADR 0045 S4b).
+            # Resolve-time routing (ADR 0047 R-D.2b): GP markers are now
+            # always pickable, so an element-mode click may land on a GP
+            # glyph instead of the substrate. If the picked actor is a
+            # registered GP marker, resolve to its owning element;
+            # otherwise treat the hit as a substrate cell.
+            try:
+                picked_actor = picker.GetActor()
+            except Exception:
+                picked_actor = None
+            gp_hit = (
+                gp_resolver(picked_actor, int(cell_id))
+                if (gp_resolver is not None and picked_actor is not None)
+                else None
+            )
+            if gp_hit is not None:
+                element_id = int(gp_hit[0])
+                hl_cell = element_id_to_cell.get(element_id)
+                return PickResult(
+                    kind=MODE_ELEMENT,
+                    world=world,
+                    element_id=element_id,
+                    cell_id=int(hl_cell) if hl_cell is not None else None,
+                )
+            # Substrate path — dim-pick gate then cell→element.
             if not _accept_cell_dim(cell_dim, cell_id, controller.active_dims):
                 return None
             try:
@@ -575,27 +603,15 @@ def install_results_pick(
         _abort(caller, _tags["lmb_release"])
         _hide_rubberband()
 
-        # Alt-pick-through: when the user holds Alt on release, the
-        # PickEngine flips every registered inventory actor to
-        # SetPickable(True) for the duration of this one pick so the
-        # filter set by ``set_pick_mode`` is bypassed. Useful in GP
-        # mode when the user wants to reach a fiber, or vice versa.
-        try:
-            is_alt = bool(caller.GetAltKey())
-        except Exception:
-            is_alt = False
-        engine = getattr(scene, "pick_engine", None)
-        pick_ctx = (
-            engine.with_pick_through()
-            if (is_alt and engine is not None)
-            else nullcontext()
-        )
-
+        # ADR 0047 R-D.2b: Alt-pick-through removed. It existed only to
+        # force-enable the inventory actors that the (dead) per-mode
+        # allow-list left non-pickable — the workaround for GP picking
+        # being broken without Alt. GP markers are pickable now and the
+        # controller routes by mode at resolve time, so Alt is moot.
         if was_drag:
             if on_box_pick is None:
                 return
-            with pick_ctx:
-                box_result = _build_box_result(sx, sy, x, y)
+            box_result = _build_box_result(sx, sy, x, y)
             if box_result is None:
                 return
             try:
@@ -607,8 +623,7 @@ def install_results_pick(
                     file=sys.stderr,
                 )
             return
-        with pick_ctx:
-            result = _build_result(x, y)
+        result = _build_result(x, y)
         if result is None:
             return
         try:

@@ -145,7 +145,7 @@ class FEMSceneData:
     node_tree
         scipy ``cKDTree`` over the node coordinates — built lazily.
     pick_engine
-        :class:`PickEngine` actor inventory for 3-D diagram picking
+        :class:`PickInventory` actor inventory for 3-D diagram picking
         (gauss markers, etc.). Set by :class:`ResultsViewer` at open;
         ``None`` in headless / test contexts where no picker is wired.
         Diagrams check for ``None`` before calling ``register_actor``.
@@ -178,7 +178,7 @@ class FEMSceneData:
     )
     actor: Any = None
     node_tree: Any = None              # scipy.spatial.cKDTree, lazy
-    pick_engine: Any = None            # PickEngine (results_pick_engine)
+    pick_engine: Any = None            # PickInventory (results_pick_engine)
     element_visibility: Any = None     # ElementVisibility (element_visibility)
     opacity_controller: Any = None     # OpacityController (opacity_controller)
 
