@@ -90,6 +90,8 @@ __all__ = [
     "emit_element_spec",
     "emit_element_spec_partitioned",
     "validate_node_ndf_element_compat",
+    "infer_node_ndf",
+    "assert_ndm_compatible",
     "emit_initial_stress_addtoparameter",
     "emit_initial_stress_global",
     "resolve_initial_stress_elements",
@@ -269,6 +271,129 @@ def validate_node_ndf_element_compat(
                     acc[t] = inter
                     owner[t] = etype
     return None
+
+
+def _infer_ndf_from_incidence(
+    node_to_classes: "dict[int, list[str]]", ndm: int,
+) -> "dict[int, int]":
+    """Pure core of ADR 0048 per-node ndf inference.
+
+    ``node_to_classes`` maps a node tag -> the OpenSees element CLASS names
+    incident on it. Returns ``{tag: ndf}`` where ``ndf`` is the ``max`` of
+    each incident element's :func:`required_floor`, validated against every
+    incident element's ``ndf_ok``.
+
+    Raises :class:`BridgeError` when:
+
+    * an incident element class is unclassifiable (no registry entry — its
+      ndf cannot be inferred), or
+    * the chosen ``ndf`` is rejected by some incident element's ``ndf_ok``.
+      This ``∩`` gate is STRICTER than the ndf_ok-disjoint check in
+      :func:`validate_node_ndf_element_compat`: it also catches a beam
+      (needs 6) sharing a solid node (accepts only 3), where the two
+      ndf_ok sets are NOT disjoint ({3,6} ∩ {3} = {3}) yet the node still
+      cannot be assembled. The fix is always SEPARATE coincident nodes +
+      ``equalDOF`` on the shared DOFs (ADR 0046 / 0048).
+    """
+    from .._element_capabilities import (
+        element_class_ndf_ok,
+        element_required_floor,
+    )
+
+    result: dict[int, int] = {}
+    for tag, classes in node_to_classes.items():
+        incident: list[tuple[str, "frozenset[int]"]] = []
+        floor = 0
+        for cls in classes:
+            ndf_ok = element_class_ndf_ok(cls)
+            fl = element_required_floor(cls, ndm)
+            if ndf_ok is None or fl is None:
+                raise BridgeError(
+                    f"node {tag}: element class {cls!r} is not in the "
+                    f"capability registry, so its per-node ndf cannot be "
+                    f"inferred. Add an _ELEM_REGISTRY entry (ndf_ok + "
+                    f"ndf_required) for {cls!r} before emitting."
+                )
+            incident.append((cls, ndf_ok))
+            if fl > floor:
+                floor = fl
+        for cls, ndf_ok in incident:
+            if floor not in ndf_ok:
+                raise BridgeError(
+                    f"mesh node {tag}: its incident elements require "
+                    f"ndf={floor} but {cls!r} only accepts ndf "
+                    f"{sorted(ndf_ok)}. OpenSees cannot assemble a shared node "
+                    f"whose ndf any incident element rejects "
+                    f"(FE_Element::setID truncates / mis-maps the element's "
+                    f"equation array). Give the interface SEPARATE coincident "
+                    f"nodes and tie the shared DOFs with g.constraints.equal_dof "
+                    f"(conformal) or g.constraints.tie (non-matching). See "
+                    f"ADR 0046 / 0048."
+                )
+        result[tag] = floor
+    return result
+
+
+def infer_node_ndf(
+    fem: "FEMData", elements: "Iterable[Element]", ndm: int,
+) -> "dict[int, int]":
+    """ADR 0048 per-node ndf inference over the declared element specs.
+
+    Walks each element spec's physical group to its mesh nodes (via
+    :func:`expand_pg_to_elements`), then applies
+    :func:`_infer_ndf_from_incidence`. Returns ``{node_tag: ndf}`` for every
+    node touched by >= 1 declared element.
+
+    Nodes touched by NO declared element are absent from the result — the
+    caller fails loud on them (a free DOF carrier is a modeling error),
+    unless they are user-declared nodes carrying their own stated ndf
+    (ADR 0049).
+    """
+    node_to_classes: dict[int, list[str]] = {}
+    for spec in elements:
+        etype = type(spec).__name__
+        for _eid, node_tags in expand_pg_to_elements(fem, spec.pg):  # type: ignore[attr-defined]
+            for raw in node_tags:
+                node_to_classes.setdefault(int(raw), []).append(etype)
+    return _infer_ndf_from_incidence(node_to_classes, ndm)
+
+
+def assert_ndm_compatible(class_names: "Iterable[str]", ndm: int) -> None:
+    """ADR 0048 ``ndm`` compatibility guard.
+
+    ``ndm`` must lie in the intersection of every declared element's
+    ``ndm_ok``. An empty intersection (a 2D ``quad`` declared alongside a 3D
+    ``stdBrick``) raises :class:`BridgeError` — you cannot mix coordinate
+    dimensions in one OpenSees domain. Unclassifiable element types are
+    skipped (conservative). A non-empty intersection that excludes ``ndm``
+    also raises (the elements share a model, but not at this ``ndm``).
+    """
+    from .._element_capabilities import element_class_ndm_ok
+
+    inter: "set[int] | None" = None
+    seen: list[str] = []
+    for cls in class_names:
+        ok = element_class_ndm_ok(cls)
+        if ok is None:
+            continue
+        if inter is None:
+            inter = set(ok)
+        else:
+            narrowed = inter & set(ok)
+            if not narrowed:
+                raise BridgeError(
+                    f"element {cls!r} (ndm {sorted(ok)}) cannot share a model "
+                    f"with the already-declared {seen!r} (common ndm "
+                    f"{sorted(inter)}): you cannot mix 2D and 3D elements in "
+                    f"one OpenSees domain."
+                )
+            inter = narrowed
+        seen.append(cls)
+    if inter is not None and ndm not in inter:
+        raise BridgeError(
+            f"ops.model(ndm={ndm}) is incompatible with the declared elements "
+            f"{seen!r}, whose common ndm is {sorted(inter)}."
+        )
 
 
 def _emit_node_with_broker_ndf(
