@@ -296,13 +296,21 @@ fork-dependent read work. **Direct-drive stays the documented fallback throughou
   test + widened `test_catalog_coverage_v1` (4 Tet10 rows); 1496 primitives/contract/
   emitter/response regression green; `solid.py` mypy-clean.
 
-### B3 — Run gating + clear fork-build error  *(no fork)*
-- At `ops.run()`, when the deck contains a `BezierTri6`/`BezierTet10` and the live
-  `openseespy` build lacks the class, raise a clear
-  *"element BezierTri6 requires the Ladruno fork build (≥33000 tag band); meshing
-  + deck emission work on any build — see direct-drive fallback."*
-- **Verify:** a stock-build run with a bezier element in the deck raises the exact
-  message (not a raw openseespy KeyError); a tcl/py export still succeeds.
+### B3 — Run gating + clear fork-build error  *(no fork)* — ✅ DONE
+- `LiveOpsEmitter.element` (`emitter/live.py`) gates the `_FORK_ONLY_ELEMENTS`
+  (`{BezierTri6, BezierTet10}`): it creates the element, then raises
+  `RuntimeError(_fork_element_required(...))` if the live build **either** raises
+  (try/except) **or** silently drops it (post-check via `getEleTags` — stock
+  openseespy warns + returns without creating). The verdict is cached
+  (`_fork_element_verified`) after the first success → O(1) per-element overhead;
+  the probe is skipped inside a non-zero partition block (the `_NoOpOps` stand-in
+  has no real domain). Deck emission (`ops.tcl`/`ops.py`) is untouched — only the
+  in-process run is gated.
+- **Shipped & verified:** 8 fork-free unit tests (`test_bezier_run_gate.py` — both
+  stock failure modes × both elements, fork-build pass+cache, non-fork passthrough,
+  partition-skip) + 1 `live` happy-path (`test_bezier_run_gate_live.py`, skips on
+  non-fork builds; on the fork build the gate passes + caches, no false positive).
+  323 live/parity/conformance/runnable-deck regression green; `live.py` mypy-clean.
 
 ### B4 — Result read (GP stress/strain) via the neutral basis lib  *(fixtures; depends on recorder-plan basis lib)*
 - Read bezier GP stress/strain from a `.ladruno` (or `.mpco`) fixture: map the
