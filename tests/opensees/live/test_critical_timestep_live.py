@@ -74,14 +74,18 @@ def test_analyze_explicit_runs_and_substeps() -> None:
     ops = apeSees(cast("object", make_two_node_beam()))  # type: ignore[arg-type]
     _truss(ops, rho=8000.0)
     # duration well above dt_cr (~2e-3) forces several sub-steps.
-    assert ops.analyze_explicit(duration=0.01) == 0
+    res = ops.analyze_explicit(duration=0.01)
+    assert res.dt_cr > 0.0
+    assert res.n >= 1
+    assert res.dt * res.n == pytest.approx(0.01)
 
 
 @pytest.mark.live
-def test_analyze_explicit_dt_max_runs() -> None:
+def test_analyze_explicit_dt_max_caps_the_step() -> None:
     ops = apeSees(cast("object", make_two_node_beam()))  # type: ignore[arg-type]
     _truss(ops, rho=8000.0)
-    assert ops.analyze_explicit(duration=0.01, dt_max=1e-4) == 0
+    res = ops.analyze_explicit(duration=0.01, dt_max=1e-4)
+    assert res.dt <= 1e-4 + 1e-15
 
 
 @pytest.mark.live

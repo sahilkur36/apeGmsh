@@ -68,7 +68,34 @@ live: `dt_cr>0` on a `-rho` truss, `analyze_explicit(duration=…)` ret 0 with
 `getTime()≈duration`, and `ValueError` on a pure nodal-mass / no-cfl model · no
 regression on `tests/opensees/unit`+`contract` · `sync_skill.py --check` exit 0.
 
+## Post-review hardening (6-agent expert panel, 2026-06-01)
+
+A multi-agent review (opensees-expert + fem-mechanics-expert lenses + adversarial
+verification against the fork C++) assessed the helpers + system choice. Applied:
+
+- **`analyze_explicit` now returns `ExplicitRunResult(n, dt, dt_cr)`** (was bare
+  `int`) and **raises `RuntimeError`** on a non-zero `analyze` (no longer swallows a
+  divergence / `-cflAbort` code).
+- **Unguarded-run warning** — `analyze_explicit` warns
+  (`OpenSeesExplicitSolverWarning`) when the integrator has neither `cfl_abort` nor
+  `recompute`, since the one-shot `dt_cr` is blind to a stiffening tangent (the #1
+  risk). The fix is realized as *introspect-and-warn* (the integrator owns the flags;
+  the helper does not emit/mutate it) rather than the panel's literal "drive
+  `-recompute -cflAbort`" — the apeGmsh-correct form.
+- **`c_mass=True` + `Diagonal`/`MPIDiagonal` → `BridgeError`** (`_check_explicit_solver_compat`,
+  called from `analyze`/`analyze_explicit`/`critical_time_step`): silently-wrong
+  combo (off-diagonal consistent mass dropped; the `-lumped` salvage is unreachable).
+- **Explicit integrator + non-diagonal system → warning** (correct but loses O(N)).
+- **`safety=0.9` kept** (NOT lowered): empirically a 3000-step ExplicitBathe run at
+  `0.9·dt_cr` stays bounded; the getter returns ~10× the analytical CD limit for a
+  truss yet the NB scheme is stable there. Comment locks it to the getter's value.
+- **Prime kept** (panel's "drop it" suggestion refuted for the deployed build —
+  `criticalTimeStep()` returns `0.0` until a step runs on build 605affeb).
+- `_dtcr_or_raise` message clarified (element-loop eigensolve; nodal mass excluded;
+  no claim about the direction of the omission).
+
 ## Non-goals (unchanged)
 
-EnergyBalance text recorder (energy already in `.ladruno -G energy`). `-recompute`
-mid-run enforcement is a fork-side concern. Mass scaling (roadmap §5.1).
+EnergyBalance text recorder (energy already in `.ladruno -G energy`). Mass scaling
+(roadmap §5.1). Mid-run `dt_cr` re-sizing inside the helper (use the integrator's
+`recompute=`/`cfl_abort=` guard instead).
