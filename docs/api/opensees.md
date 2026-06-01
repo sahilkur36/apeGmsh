@@ -28,21 +28,20 @@ re-declared explicitly on ``ops``
 
 > **Loads do not auto-emit.** A ``g.loads.*`` case reaches the solver
 > only via ``p.from_model(case)`` inside a pattern (or an ad-hoc
-> ``p.load``). Nothing auto-emits, so there is no double-count trap; a
-> declared case that no pattern imported triggers
-> ``WarnUnconsumedModelLoads`` at build (silence with
-> ``ops.ignore_model_loads(case)``). A staged model must keep every
-> pattern stage-scoped (``s.pattern(series=...)``) — a global pattern +
+> ``p.load``). Nothing auto-emits, so there is no double-count trap; the
+> deck is authoritative — the bridge applies exactly the cases you import
+> and does not audit the geometry's declared cases, so a case you don't
+> import is simply not applied. A staged model must keep every pattern
+> stage-scoped (``s.pattern(series=...)``) — a global pattern +
 > ``ops.stage(...)`` raises ``BridgeError``.
 
 Since the teardown, the bridge has been progressively widened:
 
-- **Loads emit automatically** from ``fem.nodes.loads``. Loads
-  declared via ``g.loads.*`` are synthesized into ``Plain``
-  patterns by the broker-load emitter and land in the runnable
-  Tcl/Py deck (and the live/run path) without an ``ingest`` step —
-  purely additive on top of any bridge-registered pattern
-  primitives. (See the double-declaration caveat above.)
+- **Loads are opt-in** (ADR 0051). A ``g.loads.*`` case reaches the
+  runnable Tcl/Py deck (and the live/run path) only when a bridge
+  pattern imports it with ``p.from_model(case)`` — or you author the
+  load directly with ``p.load(...)``. Nothing auto-emits; the deck is
+  authoritative (see the note above).
 - **MP constraints emit automatically** from ``fem.nodes.constraints``
   / ``fem.elements.constraints``
   ([ADR 0022](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0022-mp-constraint-emission-fanout.md),
