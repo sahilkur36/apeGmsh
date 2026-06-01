@@ -15,6 +15,11 @@ point of use, never force the fork.
 | **EnergyBalance** | recorder | fork-only |
 | **`.ladruno` recorder** | recorder | `recorder ladruno` — note `.ladruno`, a sibling of the vanilla `.mpco` |
 
+The `.ladruno` recorder **does** write `MODEL/LOCAL_AXES` (per-class quaternion
+`FRAME`) for beams — unlike vanilla `.mpco`, which omits beam local axes. Don't
+carry the stale "MPCO carries no beam LOCAL_AXES" assumption into `.ladruno`
+readers.
+
 ## Contract lives in the fork repo
 
 The exact emit/read contracts — command grammar, apeGmsh touch-points
