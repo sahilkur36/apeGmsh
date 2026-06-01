@@ -26,8 +26,16 @@ build (it's just an `integrator <Type> ...` line); the fork is required only to
 *run* the deck — stock OpenSees raises "unknown integrator" at `ops.analyze(...)`.
 Defaults: Bathe `p∈(0,1)`=0.54, LNVD `alpha∈[0,1)`=0.80; `lump` defaults to RowSum
 on the Bathe schemes and Diagonal on CentralDifferenceLadruno (omit to inherit).
-The runtime `criticalTimeStep()` query and an auto-`dt` sub-stepping helper are
-**not yet** exposed on the bridge (deferred — pick `dt` by hand for now).
+Pair with `ops.system.Diagonal()` (lumped diagonal mass) for explicit runs.
+
+The runtime critical-time-step (`dt_cr`) is exposed on the bridge:
+`ops.critical_time_step() -> float` (builds, primes one tiny step, queries — needs
+an explicit integrator with `cfl=True`, a `Transient` analysis, and **element**
+mass density via `-rho`/`-mass`; the eigensolve ignores `ops.mass` nodal mass).
+`ops.analyze_explicit(duration=, safety=0.9, dt_max=None)` drives the whole run:
+it queries `dt_cr` and sub-steps `analyze(n, duration/n)` with `n=ceil(duration/
+(safety·dt_cr))` (ADR D5). Both raise `ValueError` on a non-usable `dt_cr` (no
+`cfl`, non-explicit integrator, or pure nodal-mass model).
 
 The `.ladruno` recorder **does** write `MODEL/LOCAL_AXES` (per-class quaternion
 `FRAME`) for beams — unlike vanilla `.mpco`, which omits beam local axes. Don't
