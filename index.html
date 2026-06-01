@@ -2595,6 +2595,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -2833,6 +2837,62 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="examples/compose-modules/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Compose modules
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="examples/pushover-steel-frame/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Pushover of a steel moment frame
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -2849,8 +2909,6 @@
   
     
     
-      
-        
       
         
       
@@ -3091,34 +3149,6 @@
     
   
     Modal analysis
-  
-
-    
-  </span>
-  
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="examples/notebooks/19_pushover_elastoplastic/" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    
-  
-    Pushover (elastoplastic)
   
 
     
@@ -5875,7 +5905,7 @@ between Gmsh and any downstream solver.</p>
 <p>Two-stage pipeline:</p>
 <ol>
 <li><strong>Define</strong> (pre-mesh): <code>g.constraints.equal_dof(...)</code>,
-   <code>g.loads.point("TopFace", force_xyz=...)</code>,
+   <code>g.loads.point.force("TopFace", force=...)</code>,
    <code>g.masses.volume("Concrete", density=2400)</code>, etc. Returns
    lightweight definition dataclasses that reference <em>labels</em>, not raw
    tags.</li>
