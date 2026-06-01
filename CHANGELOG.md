@@ -16,6 +16,10 @@ The 3D sibling of `BezierTri6` — a 10-node quadratic Bézier (Bernstein) tetra
 
 The **O11 node-order identity is locked by a machine-precision test** (`tests/opensees/integration/test_bezier_tet10_o11.py`): a straight-sided box meshed to `tet10` has every mid-edge node within `2.2e-16` (relative) of its corner-pair midpoint — confirming the Gmsh tet10 order is byte-identical to the element's control-point order (the `node_reorder={11: identity}` decision; a wrong order would silently yield a wrong stiffness). Reads wired in `_response_catalog` (`ELE_TAG_BezierTet10 = 33001`) under `Tet_GL_2` + `Custom`; the Tet10 GP index order is clean (matches `_TET_GL_2_COORDS` — no permutation, unlike the Tri6 sibling).
 
+### ADDED — Bézier elements: clear fork-build error when run on a stock build
+
+Running a deck that contains a `BezierTri6` / `BezierTet10` **in-process** on a non-fork (stock) openseespy build now raises a clear *"element BezierTri6 requires the Ladruno fork build … only running the deck in-process needs the fork … use the direct-drive fallback"* error, instead of a cryptic openseespy error or a silent no-op that fails much later. `LiveOpsEmitter.element` verifies the fork-only element actually built (catching both the raise and the silent-warn-and-drop stock behaviors via `getEleTags`), caches the verdict after the first success (O(1) overhead), and skips the probe inside non-zero partition blocks. **Deck emission (`ops.tcl` / `ops.py`) is unaffected** — only the in-process run is gated; direct-drive remains the supported fallback on stock builds.
+
 ### ADDED — `ops.profiler.*` (Ladruno-fork stack profiler) + `analyze(profile=…)`
 
 apeGmsh can now emit the Ladruno fork's stack-profiler control command, which brackets the analyze loop and writes one `profile.h5`. It is a *control* command, not a model primitive or recorder — no class tag, no `_response_catalog` entry, no reader (read `profile.h5` with the fork's out-of-tree `Ladruno_tools/profiler_viewer`).

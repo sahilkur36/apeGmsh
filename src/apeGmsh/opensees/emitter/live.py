@@ -39,6 +39,23 @@ _PROFILER_FORK_REQUIRED = (
     "profiled path."
 )
 
+#: Element types that exist only in the Ladruno fork build (private ≥33000
+#: class-tag band). Emitting their ``element …`` line works on any build;
+#: the fork is required only to *run* the deck in-process — gated in
+#: :meth:`LiveOpsEmitter.element` below.
+_FORK_ONLY_ELEMENTS = frozenset({"BezierTri6", "BezierTet10"})
+
+
+def _fork_element_required(ele_type: str) -> str:
+    return (
+        f"element {ele_type} requires the Ladruno fork build of OpenSees "
+        f"(fork-only, private ≥33000 class-tag band) — the live build "
+        f"does not know this element. Meshing and deck emission "
+        f"(ops.tcl(...) / ops.py(...)) work on any build; only running the "
+        f"deck in-process needs the fork. To run on a stock build, use the "
+        f"direct-drive fallback (see bezier_apegmsh_integration.md)."
+    )
+
 
 class _NoOpOps:
     """A no-op stand-in for the openseespy module.
@@ -122,6 +139,10 @@ class LiveOpsEmitter:
         self._before_step_hooks: list[Callable[[], None]] = []
         self._after_step_hooks: list[Callable[[], None]] = []
         self._step_hooks_registered: bool = False
+        # Fork-only element gate (B3). Once a fork-only element (BezierTri6
+        # / BezierTet10) is confirmed to actually build on the live ops, the
+        # check is skipped for the rest of the session (O(1) overhead).
+        self._fork_element_verified: bool = False
 
     # -- Model ---------------------------------------------------------------
 
@@ -242,7 +263,42 @@ class LiveOpsEmitter:
     def element(
         self, ele_type: str, tag: int, *args: int | float | str,
     ) -> None:
+        # Fork-only elements (B3): verify the live build actually knows the
+        # element instead of letting it fail later with a cryptic openseespy
+        # error. Skipped while a non-zero partition block is open (the
+        # ``_NoOpOps`` stand-in has no real domain to probe) and after the
+        # first successful build.
+        if (
+            ele_type in _FORK_ONLY_ELEMENTS
+            and not self._in_partition
+            and not self._fork_element_verified
+        ):
+            self._element_fork_gated(ele_type, tag, args)
+            return
         self._ops.element(ele_type, tag, *args)
+
+    def _element_fork_gated(
+        self, ele_type: str, tag: int, args: "tuple[int | float | str, ...]",
+    ) -> None:
+        """Create a fork-only element, raising a clear fork-build error if
+        the live build rejects it (by raising) or silently drops it (no
+        element created — stock openseespy warns and returns)."""
+        try:
+            self._ops.element(ele_type, tag, *args)
+        except Exception as e:
+            raise RuntimeError(_fork_element_required(ele_type)) from e
+        try:
+            tags = self._ops.getEleTags()
+        except Exception:
+            # Build lacks getEleTags — don't false-positive; the element
+            # call did not raise, so trust it.
+            self._fork_element_verified = True
+            return
+        if isinstance(tags, int):  # some builds return a bare int for 1 elem
+            tags = [tags]
+        if tag not in (tags or []):
+            raise RuntimeError(_fork_element_required(ele_type))
+        self._fork_element_verified = True
 
     # -- Time series --------------------------------------------------------
 
