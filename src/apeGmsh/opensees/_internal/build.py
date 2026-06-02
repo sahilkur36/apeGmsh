@@ -665,14 +665,19 @@ class RayleighRecord:
     ``rayleigh $alphaM $betaK $betaK0 $betaKc`` command, already resolved:
     a ratio-helper fit (when the ratio form is used) is applied at the call
     site in ``_DampingNS.rayleigh`` before this record is built, so the
-    emitter just renders the four numbers.  Global scope only in D1; region
-    scoping (``on=``) lands in D2.
+    emitter just renders the four numbers.
+
+    ``on`` is the scope (ADR 0053 D2): an empty tuple means **global**
+    (a bare ``rayleigh`` line); a non-empty tuple of physical-group names
+    means **region-scoped** — each name resolves to its elements at emit
+    time and emits one ``region $tag -ele … -rayleigh αM βK βK0 βKc`` line.
     """
 
     alpha_m: float
     beta_k: float
     beta_k_init: float
     beta_k_comm: float
+    on: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

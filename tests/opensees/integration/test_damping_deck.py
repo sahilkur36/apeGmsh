@@ -9,7 +9,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, cast
 
+import pytest
+
 from apeGmsh.opensees import apeSees
+from apeGmsh.opensees.apesees import RayleighOverwriteWarning
 
 from tests.opensees.fixtures.fem_stub import make_two_column_frame
 
@@ -66,3 +69,82 @@ def test_ratio_form_initial_default_lands_in_betaK0(tmp_path: Path) -> None:
     assert float(beta_k) == 0.0
     assert float(beta_k0) > 0.0
     assert float(beta_kc) == 0.0
+
+
+# --- D2: region-scoped (on=) ----------------------------------------------
+
+def _region_rayleigh_lines(tcl_text: str) -> list[str]:
+    return [
+        ln.strip() for ln in tcl_text.splitlines()
+        if ln.strip().startswith("region") and "-rayleigh" in ln
+    ]
+
+
+def test_on_pg_emits_region_ele_rayleigh(tmp_path: Path) -> None:
+    ops = _frame_with_rayleigh(alpha_m=0.1, beta_k=0.02, on="Cols")
+    (line,) = _region_rayleigh_lines(_deck(ops, tmp_path, "tcl"))
+    toks = line.split()
+    assert toks[0] == "region"
+    # region $tag -ele <e1> <e2> -rayleigh 0.1 0.02 0.0 0.0
+    ele = toks[toks.index("-ele") + 1: toks.index("-rayleigh")]
+    assert len(ele) == 2 and all(t.lstrip("-").isdigit() for t in ele)
+    assert toks[toks.index("-rayleigh") + 1:] == ["0.1", "0.02", "0.0", "0.0"]
+
+
+def test_on_list_emits_one_region_per_group(tmp_path: Path) -> None:
+    # The frame has one element PG; passing it twice (as a list) must emit
+    # one region-rayleigh line per name.
+    ops = _frame_with_rayleigh(alpha_m=0.1, on=["Cols", "Cols"])
+    assert len(_region_rayleigh_lines(_deck(ops, tmp_path, "tcl"))) == 2
+
+
+def test_global_plus_region_warns_overwrite(tmp_path: Path) -> None:
+    fem = make_two_column_frame()
+    ops = apeSees(cast("object", fem))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+    ops.damping.rayleigh(alpha_m=0.05)               # global
+    ops.damping.rayleigh(alpha_m=0.1, on="Cols")     # region
+    with pytest.warns(RayleighOverwriteWarning):
+        ops.tcl(str(tmp_path / "deck.tcl"))
+
+
+def test_global_emits_before_region(tmp_path: Path) -> None:
+    # Declared region-first, but the deck must emit the global rayleigh
+    # BEFORE the region one ("region refines global").
+    ops = make_two_column_frame()
+    ops = apeSees(cast("object", ops))
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+    ops.damping.rayleigh(alpha_m=0.1, on="Cols")     # region declared first
+    ops.damping.rayleigh(alpha_m=0.05)               # global declared second
+    out = tmp_path / "deck.tcl"
+    ops.tcl(str(out))
+    lines = out.read_text(encoding="utf-8").splitlines()
+    global_i = next(
+        i for i, ln in enumerate(lines)
+        if ln.strip().startswith("rayleigh")
+    )
+    region_i = next(
+        i for i, ln in enumerate(lines)
+        if ln.strip().startswith("region") and "-rayleigh" in ln
+    )
+    assert global_i < region_i
+
+
+def test_on_non_element_group_fails_loud(tmp_path: Path) -> None:
+    # "Top" is a NODE group — region Rayleigh needs elements for βK, so
+    # resolving it to elements fails loud (BridgeError: not an element PG).
+    from apeGmsh.opensees._internal.build import BridgeError
+
+    ops = _frame_with_rayleigh(alpha_m=0.1, on="Top")
+    with pytest.raises(BridgeError, match="not found"):
+        ops.tcl(str(tmp_path / "deck.tcl"))

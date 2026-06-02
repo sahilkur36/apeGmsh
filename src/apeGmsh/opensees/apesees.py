@@ -144,6 +144,20 @@ class OpenSeesAutoEmitWarning(UserWarning):
     """
 
 
+class RayleighOverwriteWarning(UserWarning):
+    """Emitted when a global ``rayleigh`` and a region-scoped ``rayleigh``
+    (``ops.damping.rayleigh(on=...)``) coexist in the same model.
+
+    OpenSees applies element Rayleigh by **overwrite**, not summation: a
+    ``region -rayleigh`` replaces the global factors for the elements it
+    owns (ADR 0053, verified against the fork reference). A user who expects
+    the region damping to *add* to the global damping would be surprised, so
+    the emit pass flags the combination. Tagged subclass so pytest's default
+    filter ignores it (see ``pyproject.toml``) while interactive users still
+    see the message.
+    """
+
+
 class OpenSeesExplicitSolverWarning(UserWarning):
     """Emitted when an explicit integrator is paired with a non-diagonal
     linear system.
@@ -974,7 +988,7 @@ class BuiltModel:
         self._emit_fixes(emitter)
         self._emit_masses(emitter)
         self._emit_regions(emitter, tags)
-        self._emit_rayleigh(emitter)
+        self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
 
         # 7b. MP constraints (Phase 7b, ADR 0022 INV-5).  Records
         # claimed by ``s.embedded`` / ``s.equal_dof`` / ... are
@@ -1217,7 +1231,7 @@ class BuiltModel:
         # -- driver-post: regions, interface, patterns, recorders.
         # ADR 0051: no broker-loads auto-emit — loads ride from_model.
         self._emit_regions(emitter, tags)
-        self._emit_rayleigh(emitter)
+        self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
         emit_mp_constraints(
             emitter, self.fem, tags,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
@@ -3210,19 +3224,90 @@ class BuiltModel:
                 if int(node_tag) in owned_nodes:
                     emitter.mass(node_tag, *rec.values)
 
-    def _emit_rayleigh(self, emitter: Emitter) -> None:
-        """Emit each global ``rayleigh αM βK βK0 βKc`` declaration (ADR 0053).
+    def _emit_rayleigh(
+        self,
+        emitter: Emitter,
+        tags: "TagAllocator | None" = None,
+        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    ) -> None:
+        """Emit Rayleigh damping declarations (ADR 0053, D1 + D2).
 
-        Domain-level command, emitted driver-post (after the model is built)
-        alongside fixes / masses / regions.  Records emit in declaration
-        order; OpenSees applies each to the whole domain and overwrites per
-        element on overlap, so with multiple global records the last one's
-        factors win (ADR 0053 — element Rayleigh is OVERWRITE, not additive).
+        Domain-level commands, emitted driver-post (after the model is built)
+        alongside fixes / masses / regions. **Globals emit first, then
+        region-scoped forms** so a region refines the global ("region wins"),
+        matching OpenSees' OVERWRITE-per-element semantics. When a global and
+        any region-scoped record coexist a :class:`RayleighOverwriteWarning`
+        fires — the region replaces (does not add to) the global damping for
+        its elements.
+
+        Global records (``on == ()``) render a bare ``rayleigh αM βK βK0
+        βKc``. Region records render one ``region $tag -ele … -rayleigh …``
+        per ``on`` physical-group name, with ``-ele`` membership because βK
+        is stiffness-proportional. ``tags`` / ``fem_eid_to_ops_tag`` are
+        required only when region records are present (the emit driver always
+        supplies them).
         """
-        for rec in self.rayleigh_records:
+        if not self.rayleigh_records:
+            return
+        import warnings as _warnings
+
+        globals_ = [r for r in self.rayleigh_records if not r.on]
+        scoped = [r for r in self.rayleigh_records if r.on]
+        if globals_ and scoped:
+            _warnings.warn(
+                RayleighOverwriteWarning(
+                    "A global ops.damping.rayleigh and a region-scoped one "
+                    "(on=...) coexist; OpenSees overwrites element Rayleigh "
+                    "per element, so elements in the region take the region's "
+                    "factors (NOT the sum of global + region).",
+                ),
+                stacklevel=2,
+            )
+        for rec in globals_:
             emitter.rayleigh(
                 rec.alpha_m, rec.beta_k, rec.beta_k_init, rec.beta_k_comm,
             )
+        for rec in scoped:
+            for name in rec.on:
+                ele_tags = self._resolve_rayleigh_region_elements(
+                    name, fem_eid_to_ops_tag,
+                )
+                assert tags is not None  # always supplied when scoped present
+                tag = tags.allocate("region")
+                emitter.region(
+                    tag, "-ele", *ele_tags, "-rayleigh",
+                    rec.alpha_m, rec.beta_k, rec.beta_k_init, rec.beta_k_comm,
+                )
+
+    def _resolve_rayleigh_region_elements(
+        self,
+        pg: str,
+        fem_eid_to_ops_tag: "dict[int, int] | None",
+    ) -> tuple[int, ...]:
+        """Resolve a damping ``on=`` physical-group name to OpenSees element
+        tags (fail-loud on an empty / unmapped group)."""
+        from ._internal.build import expand_pg_to_elements
+
+        if fem_eid_to_ops_tag is None:
+            raise BridgeError(
+                "ops.damping.rayleigh(on=...) needs the element-tag map; "
+                "this is an internal emit-wiring error.",
+            )
+        ops_tags: list[int] = []
+        for eid, _conn in expand_pg_to_elements(self.fem, pg):
+            ops_tag = fem_eid_to_ops_tag.get(int(eid))
+            if ops_tag is None:
+                raise BridgeError(
+                    f"ops.damping.rayleigh(on={pg!r}): element {eid} has no "
+                    "emitted OpenSees tag (is the group meshed / emitted?).",
+                )
+            ops_tags.append(int(ops_tag))
+        if not ops_tags:
+            raise ValueError(
+                f"ops.damping.rayleigh(on={pg!r}): the group resolved to zero "
+                "elements — region Rayleigh needs elements for βK.",
+            )
+        return tuple(ops_tags)
 
     def _emit_regions(self, emitter: Emitter, tags: TagAllocator) -> None:
         """Fan named-region assignments out into ``emitter.region`` calls.
