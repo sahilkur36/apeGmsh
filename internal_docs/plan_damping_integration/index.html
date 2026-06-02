@@ -10,7 +10,7 @@
       
       
       
-        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/plan_bezier_elements_integration/">
+        <link rel="canonical" href="https://nmorabowen.github.io/apeGmsh/internal_docs/plan_damping_integration/">
       
       
       
@@ -23,7 +23,7 @@
     
     
       
-        <title>Plan — Bézier elements integration (ops.element.BezierTri6 + ops.element.BezierTet10) - apeGmsh</title>
+        <title>Plan — Damping definition on the apeSees bridge (ADR 0053) - apeGmsh</title>
       
     
     
@@ -78,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#plan-bezier-elements-integration-opselementbeziertri6-opselementbeziertet10" class="md-skip">
+        <a href="#plan-damping-definition-on-the-apesees-bridge-adr-0053" class="md-skip">
           Skip to content
         </a>
       
@@ -113,7 +113,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Plan — Bézier elements integration (ops.element.BezierTri6 + ops.element.BezierTet10)
+              Plan — Damping definition on the apeSees bridge (ADR 0053)
             
           </span>
         </div>
@@ -4948,10 +4948,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#direct-drive-already-works-this-is-the-ergonomic-upgrade-only" class="md-nav__link">
+  <a href="#scope-adr-0053" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Direct-drive already works — this is the ergonomic upgrade only
+        Scope (ADR 0053)
       
     </span>
   </a>
@@ -4959,55 +4959,22 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#governing-constraints-non-negotiable" class="md-nav__link">
+  <a href="#phases" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Governing constraints (non-negotiable)
+        Phases
       
     </span>
   </a>
   
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#whats-different-from-sixnodetri-tennodetetrahedron-read-before-mirroring" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        What's different from SixNodeTri / TenNodeTetrahedron (read before mirroring)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#seam-map-apegmsh-files-to-touch" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Seam map (apeGmsh files to touch)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#o11-tet10-node-order-reconciliation-the-load-bearing-risk-argued-identity-locked-by-b2-test-not-yet-live-run-confirmed" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        O11 — tet10 node-order reconciliation (the load-bearing risk) — argued identity, LOCKED BY B2 TEST (not yet live-run-confirmed)
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="O11 — tet10 node-order reconciliation (the load-bearing risk) — argued identity, LOCKED BY B2 TEST (not yet live-run-confirmed)">
+    <nav class="md-nav" aria-label="Phases">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#verdict" class="md-nav__link">
+  <a href="#d1-global-rayleigh-opsdampingrayleigh-raw-ratio-shippable-alone" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Verdict
+        D1 — Global Rayleigh (ops.damping.rayleigh, raw + ratio) ✅ shippable alone
       
     </span>
   </a>
@@ -5015,10 +4982,54 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#the-locking-test-b2-gate-round-trip-mid-edge-at-midpoint" class="md-nav__link">
+  <a href="#d2-region-scoped-rayleigh-on-ele-membership" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The locking test (B2 gate — round-trip mid-edge-at-midpoint)
+        D2 — Region-scoped Rayleigh (on=, -ele membership)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d3-object-backed-forms-opsdampinguniformsec_stifurdurd_beta" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D3 — Object-backed forms (ops.damping.uniform/sec_stif/urd/urd_beta)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d3b-element-flag-damp-attach-secondary-fixed-allow-list" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D3b — Element-flag -damp attach (secondary, fixed allow-list)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d4-opseigen-flat-modal-damping-opsdampingmodal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D4 — ops.eigen (flat) + modal damping (ops.damping.modal)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d5-staged-damping-sdamping" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D5 — Staged damping (s.damping.*)
       
     </span>
   </a>
@@ -5031,10 +5042,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#basis-library-dependency-do-not-duplicate" class="md-nav__link">
+  <a href="#resolved-questions-all-closed-nothing-blocks-d1" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Basis library dependency (do NOT duplicate)
+        Resolved questions (all closed — nothing blocks D1)
       
     </span>
   </a>
@@ -5042,126 +5053,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#phased-delivery" class="md-nav__link">
+  <a href="#docs-skill-reconciliation-after-d1d4-land" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Phased delivery
-      
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Phased delivery">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#b1-opselementbeziertri6-typed-primitive-deck-emission-no-fork-no-fixture-done" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        B1 — ops.element.BezierTri6 typed primitive + deck emission (no fork, no fixture) — ✅ DONE
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#b2-opselementbeziertet10-typed-primitive-o11-lock-no-fork-mesh-only-done" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        B2 — ops.element.BezierTet10 typed primitive + O11 lock (no fork; mesh-only) — ✅ DONE
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#b3-run-gating-clear-fork-build-error-no-fork-done" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        B3 — Run gating + clear fork-build error (no fork) — ✅ DONE
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-done" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        B4 — Result read (GP stress/strain) via the neutral basis lib (fixtures) — ✅ DONE
-      
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#b5-docs-parity-fallback-note-done" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        B5 — Docs / parity / fallback note — ✅ DONE
-      
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#plan-complete-2026-06-01" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        ✅ PLAN COMPLETE (2026-06-01)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#open-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Open questions
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#fork-side-asks-request-from-the-ladruno-team-not-work-around" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Fork-side asks (request from the Ladruno team, not work around)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#out-of-scope-this-plan" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        Out of scope (this plan)
-      
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#references" class="md-nav__link">
-    <span class="md-ellipsis">
-      
-        References
+        Docs / skill reconciliation (after D1–D4 land)
       
     </span>
   </a>
@@ -5188,460 +5083,166 @@
   
 
 
-<h1 id="plan-bezier-elements-integration-opselementbeziertri6-opselementbeziertet10">Plan — Bézier elements integration (<code>ops.element.BezierTri6</code> + <code>ops.element.BezierTet10</code>)<a class="headerlink" href="#plan-bezier-elements-integration-opselementbeziertri6-opselementbeziertet10" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> proposed (2026-06-01) · <strong>Owner:</strong> nmora · <strong>Scope:</strong> apeGmsh-side
-typed-primitive + result-read support for the two Ladruno-fork Bézier continuum
-elements.</p>
-<p>This is the apeGmsh half of contract item <strong>#3 (BezierTri6)</strong> and <strong>#4
-(BezierTet10)</strong> from the fork's apeGmsh-facing contract
-(<code>nmorabowen/OpenSees@origin/docs/apegmsh-feature-recs:Ladruno_implementation/ladruno_apegmsh_contract.md</code>).
-The fork-side elements are <strong>shipped + validated</strong> (<code>ladruno</code> PR #6 for Tri6; the
-Tet10 sibling element + recorder wiring merged on <code>ladruno</code>). This plan is what
-apeGmsh builds to make them <strong>first-class typed primitives</strong> and to read their
-results. ADRs: <code>ladruno:Ladruno_implementation/04_bezier_elements.md</code> (Tri6) and
-<code>…/06_bezier_tet10.md</code> (Tet10, carries <strong>O11</strong>).</p>
-<blockquote>
-<p><strong>Why a separate plan.</strong> These elements ride the <strong>same self-describing
-<code>B(ξ; FAMILY, ORDER)</code> basis seam</strong> as the Ladruno recorder
-(<code>plan_ladruno_recorder_integration.md</code>, L2). That plan's basis lib is the
-dependency; this plan does <strong>not</strong> duplicate it. The element-registration work
-here is otherwise a near-mechanical mirror of the existing <code>SixNodeTri</code> /
-<code>TenNodeTetrahedron</code> typed primitives.</p>
-</blockquote>
-<hr />
-<h2 id="direct-drive-already-works-this-is-the-ergonomic-upgrade-only">Direct-drive already works — this is the ergonomic upgrade only<a class="headerlink" href="#direct-drive-already-works-this-is-the-ergonomic-upgrade-only" title="Permanent link">&para;</a></h2>
-<p><strong>The two elements run on apeGmsh meshes today</strong> via <em>direct-drive</em> (fork
-<code>bezier_apegmsh_integration.md</code>, validated 2026-05-30):</p>
+<h1 id="plan-damping-definition-on-the-apesees-bridge-adr-0053">Plan — Damping definition on the apeSees bridge (ADR 0053)<a class="headerlink" href="#plan-damping-definition-on-the-apesees-bridge-adr-0053" title="Permanent link">&para;</a></h1>
+<p>Implementation plan for <a href="../src/apeGmsh/opensees/architecture/decisions/0053-damping-definition.md">ADR 0053</a>.
+Establishes the <code>ops.damping</code> namespace across all four OpenSees damping
+mechanisms. Closes the gap that today's <code>-doRayleigh</code> element flags have
+<strong>nothing to opt into</strong> — there is no <code>rayleigh</code> command on the bridge.</p>
+<p><strong>Guiding invariant:</strong> damping is a <em>domain-level</em> concern (sibling of
+<code>fix</code> / <code>mass</code> / <code>region</code>), never part of the analysis chain. The new
+surface is one namespace <code>ops.damping</code>; the existing per-element
+<code>do_rayleigh</code> flags are <strong>untouched</strong> — D1 only gives them a coefficient
+source. The node-only <code>RegionAssignmentRecord</code> is <strong>not overloaded</strong>; D2
+adds a parallel <code>-ele</code> membership route.</p>
+<p><strong>Verify gotcha:</strong> bare <code>python -c "import apeGmsh"</code> resolves the MAIN-repo
+editable install (no worktree changes). Verify via <code>pytest</code>
+(<code>pythonpath=["src"]</code> → worktree) using the <code>opensees_venv</code> python
+(<code>C:\Users\nmora\venv\opensees_venv\Scripts\python.exe</code>). All work here is
+deck-level (Tcl/py emit) — assert on captured deck lines, mirroring
+<code>tests/opensees/unit/test_emitter_*</code> and <code>test_analysis.py</code>. No viewer, no
+GPU.</p>
+<p><strong>Source of truth for grammar:</strong> ADR 0053 §"Source cross-check" — every
+emitted line must match a cited <code>OpenSees_Compile</code> parser signature. Do not
+invent flags.</p>
+<h2 id="scope-adr-0053">Scope (ADR 0053)<a class="headerlink" href="#scope-adr-0053" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>In:</strong> <code>ops.damping</code> namespace; every member a lowercase declaration verb
+  with a uniform <code>on=</code> scope (required/optional/forbidden per form, resolved
+  at emit — <strong>no <code>assign</code>, no user-held object</strong>); global + region-scoped
+  Rayleigh (raw + ratio helper + <code>stiffness=</code> switch); region <code>-ele</code>
+  membership route; modal damping (<code>eigen</code>-bundled); four object-backed forms
+  (<code>uniform</code>/<code>sec_stif</code>/<code>urd</code>/<code>urd_beta</code>) + universal <code>region -damp</code>;
+  <code>on=</code>-list reuse (one object → many attachments); named-primitive alias;
+  flat <code>ops.eigen</code> verb (D4) that <code>modal</code> requires + reuses.</li>
+<li><strong>Out / deferred:</strong> staged damping (<code>s.damping.*</code>) → D5; element-flag
+  <code>-damp</code> attach → D3b (secondary, capability-gated); <code>ops.damping.eigen</code>
+  standalone → OQ-2; non-Rayleigh <code>do_rayleigh</code> flag plumbing on elements
+  beyond the existing four primitives.</li>
+</ul>
+<h2 id="phases">Phases<a class="headerlink" href="#phases" title="Permanent link">&para;</a></h2>
+<h3 id="d1-global-rayleigh-opsdampingrayleigh-raw-ratio-shippable-alone">D1 — Global Rayleigh (<code>ops.damping.rayleigh</code>, raw + ratio) ✅ shippable alone<a class="headerlink" href="#d1-global-rayleigh-opsdampingrayleigh-raw-ratio-shippable-alone" title="Permanent link">&para;</a></h3>
+<p>The minimal change that makes the existing <code>-doRayleigh</code> flags meaningful.
+1. Add <code>_DampingNS(self)</code> → <code>self.damping</code> at <code>apesees.py:4039</code>-adjacent.
+2. <code>ops.damping.rayleigh(...)</code> with <code>on=None</code> (global) only this slice:
+   record a <code>RayleighRecord(alpha_m, beta_k, beta_k_init, beta_k_comm, on=None)</code>;
+   resolve to <code>rayleigh αM βK βK0 βKc</code> (all four, post-build) on every emitter
+   (<code>tcl</code> / <code>py</code> / <code>live</code> / <code>h5</code> / <code>recording</code>).
+3. Ratio helper: when <code>ratio=</code>/<code>f_i=</code>/<code>f_j=</code> given (XOR with raw), compute
+   α = 2ξω_iω_j/(ω_i+ω_j), β = 2ξ/(ω_i+ω_j) (ω = 2πf); place β by
+   <code>stiffness=</code> switch — <strong>default <code>initial</code>→beta_k_init</strong> (fork: prefer βK0
+   for nonlinear), <code>current→beta_k</code>, <code>committed→beta_k_comm</code>. Fail loud if
+   both raw and ratio supplied, or ratio form missing any of ratio/f_i/f_j.
+→ verify: deck contains exactly one <code>rayleigh</code> line with 4 numeric args;
+raw form round-trips byte-for-byte; a known (ξ=0.05, f=1, f=10) case yields
+the hand-computed α/β within tolerance and lands β in the slot the
+<code>stiffness=</code> switch names; <code>pytest tests/opensees</code> green; a Truss with
+<code>do_rayleigh=True</code> + a <code>rayleigh</code> command produces a runnable deck.</p>
+<h3 id="d2-region-scoped-rayleigh-on-ele-membership">D2 — Region-scoped Rayleigh (<code>on=</code>, <code>-ele</code> membership)<a class="headerlink" href="#d2-region-scoped-rayleigh-on-ele-membership" title="Permanent link">&para;</a></h3>
 <ol>
-<li>py3.11 + apeGmsh meshes a straight-sided domain to T6 / T10, extracts <code>fem</code>,
-   dumps <code>nodes</code> + <code>fem.elements.&lt;group&gt;.connectivity</code> to JSON;</li>
-<li>py3.12 + the fork build reads JSON and calls
-   <code>ops.element('BezierTri6', eid, *conn6, thick, type, matTag)</code> (resp. <code>'BezierTet10'</code>).</li>
+<li>Add an element-membership region route: extend <code>RayleighRecord</code> with a
+   resolved <code>on</code> target list; <code>on=</code> PG name(s) → <code>expand_pg_to_elements</code>
+   fan-out (reuse the <code>s.remove_element</code> path); resolve to one
+   <code>region $tag -ele e1 e2 … -rayleigh αM βK βK0 βKc</code> per target.</li>
+<li><code>on=</code> accepts a single PG/region name, a list of them, or explicit
+   element/node tags. PG/element targets → fresh <code>-ele</code> region; a name that
+   matches an existing region → attach <code>-rayleigh</code> to its command (no second
+   region); node tags → <code>-node</code> region (+ warn-or-error per OQ-1 when β ≠ 0).</li>
+<li>Region-tag allocation reuses the global + per-stage INV-4 convention.</li>
+<li><strong>Overwrite order + guard</strong> (fork-verified: element Rayleigh OVERWRITES,
+   not additive): resolver emits the global <code>rayleigh</code> line <strong>before</strong> any
+   region-rayleigh, so "region refines global"; emit a warning when an <code>on=</code>
+   target overlaps elements already covered by a global <code>rayleigh</code>.
+→ verify: <code>on="x"</code> emits one <code>region $tag -ele … -rayleigh …</code> with the body's
+element tags; a list <code>on=["a","b"]</code> emits one region-rayleigh per target;
+re-using an existing region name attaches to the same tag (no duplicate);
+node target + non-zero β triggers the OQ-1 <strong>hard error</strong>; global emitted
+before region; overlap triggers the overwrite warning; global vs region
+paths don't collide on tags; deck runs.</li>
 </ol>
-<p>Gmsh's native <code>tri6</code>/<code>tet10</code> node order is <strong>byte-identical</strong> to the element's
-control-point order (Tri6 verified to <code>1.78e-15</code> on a real mesh; Tet10 D2′ was
-<em>constructed</em> to match Gmsh — see O11). Connectivity rows are usable <strong>verbatim</strong>.</p>
-<p><strong>Consequence for phasing:</strong> direct-drive is the documented fallback and needs
-<strong>zero</strong> apeGmsh change. Every phase below is opt-in ergonomics — none of it
-blocks any user who direct-drives today. The plan keeps direct-drive documented
-through the final phase (B5).</p>
-<hr />
-<h2 id="governing-constraints-non-negotiable">Governing constraints (non-negotiable)<a class="headerlink" href="#governing-constraints-non-negotiable" title="Permanent link">&para;</a></h2>
+<h3 id="d3-object-backed-forms-opsdampinguniformsec_stifurdurd_beta">D3 — Object-backed forms (<code>ops.damping.uniform/sec_stif/urd/urd_beta</code>)<a class="headerlink" href="#d3-object-backed-forms-opsdampinguniformsec_stifurdurd_beta" title="Permanent link">&para;</a></h3>
+<p>Lowercase declaration verbs (per §1) that resolve to a tagged object <strong>plus</strong>
+its <code>region -damp</code> attachment. <code>on=</code> is <strong>required</strong> (no global <code>-damp</code>).
+1. New <code>Damping(Primitive)</code> frozen subclass per type; registered on
+   <code>_primitives</code> for topological tag allocation (like <code>section</code>); optional
+   <code>name=</code> via the named-primitive alias channel.
+2. Resolve to <code>damping Uniform $tag ζ f1 f2 [flags]</code> / <code>SecStif $tag β</code> /
+   <code>URD $tag N f1 z1 … [flags]</code> / <code>URDbeta $tag N fc1 b1 …</code>. <code>uniform</code>'s
+   <code>ratio=</code> passes the <strong>physical ζ</strong> verbatim (OpenSees doubles internally —
+   document, do not pre-divide). URD/urd_beta enforce N ≥ 2.
+2a. <strong>Time-window kwargs</strong> (all four types): <code>activate_time</code> →
+   <code>-activateTime</code>, <code>deactivate_time</code> → <code>-deactivateTime</code>, <code>factor</code>
+   (an <code>ops.timeSeries.*</code> object, added as a dependency so its line emits
+   first) → <strong><code>-factor</code></strong> (NOT <code>-fact</code>: Tcl accepts both but openseespy only
+   <code>-factor</code>, <code>OpenSeesDampingCommands.cpp:71</code>). These window <em>when the object
+   dissipates energy</em> — the "no damping during gravity" lever.
+3. For each target in <code>on=</code>, emit <code>region $tag -ele … -damp $obj.tag</code>. A list
+   <code>on=[...]</code> → ONE <code>damping</code> object reused across N region-damp lines (the
+   reuse path); fail loud if <code>on=</code> is absent.
+4. H5: persist Damping primitives under a new <code>/opensees/...</code> sub-tree;
+   <strong>bump bridge <code>SCHEMA_VERSION</code></strong>; <code>OpenSeesModel._replay_into</code> replays
+   them. Reader accepts own-minor + one-below per ADR 0023.
+→ verify: each type resolves to its cited grammar; the <code>damping</code> line is
+dependency-ordered before its region <code>-damp</code>; <code>on=[a,b]</code> yields one object +
+two region-damp lines sharing the tag; absent <code>on=</code> fails loud; named alias
+resolves; <code>activate_time</code>/<code>deactivate_time</code> emit the time flags and <code>factor=</code>
+emits <strong><code>-factor</code></strong> (asserted in BOTH tcl and py decks; <code>-fact</code> never
+emitted) with the timeSeries line ordered first; H5 round-trip reconstructs
+object + attachments + time-window; schema-version guard rejects an over-new
+minor.</p>
+<h3 id="d3b-element-flag-damp-attach-secondary-fixed-allow-list">D3b — Element-flag <code>-damp</code> attach (secondary, fixed allow-list)<a class="headerlink" href="#d3b-element-flag-damp-attach-secondary-fixed-allow-list" title="Permanent link">&para;</a></h3>
+<p>Optional <code>damp=</code> kwarg on the <strong>known supporting</strong> element primitives only —
+fork-verified allow-list: <code>ElasticBeam2d/3d</code>, <code>DispBeamColumn</code>,
+<code>ForceBeamColumn</code>, <code>Brick</code>, <code>FourNodeQuad</code>, the Shell family, <code>ZeroLength</code>
+(every other element's base <code>setDamping</code> just warns). Emit <code>element … -damp
+$tag</code>. Fail loud on any primitive not on the allow-list.
+→ verify: a supported element emits <code>-damp</code>; an unsupported one raises a
+clear capability error naming the element type; no silent drop.</p>
+<h3 id="d4-opseigen-flat-modal-damping-opsdampingmodal">D4 — <code>ops.eigen</code> (flat) + modal damping (<code>ops.damping.modal</code>)<a class="headerlink" href="#d4-opseigen-flat-modal-damping-opsdampingmodal" title="Permanent link">&para;</a></h3>
 <ol>
-<li><strong>Fork is opt-in; vanilla never breaks.</strong> apeGmsh keeps running on stock
-   <code>openseespy</code>. <code>BezierTri6</code>/<code>BezierTet10</code> exist only in the fork build.</li>
-<li><em>Emit:</em> <code>ops.element.BezierTri6(...)</code> / <code>ops.tcl</code> / <code>ops.py</code> produce deck text
-     on <strong>any</strong> build — the line is just <code>element BezierTri6 …</code>. Gate the fork
-     requirement <strong>at <code>ops.run()</code></strong>, with a clear <em>"requires the Ladruno fork
-     build"</em> error. Never force the fork; never fail at import.</li>
-<li><em>Read:</em> result parsing needs only <code>h5py</code> (no fork at read time); it keys on
-     the element's self-declared <code>FAMILY=bernstein</code> / class name in the file.</li>
-<li><strong>Class tags read LIVE, never hardcoded.</strong> The fork moved tags to a private
-   <strong>≥33000 band</strong>; the old sub-300 values (272/273) are <strong>dead</strong>. Confirmed live
-   from <code>ladruno:SRC/classTags.h</code>:</li>
-<li><code>ELE_TAG_BezierTri6  = 33000</code></li>
-<li><code>ELE_TAG_BezierTet10 = 33001</code>
-   The apeGmsh <code>_response_catalog</code> must carry <strong>these</strong> values (still hand-entered,
-   as every other <code>ELE_TAG_*</code> constant in that file is — but sourced from the live
-   header, with the dead 272/273 explicitly rejected in a comment). The bezier
-   docs (<code>04</code>/<code>06</code>/<code>bezier_apegmsh_integration</code>) still cite 272/273 in prose — do
-   <strong>not</strong> trust those; trust <code>classTags.h</code>.</li>
-<li><strong>Canonicity — read-direct, never transcode.</strong> Result reads interpret the
-   fork's own descriptors (the <code>FAMILY=bernstein</code> basis + <code>QUADRATURE</code> the element
-   self-declares); apeGmsh re-encodes nothing to a derived/cached on-disk form.
-   Geometry reconstruction <code>x(ξ)=Σ Bᵢ(ξ)·Xᵢ</code> uses the file's BASIS — the file
-   dictates the map.</li>
-<li><strong>Simplicity first.</strong> Each typed primitive is a ~50-line frozen dataclass
-   mirroring <code>SixNodeTri</code> / <code>TenNodeTetrahedron</code>. No new abstraction: B-bar is a
-   <code>bbar=</code> flag (mirrors the fork's <code>-bbar</code>, not a second class), cMass a
-   <code>consistent_mass=</code> flag. No speculative curved-geometry / NURBS surface (the
-   element is v1 straight-sided only).</li>
+<li>New flat verb <code>ops.eigen(n, *, solver="genBandArpack")</code> → <code>eigen &lt;solver&gt;
+   N</code> (sibling of <code>ops.fix</code>/<code>ops.mass</code>, NOT in <code>ops.damping</code>; general-purpose
+   modal analysis). Records an <code>EigenRecord(n, solver)</code>.</li>
+<li><code>ops.damping.modal(ratios)</code> → <code>modalDamping f1 [f2 …]</code>. <strong>Requires</strong> a
+   prior <code>ops.eigen(...)</code> → fail loud if absent. Scalar <code>ratios</code> → uniform;
+   sequence → per-mode, <code>len == eigen.n</code> or fail loud. <code>on=</code> <strong>forbidden</strong> →
+   fail loud if given (domain-wide).</li>
+<li><strong>No <code>modal_q</code></strong> — <code>modalDampingQ</code> is a fork-verified anti-damping bug
+   (wrong sign, Δt-independent; "use modalDamping, never modalDampingQ").
+   The bridge does not author it (OQ-3 resolved).</li>
+<li>Ordering: resolver emits <code>eigen</code> then <code>modalDamping</code>, after the model is
+   built and before any <code>analyze</code>; fail loud if no transient analysis follows.
+→ verify: <code>ops.eigen(5)</code> emits <code>eigen 5</code>; <code>modal</code> without a prior eigen fails
+loud; deck orders <code>eigen N</code> before <code>modalDamping</code>; uniform vs per-mode forms;
+length mismatch vs <code>eigen.n</code> fails loud; <code>on=</code> rejected; runs on a small
+modal model; <strong>no <code>modalDampingQ</code> is ever emitted.</strong></li>
 </ol>
-<hr />
-<h2 id="whats-different-from-sixnodetri-tennodetetrahedron-read-before-mirroring">What's <em>different</em> from <code>SixNodeTri</code> / <code>TenNodeTetrahedron</code> (read before mirroring)<a class="headerlink" href="#whats-different-from-sixnodetri-tennodetetrahedron-read-before-mirroring" title="Permanent link">&para;</a></h2>
-<p>The existing <code>SixNodeTri</code>/<code>TenNodeTetrahedron</code> typed classes are the templates, but
-the bezier wrappers diverge in three small ways:</p>
+<h3 id="d5-staged-damping-sdamping">D5 — Staged damping (<code>s.damping.*</code>)<a class="headerlink" href="#d5-staged-damping-sdamping" title="Permanent link">&para;</a></h3>
+<p>Mirror <code>s.region</code> / <code>s.fix</code>: stage-bound <code>s.damping.rayleigh(..., on=)</code> /
+<code>s.damping.uniform(..., on=)</code> pools resolving inside the owning stage's
+block (same lowercase verbs + <code>on=</code> as the flat path). Per-stage modal
+damping (eigen + <code>wipeAnalysis</code> interaction) gets its own design note before
+code.
+→ verify: stage-bound Rayleigh emits inside the stage block (not globally);
+two stages with same-named damping regions get distinct tags (V3); global +
+stage damping coexist; staged deck runs.</p>
+<h2 id="resolved-questions-all-closed-nothing-blocks-d1">Resolved questions (all closed — nothing blocks D1)<a class="headerlink" href="#resolved-questions-all-closed-nothing-blocks-d1" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>The optional tail is the fork grammar, not the quad/tri31 tail.</strong> Fork factory
-  (<code>ladruno:SRC/element/bezierTriangle/OPS_BezierTri6.cpp</code>):
-  <code>element BezierTri6 tag n1..n6 thick type matTag [-bbar] [-cMass] [-pressure p] [-rho r] [-bodyForce b1 b2]</code>.
-  These are <strong>flag-prefixed</strong> (<code>-bbar</code>, <code>-cMass</code>, …), <strong>not</strong> the positional
-  <code>&lt;pressure rho b1 b2&gt;</code> tail of <code>quad</code>/<code>tri31</code>. So do <strong>not</strong> reuse
-  <code>_quad_tri_optional_tail</code>; emit flags explicitly (each independently optional —
-  no all-or-none ordering rule).</li>
-<li><strong>B-bar validity differs by element (mirror the fork guards D5 / D5′).</strong> Tri6:
-  <code>-bbar</code> valid PlaneStrain/3D only — fork <em>warns+disables</em> on PlaneStress.
-  Mirror with an apeGmsh-side construction-time guard (raise or warn). Tet10:
-  <code>-bbar</code> always valid (pure 3D, no plane-stress degeneracy).</li>
-<li><strong>Tri6 <code>plane_type</code> is 2-value, not <code>SixNodeTri</code>'s 4-value set.</strong> The fork factory
-  <code>OPS_BezierTri6.cpp:97-101</code> validates <strong>only</strong> <code>{PlaneStress, PlaneStrain}</code> and
-  errors otherwise; <code>SixNodeTri</code> also accepts <code>PlaneStress2D</code>/<code>PlaneStrain2D</code>. Give
-  <code>BezierTri6</code> its <strong>own</strong> 2-value validator (don't inherit the 4-value one) so a
-  <code>*2D</code> string fails at construction, not late at run. This validator is also the
-  natural host for the D5 PlaneStress-+-B-bar guard.</li>
-<li><strong>Type token == class name</strong> (unlike <code>quad</code>/<code>tri31</code>/<code>tri6n</code>). The fork factory
-  token is literally <code>BezierTri6</code> / <code>BezierTet10</code>, so <strong>no</strong> <code>_CLASS_TOKEN_ALIASES</code>
-  entry and <strong>no</strong> <code>cpp_class_name</code> override are needed (the registry key <em>is</em> the
-  token <em>is</em> the C++ class name).</li>
+<li><strong>OQ-1</strong> <code>on=</code> node tags + non-zero β → <strong>HARD ERROR</strong> (fork-confirmed:
+  nodes carry αM only, β is meaningless).</li>
+<li><strong>OQ-2</strong> → <strong>flat <code>ops.eigen</code></strong> added (outside <code>ops.damping</code>); <code>modal</code>
+  requires + reuses it. No <code>ops.damping.eigen</code>.</li>
+<li><strong>OQ-3</strong> → <strong>dropped <code>modal_q</code></strong> (<code>modalDampingQ</code> anti-damping bug, fork
+  document-only decision).</li>
+<li><strong>OQ-4</strong> ratio-helper <code>stiffness=</code> default → <strong><code>initial</code></strong> (βK0), per the
+  fork's nonlinear guidance; <code>current</code>/<code>committed</code> explicit opt-ins.</li>
 </ul>
-<p>Everything else mirrors the templates: <code>current_element_nodes</code> fan-out,
-<code>resolve_tag</code> for the material, <code>_ElemSpec</code> capability flags, the <code>_continuum_layout</code>
-response-catalog rows.</p>
-<hr />
-<h2 id="seam-map-apegmsh-files-to-touch">Seam map (apeGmsh files to touch)<a class="headerlink" href="#seam-map-apegmsh-files-to-touch" title="Permanent link">&para;</a></h2>
-<p>Grounded against current <code>src/</code>. Both elements touch the <strong>same six seams</strong>; the
-table lists the Tri6 anchor and the Tet10 delta.</p>
-<table>
-<thead>
-<tr>
-<th>Seam</th>
-<th>File:line</th>
-<th>Mirror of</th>
-<th>Change</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>Element dataclass</td>
-<td><code>src/apeGmsh/opensees/element/solid.py</code> (<code>SixNodeTri</code> 374–458; <code>TenNodeTetrahedron</code> 117–154)</td>
-<td><code>SixNodeTri</code> / <code>TenNodeTetrahedron</code></td>
-<td>New frozen <code>BezierTri6</code> (6 nodes, <code>thickness</code>, <code>material</code>, <code>plane_type</code>, <code>bbar=False</code>, <code>consistent_mass=False</code>, <code>pressure</code>, <code>rho</code>, <code>body_force</code>) emitting token <code>"BezierTri6"</code> with <strong>flag-prefixed</strong> tail; new <code>BezierTet10</code> (10 nodes, <code>material</code>, <code>bbar=False</code>, <code>consistent_mass=False</code>, <code>body_force</code>) emitting <code>"BezierTet10"</code>. <strong>No</strong> <code>_quad_tri_optional_tail</code> reuse.</td>
-</tr>
-<tr>
-<td><code>__init__</code> export</td>
-<td><code>src/apeGmsh/opensees/element/__init__.py</code> (<code>from .solid import …</code> 48–55; <code>__all__</code> 81–86)</td>
-<td>the solid-family export block</td>
-<td>Add <code>BezierTri6</code>, <code>BezierTet10</code> to the <code>.solid</code> import and <code>__all__</code>.</td>
-</tr>
-<tr>
-<td>Namespace factory</td>
-<td><code>src/apeGmsh/opensees/_internal/ns/element.py</code> (<code>SixNodeTri</code> 414–…; <code>TenNodeTetrahedron</code> 338–350; solid import block 26–33)</td>
-<td>the two <code>_ElementNS</code> methods</td>
-<td>New <code>_ElementNS.BezierTri6(...)</code> / <code>.BezierTet10(...)</code> → <code>_resolve(material, base=NDMaterial)</code> + <code>_register</code>. Exposes <code>ops.element.BezierTri6(pg=…, thickness=…, type=…, material=…, bbar=…)</code>.</td>
-</tr>
-<tr>
-<td><code>_ElemSpec</code> capability</td>
-<td><code>src/apeGmsh/opensees/_element_capabilities.py</code> (<code>tri6n</code> 243–251; <code>TenNodeTetrahedron</code> 186–192)</td>
-<td>the <code>tri6n</code> / <code>TenNodeTetrahedron</code> registry entries</td>
-<td>New <code>"BezierTri6"</code>: <code>mat_family="nd"</code>, <code>needs_transf=False</code>, <code>ndm_ok={2}</code>, <code>ndf_ok={2}</code>, <code>gmsh_etypes={9}</code>, <code>node_reorder={9:(0,1,2,3,4,5)}</code> (identity), <code>slots=("nodes","thick","eleType","matTag")</code>, <code>has_gauss=True</code>. New <code>"BezierTet10"</code>: <code>ndm_ok={3}</code>, <code>ndf_ok={3}</code>, <code>gmsh_etypes={11}</code>, <code>node_reorder={11:(0,1,2,3,4,5,6,7,8,9)}</code> (identity), <code>slots=("nodes","matTag")</code>, <code>has_gauss=True</code>. <strong>No</strong> <code>cpp_class_name</code> (token == class). <strong><code>slots</code> drives positional fan-out only</strong> — <code>body_force</code> is <strong>flag-prefixed</strong> (<code>-bodyForce</code>), not a positional tail, so it is <strong>not</strong> a slot (drop the positional <code>bodyForce</code> copied from <code>TenNodeTetrahedron</code>); emit it from the dataclass field. Same rule for Tri6.</td>
-</tr>
-<tr>
-<td>Response catalog</td>
-<td><code>src/apeGmsh/opensees/_response_catalog.py</code> (<code>ELE_TAG_*</code> consts 102–115; <code>SixNodeTri</code> rows 818–841; <code>TenNodeTetrahedron</code> rows 697–708)</td>
-<td><code>SixNodeTri</code> (Triangle_GL_2) / <code>TenNodeTetrahedron</code> (Tet_GL_2) rows</td>
-<td>Add <code>ELE_TAG_BezierTri6 = 33000</code>, <code>ELE_TAG_BezierTet10 = 33001</code> (live from <code>classTags.h</code>; comment the dead 272/273 <strong>and</strong> note these values are <em>reused across class families</em> — <code>INTEGRATOR_TAGS_ExplicitBathe</code>/<code>RECORDER_TAGS_EnergyBalance</code> are also 33000 — so they disambiguate only within their own <code>*_TAG_*</code> namespace; don't "correct" them to a unique global value). The catalog rows supply <strong>component layout / <code>n_gp</code> / <code>coord_system</code> metadata ONLY</strong> — see the <strong>Tri6 GP-order caveat</strong> below. Register both under their real <code>IntRule</code> (<code>Triangle_GL_2</code> / <code>Tet_GL_2</code>) <strong>and</strong> <code>IntRule.Custom</code> (1000) — the Ladruno recorder serves these via the <code>basisInfo</code> self-declaration / <code>CustomIntegrationRule</code> path, exactly like the existing <code>SixNodeTri</code> Custom mirror rows (818–841).</td>
-</tr>
-<tr>
-<td>Flags (<code>-bbar</code> / <code>-cMass</code>)</td>
-<td>(inside the dataclass <code>_emit</code>, <code>solid.py</code>)</td>
-<td>— (new)</td>
-<td>Emit <code>-bbar</code> / <code>-cMass</code> from the <code>bbar</code> / <code>consistent_mass</code> fields. Tri6 <code>__post_init__</code> mirrors fork <strong>D5</strong>: <code>bbar=True</code> + <code>plane_type</code> PlaneStress → warn + drop the flag (or raise). Tet10: no guard (<strong>D5′</strong>).</td>
-</tr>
-<tr>
-<td>Docs/skill</td>
-<td><strong>canonical</strong> <code>skills/apegmsh/references/</code> (<code>ladruno.md</code> + <code>api-cheatsheet.md</code> element-type table ~<code>:544</code>) — <strong>NOT</strong> the <code>.claude/skills/apegmsh-helper/</code> mirror (it's derived via <code>sync_skill.py</code> + CI <code>--check</code>; edits there get overwritten)</td>
-<td>the bezier contract rows</td>
-<td>Document <code>ops.element.BezierTri6/BezierTet10</code>, the fork-build run requirement, and that <strong>direct-drive remains the fallback</strong>. Let <code>sync_skill.py</code> regenerate the mirror.</td>
-</tr>
-</tbody>
-</table>
-<blockquote>
-<p><strong>No <code>node_reorder</code> consumer beyond storage.</strong> apeGmsh stores <code>getElementsByType</code>
-connectivity <strong>verbatim</strong> in <code>ElementGroup</code> (<code>_element_types.py</code>); <code>node_reorder</code>
-for etypes 9/11 is identity, so the fan-out passes Gmsh order straight through.
-This is the whole basis of O11 being clean (below).</p>
-<p>[!warning] <strong>Tri6 GP-index-order caveat — the file is the sole source of per-GP
-coordinates.</strong> The fork <code>BezierTri6.cpp</code> integrates its 3 GPs in a <strong>different
-index order</strong> than <code>SixNodeTri</code>'s <code>_TRI_GL_2_COORDS</code>: fork GP order is
-<code>{1/6,1/6},{2/3,1/6},{1/6,2/3}</code> (GP0 near corner 3) vs the catalog's
-<code>{2/3,1/6},{1/6,2/3},{1/6,1/6}</code> (GP0 near corner 1) — <em>same three points, permuted
-indices</em>. So <strong>B4 must take per-GP coordinates from the file's <code>QUADRATURE/GP_PARAM</code>
-(the canonical read-direct path), never from a GP-index→catalog map</strong> — the latter
-would silently permute each Tri6 GP's reported <code>(x,y)</code>. The catalog row is
-layout/<code>n_gp</code>/<code>coord_system</code> metadata only. <strong>Tet10 is clean</strong> —
-<code>BezierTet10.cpp</code>'s GP4_L order <code>(a,b,b)/(b,a,b)/(b,b,a)/(b,b,b)</code> matches
-<code>_TET_GL_2_COORDS</code> exactly — so this is Tri6-only. If a catalog-coords fallback is
-ever kept for files lacking <code>GP_PARAM</code>, the Tri6 row needs <strong>its own</strong> coords array
-in the <em>fork's</em> GP order, not a borrow of <code>_TRI_GL_2_COORDS</code>.</p>
-</blockquote>
-<hr />
-<h2 id="o11-tet10-node-order-reconciliation-the-load-bearing-risk-argued-identity-locked-by-b2-test-not-yet-live-run-confirmed">O11 — tet10 node-order reconciliation (the load-bearing risk) — <strong>argued identity, LOCKED BY B2 TEST (not yet live-run-confirmed)</strong><a class="headerlink" href="#o11-tet10-node-order-reconciliation-the-load-bearing-risk-argued-identity-locked-by-b2-test-not-yet-live-run-confirmed" title="Permanent link">&para;</a></h2>
-<p>The fork ADR flags O11 as the #1 correctness risk: a wrong mid-edge order silently
-yields a valid-looking but <strong>wrong</strong> stiffness. Three orderings, laid out as
-vertex-pair edge labels (<code>a-b</code> = the edge whose endpoints are corner nodes a,b),
-corners 1-4 first in all three:</p>
-<p><strong>(a) Gmsh native <code>tet10</code> (MSH element type 11).</strong> The Gmsh second-order tetrahedron
-convention: 4 corner vertices, then 6 mid-edge nodes in edge order
-<strong>(1-2), (2-3), (1-3), (1-4), (3-4), (2-4)</strong> → <code>N5=(1-2) N6=(2-3) N7=(1-3) N8=(1-4)
-N9=(3-4) N10=(2-4)</code>.</p>
-<p><strong>(b) Element D2′ (<code>06_bezier_tet10.md</code>).</strong> 4 vertices, then
-<code>N5=(1-2) N6=(2-3) N7=(1-3) N8=(1-4) N9=(3-4) N10=(2-4)</code>. The ADR states D2′ is the
-<code>TenNodeTetrahedron::shp3d</code> order <strong>"deliberately N9↔N10-swapped to match Gmsh."</strong></p>
-<p><strong>(c) What apeGmsh's <code>get_fem_data</code> emits for tet10.</strong> <code>_element_types.py:34</code> maps
-gmsh code 11 → <code>'tet10'</code>; connectivity is stored <strong>verbatim</strong> from gmsh
-<code>getElementsByType</code> (no permutation in storage). The bridge fan-out applies
-<code>_ElemSpec.node_reorder[11]</code>, which for <code>TenNodeTetrahedron</code> is the <strong>identity</strong>
-<code>(0,1,2,3,4,5,6,7,8,9)</code> (<code>_element_capabilities.py:190</code>). So apeGmsh emits the <strong>raw
-Gmsh tet10 order = (a)</strong>, unpermuted.</p>
-<h3 id="verdict">Verdict<a class="headerlink" href="#verdict" title="Permanent link">&para;</a></h3>
-<p><strong>All three MATCH — the permutation is the identity.</strong> (a) = (b) = (c).
-<code>BezierTet10</code> shares <code>TenNodeTetrahedron</code>'s node order byte-for-byte (the fork ADR's
-D2′ is defined as exactly that), apeGmsh already trusts that identity for the
-shipped, validated <code>TenNodeTetrahedron</code>, and the registry encodes it as identity.
-<strong>Therefore <code>BezierTet10</code> reuses <code>node_reorder={11:(0,...,9)}</code> unchanged</strong> — no
-permutation map, no remap of <code>fem.elements.connectivity</code>.</p>
-<blockquote>
-<p>[!warning] <strong>This is read off a triple-source argument, not a live gmsh run.</strong>
-The identity verdict rests on: the Gmsh MSH-type-11 convention (a), the fork ADR's
-explicit "constructed to match Gmsh" claim (b), and the existing identity entry for
-<code>TenNodeTetrahedron</code> (c). The Tri6 sibling was <em>live-confirmed</em> to <code>1.78e-15</code>;
-Tet10 has not been on an apeGmsh mesh yet. The fork itself still lists O11 as
-<em>unconfirmed against a live run</em>. <strong>Lock it with the test below — keep B2 a HARD,
-non-optional gate; do not downgrade it on the strength of the triple-source
-argument alone.</strong></p>
-<p>[!note] <strong>Vertex winding / Jacobian sign is a non-issue by construction (not by
-the B2 test).</strong> The midpoint-only B2 test proves edge-node <em>labelling</em> +
-straight-sidedness but is blind to corner-vertex winding (a flipped tet has every
-mid-edge still at its midpoint yet a negative <code>detJ</code>). That half is covered not by
-a test but by the <strong>element itself</strong>: <code>BezierTet10.cpp</code> integrates <code>K</code>/<code>M</code>/<code>F</code> with
-<code>fabs(detJ)</code> (orientation-robust, per the ADR's O11 hedge) — <code>BᵀDB</code> / <code>NᵀN</code> /
-<code>J⁻¹</code> are orientation-independent — so winding cannot flip the stiffness.
-<strong>Therefore midpoint-only B2 is sufficient; do NOT add a redundant signed-volume
-assertion.</strong></p>
-</blockquote>
-<h3 id="the-locking-test-b2-gate-round-trip-mid-edge-at-midpoint">The locking test (B2 gate — round-trip mid-edge-at-midpoint)<a class="headerlink" href="#the-locking-test-b2-gate-round-trip-mid-edge-at-midpoint" title="Permanent link">&para;</a></h3>
-<p>A <code>tests/</code> test that, for a straight-sided T10 tet mesh:</p>
-<ol>
-<li>mesh a single straight-sided tet (or a small block) to <code>tet10</code>, extract <code>fem</code>;</li>
-<li>for each element, take the verbatim 10-node connectivity apeGmsh emits, fetch the
-   10 node coordinates;</li>
-<li>assert <strong>each of the 6 mid-edge nodes (positions 5-10) sits at the midpoint of
-   the corresponding corner-pair edge</strong> under the <strong>(a)/(b)/(c) order</strong>
-   <code>N5=mid(1,2) N6=mid(2,3) N7=mid(1,3) N8=mid(1,4) N9=mid(3,4) N10=mid(2,4)</code> —
-   <code>max‖X_mid − ½(X_a+X_b)‖ &lt; 1e-12·edge_len</code>.</li>
-</ol>
-<p>A pass confirms ordering <strong>and</strong> straight-sidedness simultaneously (exactly how the
-Tri6 integration test caught it at <code>1.78e-15</code>). A fail on any specific mid-edge
-position points straight at the offending edge in the permutation.</p>
-<blockquote>
-<p>[!note] <strong>One-line live check (optional, not a blocker).</strong> If a definitive
-machine-precision confirmation is wanted before B2, run in a gmsh session:
-mesh one straight tet to order 2, <code>g.mesh.queries.get_fem_data()</code>, then the
-midpoint assertion above. This is the same one-element check the Tri6 path used;
-it does not require the fork build (pure gmsh + apeGmsh on py3.11).</p>
-</blockquote>
-<hr />
-<h2 id="basis-library-dependency-do-not-duplicate">Basis library dependency (do NOT duplicate)<a class="headerlink" href="#basis-library-dependency-do-not-duplicate" title="Permanent link">&para;</a></h2>
-<p>Result reconstruction for the bezier elements needs <code>B(ξ; bernstein, 2)</code> on the
-triangle (tri6-bernstein) and tetrahedron (tet10), to evaluate <code>x(ξ)=Σ Bᵢ(ξ)·Xᵢ</code>
-at the GPs the file declares. <strong>This is the identical <code>B(ξ; FAMILY, ORDER)</code> library
-the Ladruno recorder plan defines</strong> (<code>plan_ladruno_recorder_integration.md</code>, seam
-"Family basis lib", L2): its per-family list <strong>already includes <code>tri6-bernstein</code>
-and <code>tet10</code></strong> precisely to de-risk #3/#4.</p>
-<p><strong>Recommendation: the basis lib lives NEUTRAL, and the bezier work imports it — no
-second copy.</strong> The recorder plan's open question ("reader-local
-<code>results/readers/_ladruno_basis.py</code> vs neutral <code>src/apeGmsh/_basis.py</code>") should be
-<strong>decided neutral</strong> <em>because</em> of this dependency: two independent consumers (the
-<code>.ladruno</code> reader and any bezier-result read path) need the same <code>B(ξ)</code>. A
-reader-local module would force the bezier path to either import across the reader
-package boundary or duplicate the math. Concretely:</p>
+<h2 id="docs-skill-reconciliation-after-d1d4-land">Docs / skill reconciliation (after D1–D4 land)<a class="headerlink" href="#docs-skill-reconciliation-after-d1d4-land" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Flag to the recorder plan (L2/L5):</strong> resolve its basis-lib OQ in favor of a
-  neutral <code>src/apeGmsh/_basis.py</code> and have <code>_ladruno*.py</code> import it. This plan then
-  <strong>imports the same module</strong> for bezier GP reconstruction. No duplication.</li>
-<li>If the recorder plan ships first with a reader-local lib, this plan's read phase
-  (B4) <strong>promotes</strong> it to neutral rather than copying it.</li>
-</ul>
-<p>apeGmsh's read of bezier results is otherwise <strong>canonical / read-direct</strong>: the
-element self-declares <code>FAMILY=bernstein</code> + <code>QUADRATURE</code> into the file (fork
-recorder, already wired), so the reader needs <strong>no per-class shape-function table</strong> —
-just the neutral <code>B(ξ; bernstein, 2)</code> and the file's own descriptors.</p>
-<hr />
-<h2 id="phased-delivery">Phased delivery<a class="headerlink" href="#phased-delivery" title="Permanent link">&para;</a></h2>
-<p>Each phase is independently shippable (its own PR), verifiable, ordered so the
-ergonomic value (typed primitive + deck emission, fork-free) lands before the
-fork-dependent read work. <strong>Direct-drive stays the documented fallback throughout.</strong></p>
-<h3 id="b1-opselementbeziertri6-typed-primitive-deck-emission-no-fork-no-fixture-done">B1 — <code>ops.element.BezierTri6</code> typed primitive + deck emission  <em>(no fork, no fixture)</em> — ✅ DONE<a class="headerlink" href="#b1-opselementbeziertri6-typed-primitive-deck-emission-no-fork-no-fixture-done" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>BezierTri6</code> dataclass (<code>solid.py</code>, + <code>BezierBBarPlaneStressWarning</code>) +
-  <code>_ElementNS.BezierTri6</code> (<code>ns/element.py</code>) + <code>element/__init__</code> export +
-  <code>_ElemSpec "BezierTri6"</code> (etype 9, identity reorder, no <code>cpp_class_name</code> —
-  token==class) + <code>_response_catalog</code> rows (<code>ELE_TAG_BezierTri6 = 33000</code>,
-  <code>Triangle_GL_2</code> + <code>Custom</code>; new <code>_TRI_GL_2_COORDS_BEZIER</code> in the fork's GP order).
-  Flag-prefixed tail <code>-bbar</code>/<code>-cMass</code>/<code>-pressure</code>/<code>-rho</code>/<code>-bodyForce</code>; own 2-value
-  <code>_PLANE_TYPES_BEZIER_TRI6</code> validator (rejects the <code>*2D</code> spellings); D5
-  PlaneStress-B-bar guard = <strong>warn + drop</strong> (decided OQ).</li>
-<li>Fork requirement bites at <code>ops.run()</code>, <strong>not</strong> at emit — emission is just a
-  <code>element BezierTri6 …</code> line on any build (the friendly fork-build error is B3).</li>
-<li><strong>Shipped &amp; verified:</strong> 13 new unit tests (<code>test_elements_solid.py</code> —
-  construction, 2-value plane_type rejects <code>*2D</code>, flag-prefixed emit order, D5
-  warn+drop / PlaneStrain-keeps, wrong-node-count, namespace) + <code>test_catalog_coverage_v1</code>
-  widened for the 4 BezierTri6 rows. 1478 primitives/contract/emitter/response
-  regression green; <code>solid.py</code> mypy-clean (the 3 trivial seam files add one
-  instance of the pre-existing <code>_resolve(base=NDMaterial)</code> pattern shared by all
-  element ns methods).</li>
-</ul>
-<h3 id="b2-opselementbeziertet10-typed-primitive-o11-lock-no-fork-mesh-only-done">B2 — <code>ops.element.BezierTet10</code> typed primitive + O11 lock  <em>(no fork; mesh-only)</em> — ✅ DONE<a class="headerlink" href="#b2-opselementbeziertet10-typed-primitive-o11-lock-no-fork-mesh-only-done" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>BezierTet10</code> dataclass (<code>solid.py</code>) + <code>_ElementNS.BezierTet10</code> + <code>element/__init__</code>
-  export + <code>_ElemSpec "BezierTet10"</code> (etype 11, identity reorder, <code>ndm_ok={3}</code>,
-  <code>ndf_ok={3}</code>, <code>slots=("nodes","matTag")</code>, <code>has_gauss</code>; no <code>cpp_class_name</code>) +
-  <code>_response_catalog</code> rows (<code>ELE_TAG_BezierTet10 = 33001</code>, <code>Tet_GL_2</code> + <code>Custom</code>,
-  reusing the clean <code>_TET_GL_2_COORDS</code> — Tet10 GP order matches, no permutation).
-  Flag tail <code>-bbar</code>/<code>-cMass</code>/<code>-rho</code>/<code>-bodyForce</code>(3-comp)/<code>-pressure</code> (the fork
-  factory <code>OPS_BezierTet10.cpp</code> carries <code>-rho</code>/<code>-pressure</code> too — the plan's earlier
-  brevity omitted them); <strong>no</strong> D5 guard (B-bar always valid in 3D, D5′).</li>
-<li><strong>O11 LOCKED — LIVE-RUN CONFIRMED (not just argued):</strong> the mid-edge-at-midpoint
-  round-trip (<code>tests/opensees/integration/test_bezier_tet10_o11.py</code>) meshes a
-  straight-sided box to <code>tet10</code> and asserts every mid-edge node sits within
-  <strong>2.2e-16 (rel)</strong> of its corner-pair midpoint under the order <code>N5=mid(1,2)
-  N6=mid(2,3) N7=mid(1,3) N8=mid(1,4) N9=mid(3,4) N10=mid(2,4)</code>. The triple-source
-  identity argument is now an empirical fact (the Tet10 analogue of the Tri6
-  1.78e-15 confirmation). Mesh-only, no fork.</li>
-<li><strong>Shipped &amp; verified:</strong> 9 unit tests (<code>test_elements_solid.py</code> — construction,
-  full flag-prefixed emit, B-bar always-kept, wrong-node-count, namespace) + the O11
-  test + widened <code>test_catalog_coverage_v1</code> (4 Tet10 rows); 1496 primitives/contract/
-  emitter/response regression green; <code>solid.py</code> mypy-clean.</li>
-</ul>
-<h3 id="b3-run-gating-clear-fork-build-error-no-fork-done">B3 — Run gating + clear fork-build error  <em>(no fork)</em> — ✅ DONE<a class="headerlink" href="#b3-run-gating-clear-fork-build-error-no-fork-done" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>LiveOpsEmitter.element</code> (<code>emitter/live.py</code>) gates the <code>_FORK_ONLY_ELEMENTS</code>
-  (<code>{BezierTri6, BezierTet10}</code>): it creates the element, then raises
-  <code>RuntimeError(_fork_element_required(...))</code> if the live build <strong>either</strong> raises
-  (try/except) <strong>or</strong> silently drops it (post-check via <code>getEleTags</code> — stock
-  openseespy warns + returns without creating). The verdict is cached
-  (<code>_fork_element_verified</code>) after the first success → O(1) per-element overhead;
-  the probe is skipped inside a non-zero partition block (the <code>_NoOpOps</code> stand-in
-  has no real domain). Deck emission (<code>ops.tcl</code>/<code>ops.py</code>) is untouched — only the
-  in-process run is gated.</li>
-<li><strong>Shipped &amp; verified:</strong> 8 fork-free unit tests (<code>test_bezier_run_gate.py</code> — both
-  stock failure modes × both elements, fork-build pass+cache, non-fork passthrough,
-  partition-skip) + 1 <code>live</code> happy-path (<code>test_bezier_run_gate_live.py</code>, skips on
-  non-fork builds; on the fork build the gate passes + caches, no false positive).
-  323 live/parity/conformance/runnable-deck regression green; <code>live.py</code> mypy-clean.</li>
-</ul>
-<h3 id="b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-done">B4 — Result read (GP stress/strain) via the neutral basis lib  <em>(fixtures)</em> — ✅ DONE<a class="headerlink" href="#b4-result-read-gp-stressstrain-via-the-neutral-basis-lib-fixtures-done" title="Permanent link">&para;</a></h3>
-<ul>
-<li>GP stress/strain <strong>values</strong> + per-GP <strong>natural</strong> coords (<code>GP_PARAM</code>) already read
-  in L2b-2 (<code>results.elements.gauss.get("stress_xx"…)</code>, neutral <code>sigma_xx</code>/<code>eps_xx</code>
-  tokens). B4 closes the <strong>world</strong>-coord half: <code>GaussSlab.global_coords(fem)</code>
-  (<code>results/_gauss_world_coords.py</code>) now routes <code>BezierTri6</code>/<code>BezierTet10</code> through the
-  neutral <code>apeGmsh._basis.basis_values</code> — <code>x = B(ξ; bernstein, order)·X</code> over <strong>all</strong>
-  control points, with ξ from the file's <code>GP_PARAM</code> (never a catalog GP order, so the
-  Tri6 index permutation can't bite). New <code>_bezier_basis_spec</code> (name→<code>(topology,
-  family)</code>) + <code>_world_via_basis</code> (BasisError/shape-mismatch → existing bbox fallback).
-  Every non-Bézier type keeps the linear-catalog / bbox path <strong>unchanged</strong>. The
-  <code>_response_catalog</code> layout/<code>n_gp</code> rows (<code>ELE_TAG_BezierTri6=33000</code>/<code>Tet10=33001</code>,
-  <code>Triangle_GL_2</code>/<code>Tet_GL_2</code> + <code>Custom</code>) shipped in B1/B2.</li>
-<li><strong>Shipped &amp; verified (fork-free):</strong> new <code>bezier_tet10.ladruno</code> fixture (the fork
-  <em>does</em> write <code>GLOBAL_GP_COORDS</code> for the tet, an in-file oracle — unlike the tri6).
-  5 tests (<code>tests/results/test_bezier_world_coords.py</code>): Tri6 <code>global_coords</code> ==
-  independent affine-barycentric corner map to <strong>2.2e-16</strong> + differs from the old
-  bbox by ~0.5; Tet10 <code>global_coords</code> == the file's own <code>GLOBAL_GP_COORDS</code> to
-  <strong>2.2e-16</strong>; <code>_bezier_basis_spec</code> recognition. 62 results + 32 gauss-marker/
-  live-roundtrip regression green; <code>_gauss_world_coords.py</code> mypy-clean.</li>
-<li><strong>Note:</strong> the committed bezier fixtures are straight-sided (apeGmsh's Gmsh pipeline
-  emits no curved high-order geometry), so on this affine geometry Bernstein ≡ linear
-  corner map — the tests prove the <em>plumbing</em> (GP_PARAM→ξ→B(ξ)→·X) and that bbox is
-  retired; the <em>basis-function</em> correctness is the separate 2.2e-16 formula
-  cross-check (L2's <code>_basis</code> vs the Kadapa reference). Curved Bézier (<code>B·X</code>≠corner
-  map) stays unreachable until curved high-order meshing lands.</li>
-</ul>
-<h3 id="b5-docs-parity-fallback-note-done">B5 — Docs / parity / fallback note — ✅ DONE<a class="headerlink" href="#b5-docs-parity-fallback-note-done" title="Permanent link">&para;</a></h3>
-<ul>
-<li><strong>Canonical</strong> <code>skills/apegmsh/references/ladruno.md</code> gains a dedicated <strong>Bézier
-  elements</strong> section: both typed primitives + their kwargs, the flag-prefixed emit
-  grammar, the Tri6 2-value <code>plane_type</code> + B-bar D5 warn-and-drop, the verbatim Gmsh
-  node order (+ the O11 tet mid-edge order), the <strong>fork-required-only-to-run</strong> gate,
-  the <strong>direct-drive fallback</strong> (cross-ref <code>bezier_apegmsh_integration.md</code>), and the
-  self-describing GP stress/strain + <code>global_coords</code> world-coord read. The fork-only
-  features table row updated to <code>BezierTri6 / BezierTet10</code>. <code>api-cheatsheet.md</code> element-
-  type table rows 9/11 now list <code>BezierTri6</code>/<code>BezierTet10</code> (Ladruno fork). Mirror
-  regenerated via <code>scripts/sync_skill.py</code> (<code>--check</code> exit 0). CHANGELOG already carries
-  the B1–B4 entries (docs-only B5 adds none). B4 confirmed importing the <strong>same</strong>
-  neutral <code>apeGmsh._basis</code> the recorder plan ships (single copy).</li>
-</ul>
-<hr />
-<h2 id="plan-complete-2026-06-01">✅ PLAN COMPLETE (2026-06-01)<a class="headerlink" href="#plan-complete-2026-06-01" title="Permanent link">&para;</a></h2>
-<p>All five slices shipped: <strong>B1</strong> <code>BezierTri6</code> primitive (#521) · <strong>B2</strong> <code>BezierTet10</code> +
-O11 lock (#522) · <strong>B3</strong> run-gate fork error (#523) · <strong>B4</strong> GP world-coord read via
-<code>_basis</code> (#524) · <strong>B5</strong> docs (this PR). Both fork Bézier elements (#3/#4) are
-first-class typed primitives with self-describing result reads; direct-drive remains
-documented as the stock-build fallback. With the recorder plan (#1/#2) + profiler (#5)
-+ explicit integrators already complete, <strong>all OpenSees Ladruno-fork features apeGmsh
-consumes are now shipped.</strong></p>
-<hr />
-<h2 id="open-questions">Open questions<a class="headerlink" href="#open-questions" title="Permanent link">&para;</a></h2>
-<blockquote>
-<p>[!decided] <strong><code>B(ξ)</code> lives NEUTRAL at <code>src/apeGmsh/_basis.py</code></strong> — settled jointly
-with the recorder plan (its basis-lib OQ is now marked decided-neutral <em>because</em>
-this plan is the second consumer). B4 <strong>imports</strong> that module for <code>tri6-bernstein</code>
-+ <code>tet10</code>; no second copy. If the recorder somehow ships L2 reader-local first, B4
-promotes it to neutral rather than duplicating.</p>
-<p>[!question] <strong>B-bar guard: warn-and-drop vs raise (Tri6 PlaneStress).</strong> Fork D5
-<em>warns + silently disables</em>. apeGmsh convention leans fail-loud. Mirror the fork
-(warn + drop the <code>-bbar</code> flag, keep the run) for behavioral parity, or raise at
-construction? Lean <strong>warn + drop</strong> to match the fork's documented behavior; revisit
-if users want the stricter guard.</p>
-<p>[!question] <strong>Live O11 confirmation before B2 ships?</strong> The identity verdict is a
-triple-source argument (Gmsh convention + fork "matches Gmsh" + existing
-<code>TenNodeTetrahedron</code> identity), locked by the B2 round-trip test. The Tri6 sibling
-was live-confirmed to <code>1.78e-15</code>; Tet10 has not been on an apeGmsh mesh. The B2
-test <em>is</em> the live confirmation — no separate gate needed, but flagged so a wrong
-Gmsh-convention assumption surfaces as a test failure, not a silent wrong stiffness.</p>
-<p>[!question] <strong><code>Custom</code> vs real <code>IntRule</code> rows — keep both?</strong> <code>SixNodeTri</code> registers
-both <code>Triangle_GL_2</code> and <code>Custom</code> because upstream MPCO doesn't dispatch its tag
-and falls through to the <code>basisInfo</code>/<code>CustomIntegrationRule</code> path. The Ladruno
-recorder serves bezier via the same self-declaration. <strong>Register both</strong> (mirror the
-<code>SixNodeTri</code> 818–841 pattern); drop the real-rule mirror only if a reader proves it
-unused.</p>
-</blockquote>
-<hr />
-<h2 id="fork-side-asks-request-from-the-ladruno-team-not-work-around">Fork-side asks (request from the Ladruno team, not work around)<a class="headerlink" href="#fork-side-asks-request-from-the-ladruno-team-not-work-around" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Confirm the <code>basisInfo</code> self-declaration is emitted on every bezier result
-   group</strong> in the current <code>Ladruno</code> recorder build (the fork log says Tet10 wiring
-   is "one block" reusing the generic <code>basisInfo</code> capture). The apeGmsh read (B4)
-   relies on <code>FAMILY=bernstein</code> + <code>QUADRATURE/{GP_PARAM,GP_WEIGHT}</code> being present so
-   it needs <strong>zero</strong> per-class decode. (If any bezier result still ships a flat
-   class-tag-only group, ask to structure it.)</li>
-<li><strong>A committed bezier fixture recipe</strong> — a stable export (mirroring the recorder
-   plan's <code>make_synthetic.py</code>) producing a small <code>tri6</code>/<code>tet10</code> <code>.ladruno</code>
-   (and/or <code>.mpco</code>) so apeGmsh's B4 fixtures track the writer across schema bumps.</li>
-<li><strong>Fork-side doc sweep.</strong> (a) Stop citing the dead tags in prose —
-   <code>04</code>/<code>06</code>/<code>bezier_apegmsh_integration</code> still say <code>ELE_TAG 272</code>/<code>273</code>; the live
-   header is <code>33000</code>/<code>33001</code> (avoids the next reader copying the dead value into
-   <code>_response_catalog</code>). (b) Fix the stale pointer in <code>bezier_apegmsh_integration.md</code>
-   (L17-19) — it cites a canonical apeGmsh spec at <code>docs/plans/bezier-tri6-element.md</code>
-   that does <strong>not</strong> exist; the real spec is this file
-   (<code>internal_docs/plan_bezier_elements_integration.md</code>).</li>
-</ol>
-<h2 id="out-of-scope-this-plan">Out of scope (this plan)<a class="headerlink" href="#out-of-scope-this-plan" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Curved Bézier edges/faces</strong> + the Eq.14 Dirichlet control-point↔DOF mapping
-  (fork D9/D9′ — element warns on curved meshes; v1 is straight-sided only).</li>
-<li><strong>Real edge/surface traction</strong> (the <code>-pressure</code> volume hack), selectable
-  quadrature, rational/NURBS, higher order (fork O5–O7, deferred there).</li>
-<li><strong>The explicit integrator</strong> (Chung–Lee β=13/12 — a global <code>TransientIntegrator</code>,
-  separate fork track / its own apeGmsh surface).</li>
-<li><strong>The <code>.ladruno</code> reader core / energy / orientation</strong> — that is
-  <code>plan_ladruno_recorder_integration.md</code>; this plan only <em>imports</em> its basis lib.</li>
-</ul>
-<h2 id="references">References<a class="headerlink" href="#references" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Fork ADRs: <code>ladruno:Ladruno_implementation/04_bezier_elements.md</code> (Tri6),
-  <code>…/06_bezier_tet10.md</code> (Tet10 — O11/O12).</li>
-<li>Live tags: <code>ladruno:SRC/classTags.h</code> → <code>ELE_TAG_BezierTri6=33000</code>,
-  <code>ELE_TAG_BezierTet10=33001</code>.</li>
-<li>Fork factories: <code>ladruno:SRC/element/bezierTriangle/OPS_BezierTri6.cpp</code>,
-  <code>…/bezierTetrahedron/OPS_BezierTet10.cpp</code>.</li>
-<li>Contract: <code>origin/docs/apegmsh-feature-recs:Ladruno_implementation/ladruno_apegmsh_contract.md</code>
-  (BezierTri6 row + reader notes), <code>…/bezier_apegmsh_integration.md</code> (direct-drive).</li>
-<li>apeGmsh seams: <code>solid.py</code> (<code>SixNodeTri</code>/<code>TenNodeTetrahedron</code>),
-  <code>_internal/ns/element.py</code>, <code>_element_capabilities.py</code>, <code>_response_catalog.py</code>,
-  <code>element/__init__.py</code>, <code>mesh/_element_types.py</code>.</li>
-<li>Basis-lib dependency: <code>internal_docs/plan_ladruno_recorder_integration.md</code>
-  (L2 "Family basis lib", + its basis-location OQ).</li>
+<li><code>internal_docs/guide_opensees.md</code> — add a Damping section.</li>
+<li><code>skills/apegmsh/references/opensees-bridge.md</code> — currently has <strong>zero</strong>
+  damping mention; add <code>ops.damping.*</code> once shipped (sync via <code>sync_skill.py</code>
+  to the <code>apegmsh-helper</code> mirror).</li>
+<li><code>CHANGELOG.md</code> Unreleased — one entry per shipped slice.</li>
 </ul>
 
 
