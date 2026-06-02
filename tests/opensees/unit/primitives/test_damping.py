@@ -95,6 +95,38 @@ class TestRayleighValidation:
             ops.damping.rayleigh(ratio=0.05, f_i=1.0)  # missing f_j
 
 
+# --- scope (on=) normalization (D2) ----------------------------------------
+
+class TestRayleighScope:
+    def test_default_is_global(self) -> None:
+        ops = _make_ops()
+        ops.damping.rayleigh(alpha_m=0.1)
+        (rec,) = ops._rayleigh_records
+        assert rec.on == ()
+
+    def test_single_name_becomes_one_tuple(self) -> None:
+        ops = _make_ops()
+        ops.damping.rayleigh(alpha_m=0.1, on="Soil")
+        (rec,) = ops._rayleigh_records
+        assert rec.on == ("Soil",)
+
+    def test_list_of_names_preserved(self) -> None:
+        ops = _make_ops()
+        ops.damping.rayleigh(alpha_m=0.1, on=["Soil", "Rock"])
+        (rec,) = ops._rayleigh_records
+        assert rec.on == ("Soil", "Rock")
+
+    def test_empty_name_raises(self) -> None:
+        ops = _make_ops()
+        with pytest.raises(ValueError, match="non-empty"):
+            ops.damping.rayleigh(alpha_m=0.1, on="")
+
+    def test_non_string_name_raises(self) -> None:
+        ops = _make_ops()
+        with pytest.raises(ValueError, match="non-empty"):
+            ops.damping.rayleigh(alpha_m=0.1, on=[123])  # type: ignore[list-item]
+
+
 # --- emit ------------------------------------------------------------------
 
 class TestRayleighEmit:

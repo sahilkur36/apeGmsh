@@ -12,6 +12,8 @@ D1 ships ``rayleigh`` (global only).  Region scoping (``on=``), modal damping
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from ...analysis.rayleigh import Stiffness, rayleigh_from_ratio
 from ..build import RayleighRecord
 from ._base import _BridgeNamespace
@@ -34,10 +36,11 @@ class _DampingNS(_BridgeNamespace):
         f_i: float | None = None,
         f_j: float | None = None,
         stiffness: Stiffness = "initial",
+        on: str | Iterable[str] | None = None,
     ) -> None:
-        """Declare global Rayleigh damping → ``rayleigh αM βK βK0 βKc``.
+        """Declare Rayleigh damping → ``rayleigh`` or ``region -rayleigh``.
 
-        Two mutually exclusive forms:
+        Two mutually exclusive coefficient forms:
 
         * **raw** — supply ``alpha_m`` and/or ``beta_k`` (and optionally
           ``beta_k_init`` / ``beta_k_comm``); the four coefficients pass
@@ -48,13 +51,24 @@ class _DampingNS(_BridgeNamespace):
           ``betaK0``, the nonlinear-safe choice — ADR 0053).  ``stiffness``
           is ignored by the raw form.
 
-        Global scope only in D1; ``on=`` region scoping lands in D2.
+        ``on`` is the scope:
+
+        * ``None`` (default) → **global** ``rayleigh αM βK βK0 βKc``.
+        * a physical-group name, or a list of them → **region-scoped**: each
+          name's elements get one ``region $tag -ele … -rayleigh …`` line
+          (``-ele`` membership because βK is stiffness-proportional).
+
+        Because OpenSees overwrites element Rayleigh per element (not
+        additive), a global ``rayleigh`` plus a region ``on=`` over the same
+        elements means the region value wins — the emit pass warns when both
+        coexist (ADR 0053).
 
         Raises
         ------
         ValueError
-            If both forms (or neither) are supplied, or the ratio form is
-            missing any of ``ratio`` / ``f_i`` / ``f_j``.
+            If both coefficient forms (or neither) are supplied, the ratio
+            form is missing any of ``ratio`` / ``f_i`` / ``f_j``, or ``on``
+            contains a non-string / empty name.
         """
         raw_given = (
             alpha_m is not None
@@ -91,4 +105,25 @@ class _DampingNS(_BridgeNamespace):
                 "ops.damping.rayleigh: supply either the raw form "
                 "(alpha_m/beta_k/...) or the ratio form (ratio/f_i/f_j).",
             )
-        self._bridge._rayleigh_records.append(RayleighRecord(*coeffs))
+        targets = _normalize_on(on)
+        self._bridge._rayleigh_records.append(
+            RayleighRecord(*coeffs, on=targets),
+        )
+
+
+def _normalize_on(on: "str | Iterable[str] | None") -> tuple[str, ...]:
+    """Normalize ``on=`` into a tuple of physical-group names.
+
+    ``None`` → ``()`` (global).  A single name → ``(name,)``.  An iterable
+    of names → that tuple.  Every name must be a non-empty string.
+    """
+    if on is None:
+        return ()
+    names = (on,) if isinstance(on, str) else tuple(on)
+    for name in names:
+        if not isinstance(name, str) or not name:
+            raise ValueError(
+                "ops.damping.rayleigh: on= must be a non-empty physical-group "
+                f"name or a list of them (got {on!r}).",
+            )
+    return names
