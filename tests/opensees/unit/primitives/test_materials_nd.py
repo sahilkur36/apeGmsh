@@ -14,11 +14,17 @@ from unittest.mock import MagicMock
 import pytest
 
 from apeGmsh.opensees import apeSees
+from apeGmsh.opensees._internal.tag_resolution import set_tag_resolver
 from apeGmsh.opensees.emitter.recording import RecordingEmitter
 from apeGmsh.opensees.material.nd import (
     DruckerPrager,
     ElasticIsotropic,
+    InitDefGrad,
     J2Plasticity,
+    LadrunoJ2,
+    LadrunoJ2Finite,
+    LogStrain,
+    StagedStrain,
 )
 
 
@@ -293,6 +299,224 @@ class TestDruckerPrager:
 
 
 # ---------------------------------------------------------------------------
+# LadrunoJ2 (Ladruno fork — combined Voce+Chaboche von Mises, ND 33011)
+# ---------------------------------------------------------------------------
+
+class TestLadrunoJ2:
+    def test_construction_defaults(self) -> None:
+        m = LadrunoJ2(K=1.65e8, G=7.5e7, sig0=5.0e5)
+        assert (m.K, m.G, m.sig0) == (1.65e8, 7.5e7, 5.0e5)
+        assert (m.Qinf, m.b, m.Hiso) == (0.0, 0.0, 0.0)
+        assert m.backstresses == ()
+        assert m.rho == 0.0 and m.lch_ref is None
+        assert m.damage is None and m.implex is False
+
+    def test_emit_bare_isotropic(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoJ2(K=1.65e8, G=7.5e7, sig0=5.0e5)._emit(rec, tag=5)
+        assert rec.calls == [
+            ("nDMaterial",
+             ("LadrunoJ2", 5, 1.65e8, 7.5e7,
+              "-iso", "voce", 5.0e5, 0.0, 0.0, 0.0), {}),
+        ]
+
+    def test_emit_with_voce_and_kinematic(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoJ2(
+            K=1.65e8, G=7.5e7, sig0=450.0, Qinf=265.0, b=16.93, Hiso=129.24,
+            backstresses=[(20000.0, 200.0), (5000.0, 50.0)],
+        )._emit(rec, tag=2)
+        assert rec.calls[0][1] == (
+            "LadrunoJ2", 2, 1.65e8, 7.5e7,
+            "-iso", "voce", 450.0, 265.0, 16.93, 129.24,
+            "-kin", 2, 20000.0, 200.0, 5000.0, 50.0,
+        )
+
+    def test_emit_with_rho_damage_implex(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoJ2(
+            K=1.65e8, G=7.5e7, sig0=450.0,
+            rho=7.85e3, lch_ref=0.05,
+            damage=(1.0, 1.0, 0.0, 0.99), implex=True,
+        )._emit(rec, tag=1)
+        assert rec.calls[0][1] == (
+            "LadrunoJ2", 1, 1.65e8, 7.5e7,
+            "-iso", "voce", 450.0, 0.0, 0.0, 0.0,
+            "-rho", 7.85e3,
+            "-autoRegularization", 0.05,
+            "-damage", "lemaitre", 1.0, 1.0, 0.0, 0.99,
+            "-implex",
+        )
+
+    def test_dependencies_is_empty(self) -> None:
+        assert LadrunoJ2(K=1.65e8, G=7.5e7, sig0=5e5).dependencies() == ()
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "LadrunoJ2" in repr(LadrunoJ2(K=1e8, G=5e7, sig0=5e5))
+
+    def test_rejects_non_positive_sig0(self) -> None:
+        with pytest.raises(ValueError, match="sig0 must be > 0"):
+            LadrunoJ2(K=1e8, G=5e7, sig0=0.0)
+
+    def test_rejects_too_many_backstresses(self) -> None:
+        with pytest.raises(ValueError, match="at most 8"):
+            LadrunoJ2(K=1e8, G=5e7, sig0=5e5,
+                      backstresses=[(1.0, 1.0)] * 9)
+
+    def test_rejects_non_positive_backstress_modulus(self) -> None:
+        with pytest.raises(ValueError, match="modulus C must be > 0"):
+            LadrunoJ2(K=1e8, G=5e7, sig0=5e5, backstresses=[(0.0, 1.0)])
+
+    def test_rejects_bad_lemaitre_Dc(self) -> None:
+        with pytest.raises(ValueError, match="Dc .* must be in"):
+            LadrunoJ2(K=1e8, G=5e7, sig0=5e5, damage=(1.0, 1.0, 0.0, 1.5))
+
+    def test_rejects_bad_lch_ref(self) -> None:
+        with pytest.raises(ValueError, match="lch_ref must be > 0"):
+            LadrunoJ2(K=1e8, G=5e7, sig0=5e5, lch_ref=0.0)
+
+
+# ---------------------------------------------------------------------------
+# LadrunoJ2Finite (Ladruno fork — finite-strain-native combined J2, ND 33012)
+# ---------------------------------------------------------------------------
+
+class TestLadrunoJ2Finite:
+    def test_emit_bare(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoJ2Finite(K=1.65e8, G=7.5e7, sig0=450.0)._emit(rec, tag=9)
+        assert rec.calls == [
+            ("nDMaterial",
+             ("LadrunoJ2Finite", 9, 1.65e8, 7.5e7,
+              "-iso", "voce", 450.0, 0.0, 0.0, 0.0), {}),
+        ]
+
+    def test_emit_with_kin_rho_implex(self) -> None:
+        rec = RecordingEmitter()
+        LadrunoJ2Finite(
+            K=1.65e8, G=7.5e7, sig0=450.0,
+            backstresses=[(20000.0, 200.0)], rho=7.85e3, implex=True,
+        )._emit(rec, tag=3)
+        assert rec.calls[0][1] == (
+            "LadrunoJ2Finite", 3, 1.65e8, 7.5e7,
+            "-iso", "voce", 450.0, 0.0, 0.0, 0.0,
+            "-kin", 1, 20000.0, 200.0,
+            "-rho", 7.85e3,
+            "-implex",
+        )
+
+    def test_has_no_damage_field(self) -> None:
+        # The finite material has no Lemaitre damage (parser rejects it).
+        assert not hasattr(LadrunoJ2Finite(K=1e8, G=5e7, sig0=5e5), "damage")
+
+    def test_dependencies_is_empty(self) -> None:
+        assert LadrunoJ2Finite(K=1e8, G=5e7, sig0=5e5).dependencies() == ()
+
+    def test_rejects_non_positive_G(self) -> None:
+        with pytest.raises(ValueError, match="G must be > 0"):
+            LadrunoJ2Finite(K=1e8, G=0.0, sig0=5e5)
+
+
+# ---------------------------------------------------------------------------
+# LogStrain (Ladruno fork — Hencky finite-strain lift wrapper, ND 33010)
+# ---------------------------------------------------------------------------
+
+class TestLogStrain:
+    def test_dependencies_is_the_inner(self) -> None:
+        inner = ElasticIsotropic(E=30e9, nu=0.2)
+        assert LogStrain(inner=inner).dependencies() == (inner,)
+
+    def test_emit_resolves_inner_tag(self) -> None:
+        inner = ElasticIsotropic(E=30e9, nu=0.2)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 7 if p is inner else 0)
+        LogStrain(inner=inner)._emit(rec, tag=12)
+        assert rec.calls == [("nDMaterial", ("LogStrain", 12, 7), {})]
+
+    def test_rejects_non_ndmaterial_inner(self) -> None:
+        with pytest.raises(TypeError, match="inner must be an NDMaterial"):
+            LogStrain(inner=object())  # type: ignore[arg-type]
+
+    def test_repr_includes_type_token(self) -> None:
+        assert "LogStrain" in repr(LogStrain(inner=ElasticIsotropic(E=1e9, nu=0.2)))
+
+
+# ---------------------------------------------------------------------------
+# InitDefGrad (Ladruno fork — finite staged stress-free birth, ND 33013)
+# ---------------------------------------------------------------------------
+
+class TestInitDefGrad:
+    def test_emit_bare(self) -> None:
+        inner = LadrunoJ2Finite(K=1e8, G=5e7, sig0=5e5)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 3 if p is inner else 0)
+        InitDefGrad(inner=inner)._emit(rec, tag=8)
+        assert rec.calls == [("nDMaterial", ("InitDefGrad", 8, 3), {})]
+
+    def test_emit_with_noinitf_and_F0(self) -> None:
+        inner = LadrunoJ2Finite(K=1e8, G=5e7, sig0=5e5)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 3 if p is inner else 0)
+        F0 = (1.01, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+        InitDefGrad(inner=inner, no_init_f=True, F0=F0)._emit(rec, tag=1)
+        assert rec.calls[0][1] == (
+            "InitDefGrad", 1, 3, "-noInitF", "-F0", *F0,
+        )
+
+    def test_dependencies_is_the_inner(self) -> None:
+        inner = LadrunoJ2Finite(K=1e8, G=5e7, sig0=5e5)
+        assert InitDefGrad(inner=inner).dependencies() == (inner,)
+
+    def test_rejects_bad_F0_length(self) -> None:
+        inner = LadrunoJ2Finite(K=1e8, G=5e7, sig0=5e5)
+        with pytest.raises(ValueError, match="F0 must have 9 row-major"):
+            InitDefGrad(inner=inner, F0=(1.0, 0.0, 0.0))
+
+
+# ---------------------------------------------------------------------------
+# StagedStrain (Ladruno fork — small-strain staged stress-free birth, ND 33014)
+# ---------------------------------------------------------------------------
+
+class TestStagedStrain:
+    def test_emit_bare(self) -> None:
+        inner = ElasticIsotropic(E=30e9, nu=0.2)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 5 if p is inner else 0)
+        StagedStrain(inner=inner)._emit(rec, tag=9)
+        assert rec.calls == [("nDMaterial", ("StagedStrain", 9, 5), {})]
+
+    def test_emit_eps0_is_last_flag(self) -> None:
+        inner = ElasticIsotropic(E=30e9, nu=0.2)
+        rec = RecordingEmitter()
+        set_tag_resolver(rec, lambda p: 5 if p is inner else 0)
+        eps0 = (1e-3, 0.0, 0.0, 0.0, 0.0, 0.0)
+        StagedStrain(inner=inner, no_init=True, eps0=eps0)._emit(rec, tag=2)
+        assert rec.calls[0][1] == ("StagedStrain", 2, 5, "-noInit", "-eps0", *eps0)
+
+    def test_rejects_bad_eps0_length(self) -> None:
+        inner = ElasticIsotropic(E=30e9, nu=0.2)
+        with pytest.raises(ValueError, match="eps0 must have 6 Voigt"):
+            StagedStrain(inner=inner, eps0=(1e-3, 0.0, 0.0))
+
+
+# ---------------------------------------------------------------------------
+# is_finite_strain marker (mirrors the fork's FiniteStrainNDMaterial base)
+# ---------------------------------------------------------------------------
+
+class TestFiniteStrainMarker:
+    def test_finite_strain_materials_are_marked(self) -> None:
+        assert LogStrain.is_finite_strain is True
+        assert LadrunoJ2Finite.is_finite_strain is True
+        assert InitDefGrad.is_finite_strain is True
+
+    def test_small_strain_materials_are_not_marked(self) -> None:
+        # StagedStrain is the *small-strain* staged wrapper (setTrialStrain),
+        # NOT a FiniteStrainNDMaterial — it must stay unmarked.
+        assert StagedStrain.is_finite_strain is False
+        assert ElasticIsotropic.is_finite_strain is False
+        assert LadrunoJ2.is_finite_strain is False
+
+
+# ---------------------------------------------------------------------------
 # Cross-cutting: namespace-level integration with the bridge
 # ---------------------------------------------------------------------------
 
@@ -340,3 +564,48 @@ class TestNDMaterialNamespace:
         m2 = ops.nDMaterial.ElasticIsotropic(E=200e9, nu=0.3)
         assert ops.tag_for(m1) == 1
         assert ops.tag_for(m2) == 2
+
+    def test_LadrunoJ2_via_namespace_returns_typed_instance(self) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.LadrunoJ2(
+            K=1.65e8, G=7.5e7, sig0=450.0, Qinf=265.0, b=16.93, Hiso=129.24,
+            backstresses=[(20000.0, 200.0)],
+        )
+        assert isinstance(m, LadrunoJ2)
+        assert m.backstresses == ((20000.0, 200.0),)
+        assert ops.tag_for(m) == 1
+
+    def test_LadrunoJ2Finite_via_namespace_returns_typed_instance(self) -> None:
+        ops = _stub_bridge()
+        m = ops.nDMaterial.LadrunoJ2Finite(K=1.65e8, G=7.5e7, sig0=450.0)
+        assert isinstance(m, LadrunoJ2Finite)
+        assert ops.tag_for(m) == 1
+
+    def test_LogStrain_wraps_and_inner_tagged_first(self) -> None:
+        ops = _stub_bridge()
+        inner = ops.nDMaterial.LadrunoJ2(K=1.65e8, G=7.5e7, sig0=450.0)
+        wrapped = ops.nDMaterial.LogStrain(inner=inner)
+        assert isinstance(wrapped, LogStrain)
+        assert ops.tag_for(inner) == 1
+        assert ops.tag_for(wrapped) == 2
+
+    def test_LogStrain_accepts_inner_by_name(self) -> None:
+        ops = _stub_bridge()
+        ops.nDMaterial.LadrunoJ2(K=1.65e8, G=7.5e7, sig0=450.0, name="steel")
+        wrapped = ops.nDMaterial.LogStrain(inner="steel")
+        assert isinstance(wrapped, LogStrain)
+
+    def test_InitDefGrad_wraps_finite_inner(self) -> None:
+        ops = _stub_bridge()
+        finite = ops.nDMaterial.LadrunoJ2Finite(K=1.65e8, G=7.5e7, sig0=450.0)
+        wrapped = ops.nDMaterial.InitDefGrad(inner=finite)
+        assert isinstance(wrapped, InitDefGrad)
+        assert ops.tag_for(finite) == 1
+        assert ops.tag_for(wrapped) == 2
+
+    def test_StagedStrain_wraps_inner(self) -> None:
+        ops = _stub_bridge()
+        inner = ops.nDMaterial.ElasticIsotropic(E=30e9, nu=0.2)
+        wrapped = ops.nDMaterial.StagedStrain(inner=inner)
+        assert isinstance(wrapped, StagedStrain)
+        assert ops.tag_for(wrapped) == 2

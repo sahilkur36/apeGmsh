@@ -84,11 +84,24 @@ _SECTION_DEFORM_TO_CANONICAL: dict[str, str] = {
 # Fiber-level buckets (``section.fiber.stress`` / ``section.fiber.strain``,
 # ``LEVELS==4`` with ``MULTIPLICITY``==num-fibers). Keyed by token, not by
 # column name (the column is the scalar uniaxial ``sigma11``/``eps11``).
+#
+# Two token spellings map to the same canonical: fiber-section beams emit
+# under ``section.fiber.*``; layered shells emit under ``material.fiber.*``
+# (the recorder swaps ``section``→``material`` for shells, recorder PR #200 —
+# the bucket layout is byte-identical, only the token name differs). A model
+# carrying both kinds emits both buckets, so reads gather from every present
+# spelling (mirrors the MPCO reader's dual-keying, ``_mpco.py`` discover).
 _FIBER_TOKEN_TO_CANONICAL: dict[str, str] = {
     "section.fiber.stress": "fiber_stress",
     "section.fiber.strain": "fiber_strain",
+    "material.fiber.stress": "fiber_stress",
+    "material.fiber.strain": "fiber_strain",
 }
-_FIBER_CANONICAL_TO_TOKEN = {v: k for k, v in _FIBER_TOKEN_TO_CANONICAL.items()}
+# canonical → candidate tokens, ``section.fiber.*`` first (beam convention).
+_FIBER_CANONICAL_TO_TOKENS: dict[str, tuple[str, ...]] = {
+    "fiber_stress": ("section.fiber.stress", "material.fiber.stress"),
+    "fiber_strain": ("section.fiber.strain", "material.fiber.strain"),
+}
 
 
 def section_canonical(token: str) -> Optional[str]:
@@ -687,10 +700,12 @@ def read_fiber_slab(
     One slab column per (element, gauss point, fiber). ``None`` if the
     component (``fiber_stress`` / ``fiber_strain``) is absent.
     """
-    token = _FIBER_CANONICAL_TO_TOKEN.get(component)
-    if token is None or token not in on_elements:
+    tokens = _FIBER_CANONICAL_TO_TOKENS.get(component)
+    if tokens is None:
         return None
-    token_grp = on_elements[token]
+    present = [t for t in tokens if t in on_elements]
+    if not present:
+        return None
     assignment = _build_fiber_assignment(section_assignments)
     want_gp = None if gp_indices is None else set(int(g) for g in gp_indices)
 
@@ -702,54 +717,59 @@ def read_fiber_slab(
     area_parts: list[ndarray] = []
     mat_parts: list[ndarray] = []
 
-    for key in token_grp:
-        bucket = token_grp[key]
-        try:
-            blocks = parse_blocks(bucket)
-        except (KeyError, ValueError):
-            continue
-        fiber_blocks = [
-            b for b in blocks
-            if b.gauss_id >= 0 and len(b.comp_names) == 1
-        ]
-        if not fiber_blocks:
-            continue
-        sel = _select_rows(bucket, element_ids)
-        if sel is None:
-            continue
-        rows, sel_ids = sel
-        data = np.asarray(bucket["DATA"][...], dtype=np.float64)
-
-        for b in sorted(fiber_blocks, key=lambda bb: bb.gauss_id):
-            if want_gp is not None and b.gauss_id not in want_gp:
+    # Gather from every present spelling — a model with both fiber-section
+    # beams (``section.fiber.*``) and layered shells (``material.fiber.*``)
+    # emits both buckets.
+    for token in present:
+        token_grp = on_elements[token]
+        for key in token_grp:
+            bucket = token_grp[key]
+            try:
+                blocks = parse_blocks(bucket)
+            except (KeyError, ValueError):
                 continue
-            nfib = b.multiplicity
-            # (T, E, nfib) — NUM_COMP==1, so the block is fiber-major.
-            block = data[t_idx][:, rows, b.col_start:b.col_start + nfib]
-            T = block.shape[0]
-            E = sel_ids.size
-            values_parts.append(block.reshape(T, E * nfib))
-            ei_parts.append(np.repeat(sel_ids, nfib))
-            gp_parts.append(np.full(E * nfib, b.gauss_id, dtype=np.int64))
-            # Per-element fiber geometry from the assigned section.
-            ys = np.empty(E * nfib, dtype=np.float64)
-            zs = np.empty(E * nfib, dtype=np.float64)
-            ars = np.empty(E * nfib, dtype=np.float64)
-            mts = np.empty(E * nfib, dtype=np.int64)
-            for e_i, etag in enumerate(sel_ids):
-                geom = assignment.get((int(etag), b.gauss_id))
-                sl = slice(e_i * nfib, (e_i + 1) * nfib)
-                if geom is not None and geom[0].size == nfib:
-                    ys[sl], zs[sl], ars[sl], mts[sl] = geom
-                else:
-                    ys[sl] = np.nan
-                    zs[sl] = np.nan
-                    ars[sl] = np.nan
-                    mts[sl] = -1
-            y_parts.append(ys)
-            z_parts.append(zs)
-            area_parts.append(ars)
-            mat_parts.append(mts)
+            fiber_blocks = [
+                b for b in blocks
+                if b.gauss_id >= 0 and len(b.comp_names) == 1
+            ]
+            if not fiber_blocks:
+                continue
+            sel = _select_rows(bucket, element_ids)
+            if sel is None:
+                continue
+            rows, sel_ids = sel
+            data = np.asarray(bucket["DATA"][...], dtype=np.float64)
+
+            for b in sorted(fiber_blocks, key=lambda bb: bb.gauss_id):
+                if want_gp is not None and b.gauss_id not in want_gp:
+                    continue
+                nfib = b.multiplicity
+                # (T, E, nfib) — NUM_COMP==1, so the block is fiber-major.
+                block = data[t_idx][:, rows, b.col_start:b.col_start + nfib]
+                T = block.shape[0]
+                E = sel_ids.size
+                values_parts.append(block.reshape(T, E * nfib))
+                ei_parts.append(np.repeat(sel_ids, nfib))
+                gp_parts.append(np.full(E * nfib, b.gauss_id, dtype=np.int64))
+                # Per-element fiber geometry from the assigned section.
+                ys = np.empty(E * nfib, dtype=np.float64)
+                zs = np.empty(E * nfib, dtype=np.float64)
+                ars = np.empty(E * nfib, dtype=np.float64)
+                mts = np.empty(E * nfib, dtype=np.int64)
+                for e_i, etag in enumerate(sel_ids):
+                    geom = assignment.get((int(etag), b.gauss_id))
+                    sl = slice(e_i * nfib, (e_i + 1) * nfib)
+                    if geom is not None and geom[0].size == nfib:
+                        ys[sl], zs[sl], ars[sl], mts[sl] = geom
+                    else:
+                        ys[sl] = np.nan
+                        zs[sl] = np.nan
+                        ars[sl] = np.nan
+                        mts[sl] = -1
+                y_parts.append(ys)
+                z_parts.append(zs)
+                area_parts.append(ars)
+                mat_parts.append(mts)
 
     if not values_parts:
         return None

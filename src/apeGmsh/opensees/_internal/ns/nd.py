@@ -8,15 +8,22 @@ bridge so a tag is allocated.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 from ...material.nd import (
     ASDConcrete3D,
     ASDPlasticMaterial3D,
     DruckerPrager,
     ElasticIsotropic,
+    InitDefGrad,
     J2Plasticity,
+    LadrunoJ2,
+    LadrunoJ2Finite,
+    LogStrain,
     MohrCoulombSoil as _build_mohr_coulomb_soil,
     NDMaterial,
     PlaneStrain,
+    StagedStrain,
 )
 from ._base import _BridgeNamespace
 
@@ -202,6 +209,139 @@ class _NDMaterialNS(_BridgeNamespace):
         """
         base = self._bridge._resolve(base, base=NDMaterial)
         return self._bridge._register(PlaneStrain(base=base), name=name)
+
+    # -- Ladruno fork — J2 plasticity family ------------------------------
+
+    def LadrunoJ2(
+        self,
+        *,
+        K: float,
+        G: float,
+        sig0: float,
+        Qinf: float = 0.0,
+        b: float = 0.0,
+        Hiso: float = 0.0,
+        backstresses: Sequence[tuple[float, float]] = (),
+        rho: float = 0.0,
+        lch_ref: float | None = None,
+        damage: tuple[float, float, float, float] | None = None,
+        implex: bool = False,
+        name: str | None = None,
+    ) -> LadrunoJ2:
+        """Register a :class:`LadrunoJ2` combined-hardening von Mises material.
+
+        Ladruno fork (``ND_TAG`` 33011); see :class:`LadrunoJ2`. ``Qinf``/
+        ``b``/``Hiso`` set the Voce + linear isotropic hardening;
+        ``backstresses`` a list of ``(C, gamma)`` Chaboche pairs (<= 8);
+        ``damage`` the optional Lemaitre ``(r, s, pD, Dc)`` mode.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._bridge._register(
+            LadrunoJ2(
+                K=K, G=G, sig0=sig0, Qinf=Qinf, b=b, Hiso=Hiso,
+                backstresses=tuple((float(C), float(g)) for C, g in backstresses),
+                rho=rho, lch_ref=lch_ref, damage=damage, implex=implex,
+            ),
+            name=name,
+        )
+
+    def LadrunoJ2Finite(
+        self,
+        *,
+        K: float,
+        G: float,
+        sig0: float,
+        Qinf: float = 0.0,
+        b: float = 0.0,
+        Hiso: float = 0.0,
+        backstresses: Sequence[tuple[float, float]] = (),
+        rho: float = 0.0,
+        implex: bool = False,
+        name: str | None = None,
+    ) -> LadrunoJ2Finite:
+        """Register a :class:`LadrunoJ2Finite` finite-strain-native J2 material.
+
+        Ladruno fork (``ND_TAG`` 33012); see :class:`LadrunoJ2Finite`. Use
+        for combined hardening **with** large rotation; the sole consumer is
+        ``LadrunoBrick ... -geom finite``. No ``-damage`` /
+        ``-autoRegularization`` here (the finite material rejects them).
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        return self._bridge._register(
+            LadrunoJ2Finite(
+                K=K, G=G, sig0=sig0, Qinf=Qinf, b=b, Hiso=Hiso,
+                backstresses=tuple((float(C), float(g)) for C, g in backstresses),
+                rho=rho, implex=implex,
+            ),
+            name=name,
+        )
+
+    # -- Ladruno fork — finite-strain & staged-birth wrappers -------------
+
+    def LogStrain(
+        self, *, inner: NDMaterial | str, name: str | None = None
+    ) -> LogStrain:
+        """Register a :class:`LogStrain` Hencky finite-strain lift wrapper.
+
+        Ladruno fork (``ND_TAG`` 33010); see :class:`LogStrain`. Lifts an
+        isotropic small-strain 3-D ``inner`` to finite strain for
+        ``LadrunoBrick ... -geom finite``. ``inner`` accepts the registered
+        nDMaterial handle or its registered name.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        inner = self._bridge._resolve(inner, base=NDMaterial)
+        return self._bridge._register(LogStrain(inner=inner), name=name)
+
+    def InitDefGrad(
+        self, *,
+        inner: NDMaterial | str,
+        no_init_f: bool = False,
+        F0: tuple[float, ...] | None = None,
+        name: str | None = None,
+    ) -> InitDefGrad:
+        """Register an :class:`InitDefGrad` finite staged stress-free birth wrapper.
+
+        Ladruno fork (``ND_TAG`` 33013); see :class:`InitDefGrad`. Makes a
+        continuum element born stress-free at the deformed geometry in a
+        staged build. ``inner`` must be a finite-strain material
+        (``LogStrain`` / ``LadrunoJ2Finite``); ``F0`` is an optional 9
+        row-major birth gradient.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        inner = self._bridge._resolve(inner, base=NDMaterial)
+        return self._bridge._register(
+            InitDefGrad(inner=inner, no_init_f=no_init_f, F0=F0), name=name
+        )
+
+    def StagedStrain(
+        self, *,
+        inner: NDMaterial | str,
+        no_init: bool = False,
+        eps0: tuple[float, ...] | None = None,
+        name: str | None = None,
+    ) -> StagedStrain:
+        """Register a :class:`StagedStrain` small-strain staged-birth wrapper.
+
+        Ladruno fork (``ND_TAG`` 33014); see :class:`StagedStrain`. The
+        everyday small-strain staged-build case (2-D or 3-D) — the inner is
+        born virgin at its birth strain. ``eps0`` is an optional 6-component
+        Voigt birth strain.
+
+        Fork-only: emits on any build, errors at ``ops.run()`` on stock
+        ``openseespy``.
+        """
+        inner = self._bridge._resolve(inner, base=NDMaterial)
+        return self._bridge._register(
+            StagedStrain(inner=inner, no_init=no_init, eps0=eps0), name=name
+        )
 
     def MohrCoulombSoil(
         self,
