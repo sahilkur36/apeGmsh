@@ -641,9 +641,11 @@ class LadrunoReader:
     ) -> LayerSlab:
         # A .ladruno has no distinct layer level: a layered-shell section
         # serialises as a fiber section (KIND='fiber', layers == fibers),
-        # so layer state is read through read_fibers. (Separately, the fork
-        # does not yet emit per-layer shell material stress under the
-        # obvious recorder verb — a fork-side ask.) Always empty here.
+        # so layer state is read through read_fibers. As of recorder PR #200
+        # layered shells emit per-layer material stress under the
+        # ``material.fiber.<resp>`` verb (shells swap section→material); the
+        # Ladruno fiber token map now keys on both spellings, so read_fibers
+        # picks shells up. Always empty here.
         time = self.time_vector(stage_id)
         return _empty_layer_slab(
             component, time, resolve_time_slice(time_slice, time),
