@@ -486,14 +486,24 @@ candidates, in dependency order:
    handoff says landed). Adjust L4 to whatever the writer actually emits.
 4. **Fixture generation** — a stable `make_synthetic.py` / sample-export recipe we
    can re-run when the schema bumps, so apeGmsh fixtures track the writer.
-5. **Shell per-layer material stress** (would re-enable `read_layers`). During L2b-3
-   a `ShellMITC4` with a `LayeredShell` section serialised its layers into
-   `MODEL/SECTION_ASSIGNMENTS` as a fiber section, but the obvious
-   `recorder ladruno … -E material.stress` emitted **no** `ON_ELEMENTS` bucket for
-   the shell — so layer stress/strain is currently unreadable. Confirm the recorder
-   verb (or response code) that makes layered shells emit per-layer material state;
-   once it lands under `section.fiber.stress`-shaped buckets, `read_fibers` already
-   covers it (no apeGmsh change needed).
+5. **Shell per-layer material stress** (re-enables shell layer reads). ✅ RESOLVED
+   fork-side by recorder **PR #200** (per the 2026-06 `ladruno_apegmsh_contract.md`
+   hardening note) — layered shells now emit a real per-layer `ON_ELEMENTS` bucket,
+   under `material.fiber.<resp>` (the recorder swaps `section`→`material` for shells;
+   the bucket layout is byte-identical to `section.fiber.<resp>`). ✅ **READER FIX
+   SHIPPED (2026-06-04):** `_ladruno_element_io` gained the `material.fiber.*` alias
+   (`_FIBER_TOKEN_TO_CANONICAL` + `_FIBER_CANONICAL_TO_TOKENS`), and `read_fiber_slab`
+   now gathers from every present spelling (mirrors MPCO's dual-keying, `_mpco.py:923`)
+   so a model with both fiber-section beams and layered shells reads both. Shells flow
+   through `read_fibers`; `read_layers` stays empty-by-design (layers == fibers). Unit-
+   tested fork-free by renaming the fiber-beam fixture's buckets to `material.fiber.*`
+   and asserting an identical read (35/35 reader + 62/62 results, mypy-clean). **Remaining:
+   a `@pytest.mark.live` round-trip on a real fork-built layered shell** (ShellMITC4 +
+   LayeredShell recorded via `-E material.fiber.stress`) to confirm the real recorder's
+   bucket matches the synthetic layout — gated on the py3.12 fork build. The per-column
+   layer label is implicit if ever needed at the layer level — decode
+   `gp = GAUSS_ID // nLayer`, `layer = GAUSS_ID % nLayer` with `nLayer` from
+   `MODEL/SECTION_ASSIGNMENTS`.
 
 ## Out of scope (this plan)
 
@@ -501,7 +511,12 @@ candidates, in dependency order:
 - Explicit integrator / auto-dt surface (separate plan).
 - Profiler #5 (separate, optional).
 - Tier 2 parallel energy `Allreduce` and Tier 3 envelopes (`ENVELOPES/…`) —
-  fork-side still in flight; add reader support when the writer lands.
+  the envelope writer has since **landed fork-side** (recorder PRs #43/#44:
+  `RESULTS/ENVELOPES/<family>/<name>` + self-describing component names + element
+  `COLUMN_MAP`). The reader still has **no ENVELOPES support** — `_find_time_dataset`
+  only walks `ON_NODES/ON_ELEMENTS/ON_DOMAIN/ON_REGIONS`, so an `-envelope`-recorded
+  `.ladruno` currently reads as empty (no `TIME` found). Independent of the #200/#201
+  hardening; add reader support if/when envelope post-processing is wanted.
 
 ## References
 - Fork contract: `nmorabowen/OpenSees@ladruno:Ladruno_implementation/ladruno_apegmsh_contract.md`

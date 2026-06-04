@@ -371,6 +371,66 @@ def test_fibers_unknown_component_empty() -> None:
         assert slab.values.shape[1] == 0
 
 
+# -- material.fiber.* alias (layered shells, recorder PR #200) ----------
+#
+# Layered shells emit per-layer stress under ``material.fiber.<resp>``
+# (the recorder swaps ``section``→``material`` for shells; the bucket
+# layout is byte-identical to ``section.fiber.<resp>``). We synthesise that
+# by renaming the fiber-beam fixture's buckets, so the read is provable
+# fork-free; a live layered-shell round-trip is deferred to a fork build.
+
+
+def _rename_fiber_buckets_to_material(src: Path, dst: Path) -> None:
+    """Copy ``src``→``dst`` with ``section.fiber.*`` renamed to
+    ``material.fiber.*`` (the shell spelling)."""
+    import shutil
+
+    import h5py
+
+    shutil.copy(src, dst)
+    with h5py.File(dst, "r+") as f:
+        stage = next(k for k in f if k.startswith("MODEL_STAGE["))
+        on_e = f[stage]["RESULTS"]["ON_ELEMENTS"]
+        for resp in ("stress", "strain"):
+            on_e.move(f"section.fiber.{resp}", f"material.fiber.{resp}")
+
+
+def test_fibers_material_spelling_reads_like_section(tmp_path: Path) -> None:
+    shell = tmp_path / "shell.ladruno"
+    _rename_fiber_buckets_to_material(FIBERBEAM, shell)
+    with LadrunoReader(FIBERBEAM) as ref, LadrunoReader(shell) as r:
+        comps = r.available_components("stage_0", ResultLevel.FIBERS)
+        assert set(comps) == {"fiber_stress", "fiber_strain"}
+        got = r.read_fibers("stage_0", "fiber_stress")
+        want = ref.read_fibers("stage_0", "fiber_stress")
+        # The material.fiber.* bucket reads identically to section.fiber.*.
+        np.testing.assert_array_equal(got.values, want.values)
+        assert got.element_index.tolist() == want.element_index.tolist()
+        assert got.gp_index.tolist() == want.gp_index.tolist()
+
+
+def test_fibers_gathers_both_spellings(tmp_path: Path) -> None:
+    # A model carrying both fiber-section beams (section.fiber.*) and
+    # layered shells (material.fiber.*) emits both buckets; the read gathers
+    # from every present spelling. Synthesised by duplicating the beam
+    # bucket under the material spelling (same element — contrived, but it
+    # locks the gather-from-all-spellings loop).
+    import shutil
+
+    import h5py
+
+    both = tmp_path / "both.ladruno"
+    shutil.copy(FIBERBEAM, both)
+    with h5py.File(both, "r+") as f:
+        stage = next(k for k in f if k.startswith("MODEL_STAGE["))
+        on_e = f[stage]["RESULTS"]["ON_ELEMENTS"]
+        on_e.copy("section.fiber.stress", "material.fiber.stress")
+    with LadrunoReader(both) as r:
+        slab = r.read_fibers("stage_0", "fiber_stress")
+        # 12 columns from each spelling.
+        assert slab.values.shape == (2, 24)
+
+
 def test_fiber_stress_not_leaked_into_gauss() -> None:
     # section.fiber.stress carries sigma11 (→ stress_xx under the digit map)
     # but as MULTIPLICITY>1 fiber blocks. read_gauss must NOT surface them
