@@ -37,7 +37,7 @@ from ._internal.build import (
     SPRemovalRecord,
     StageRecord,
     SupportRecord,
-    _emit_node_with_broker_ndf,
+    _emit_node_with_inferred_ndf,
     allocate_element_tags,
     build_element_partition_owner,
     build_node_partition_owners,
@@ -60,7 +60,8 @@ from ._internal.build import (
     runtime_rank_from_partition_record,
     topological_order,
     validate_node_ndf_element_compat,
-    warn_on_ndf_inference_parity,
+    infer_node_ndf,
+    assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
 from ._internal.tag_resolution import (
@@ -768,12 +769,17 @@ class BuiltModel:
         # element is emitted.
         validate_node_ndf_element_compat(self.fem, elements)
 
-        # ADR 0048 PR-1 — shadow-mode parity check: compare what element-class
-        # inference WOULD assign per node against the ndf this deck emits, and
-        # warn (never raise, never change emit) on divergence. This validates
-        # the inference engine against real models before the clean break makes
-        # it authoritative. Non-breaking by construction.
-        warn_on_ndf_inference_parity(self.fem, elements, self.ndm, self.ndf)
+        # ADR 0048 — per-node ndf is INFERRED from the declared element
+        # classes (authoritative). Guard ndm against the elements, then
+        # resolve the per-node ndf map once; every node-emit site below
+        # sources its ``-ndf`` from this map (elided when it equals the
+        # ``ops.model`` envelope ``self.ndf``). Nodes absent from the map
+        # — element-less / decoupled, or touched only by adaptive
+        # elements — take the envelope.
+        assert_ndm_compatible(
+            [type(spec).__name__ for spec in elements], self.ndm,
+        )
+        inferred_ndf = infer_node_ndf(self.fem, elements, self.ndm)
 
         # 4. Emit non-element / non-transform primitives in topo order.
         pre_element: list[Primitive] = []
@@ -795,6 +801,7 @@ class BuiltModel:
                 tags=tags,
                 transforms=transforms,
                 elements=elements,
+                inferred_ndf=inferred_ndf,
                 pre_element=pre_element,
                 post_element=post_element,
                 base_resolver=_base_resolver,
@@ -825,6 +832,7 @@ class BuiltModel:
                 tags=tags,
                 transforms=transforms,
                 elements=elements,
+                inferred_ndf=inferred_ndf,
                 pre_element=pre_element,
                 post_element=post_element,
                 base_resolver=_base_resolver,
@@ -840,6 +848,7 @@ class BuiltModel:
             tags=tags,
             transforms=transforms,
             elements=elements,
+            inferred_ndf=inferred_ndf,
             pre_element=pre_element,
             post_element=post_element,
             base_resolver=_base_resolver,
@@ -855,6 +864,7 @@ class BuiltModel:
         tags: TagAllocator,
         transforms: "list[GeomTransf]",
         elements: "list[Element]",
+        inferred_ndf: "dict[int, int]",
         pre_element: "list[Primitive]",
         post_element: "list[Primitive]",
         base_resolver: object,
@@ -916,9 +926,10 @@ class BuiltModel:
         for nid, xyz in zip(self.fem.nodes.ids, self.fem.nodes.coords):
             if int(nid) in node_owner_stage:
                 continue
-            _emit_node_with_broker_ndf(
-                emitter, self.fem, int(nid),
+            _emit_node_with_inferred_ndf(
+                emitter, inferred_ndf, int(nid),
                 (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                self.ndf,
             )
 
         # 4a. Materials / sections / time series / analysis chain
@@ -1076,6 +1087,7 @@ class BuiltModel:
                 element_owner_stage=element_owner_stage,
                 node_owner_stage=node_owner_stage,
                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                inferred_ndf=inferred_ndf,
                 overrides=overrides,
                 base_resolver=base_resolver,
             )
@@ -1089,6 +1101,7 @@ class BuiltModel:
         tags: TagAllocator,
         transforms: "list[GeomTransf]",
         elements: "list[Element]",
+        inferred_ndf: "dict[int, int]",
         pre_element: "list[Primitive]",
         post_element: "list[Primitive]",
         base_resolver: object,
@@ -1230,9 +1243,10 @@ class BuiltModel:
             # Nodes — FEM-id order for a grep-friendly, stable fragment.
             for nid in sorted(owned_nodes):
                 xyz = self.fem.nodes.coords[node_idx[nid]]
-                _emit_node_with_broker_ndf(
-                    emitter, self.fem, int(nid),
+                _emit_node_with_inferred_ndf(
+                    emitter, inferred_ndf, int(nid),
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                    self.ndf,
                 )
             # Elements owned by this module.
             self._emit_element_subset(
@@ -1343,6 +1357,7 @@ class BuiltModel:
         element_owner_stage: "dict[int, int]" = {},  # type: ignore[assignment]
         node_owner_stage: "dict[int, int]" = {},  # type: ignore[assignment]
         fem_eid_to_ops_tag: "dict[int, int]" = {},  # type: ignore[assignment]
+        inferred_ndf: "dict[int, int]" = {},  # type: ignore[assignment]
         overrides: "dict[tuple[int, int], int] | None" = None,
         base_resolver: object = None,
     ) -> None:
@@ -1430,9 +1445,10 @@ class BuiltModel:
                 if idx is None:
                     continue
                 xyz = self.fem.nodes.coords[idx]
-                _emit_node_with_broker_ndf(
-                    emitter, self.fem, int(nid),
+                _emit_node_with_inferred_ndf(
+                    emitter, inferred_ndf, int(nid),
                     (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                    self.ndf,
                 )
 
             # 3. Owned elements.
@@ -1650,6 +1666,7 @@ class BuiltModel:
         tags: TagAllocator,
         transforms: "list[GeomTransf]",
         elements: "list[Element]",
+        inferred_ndf: "dict[int, int]",
         pre_element: "list[Primitive]",
         post_element: "list[Primitive]",
         base_resolver: object,
@@ -1878,9 +1895,10 @@ class BuiltModel:
                     if idx is None:
                         continue
                     xyz = self.fem.nodes.coords[idx]
-                    _emit_node_with_broker_ndf(
-                        emitter, self.fem, int(nid),
+                    _emit_node_with_inferred_ndf(
+                        emitter, inferred_ndf, int(nid),
                         (float(xyz[0]), float(xyz[1]), float(xyz[2])),
+                        self.ndf,
                     )
 
                 # 6. Elements — per-rank fan-out (tags pre-allocated).
@@ -1937,6 +1955,7 @@ class BuiltModel:
                     node_owners=node_owners,
                     element_owner=element_owner,
                     foreign_node_ndf=int(self.ndf),
+                    inferred_ndf=inferred_ndf,
                     tags=tags,
                     claimed_ids=stage_claimed_constraint_ids,
                 )
@@ -2031,6 +2050,7 @@ class BuiltModel:
                 element_owner=element_owner,
                 node_owners=node_owners,
                 fem_eid_to_ops_tag=fem_eid_to_ops_tag,
+                inferred_ndf=inferred_ndf,
                 overrides=overrides,
                 base_resolver=base_resolver,
             )
@@ -2049,6 +2069,7 @@ class BuiltModel:
         element_owner: "dict[int, int]",
         node_owners: "dict[int, set[int]]",
         fem_eid_to_ops_tag: "dict[int, int]",
+        inferred_ndf: "dict[int, int]",
         overrides: "dict[tuple[int, int], int] | None",
         base_resolver: object,
     ) -> None:
@@ -2278,14 +2299,15 @@ class BuiltModel:
                             if idx is None:
                                 continue
                             xyz = self.fem.nodes.coords[idx]
-                            # S2 (ADR 0033): per-node ndf via broker.
-                            _emit_node_with_broker_ndf(
-                                emitter, self.fem, int(nid),
+                            # ADR 0048: per-node ndf from the inferred map.
+                            _emit_node_with_inferred_ndf(
+                                emitter, inferred_ndf, int(nid),
                                 (
                                     float(xyz[0]),
                                     float(xyz[1]),
                                     float(xyz[2]),
                                 ),
+                                self.ndf,
                             )
                         # Per-rank element fan-out across this stage's
                         # specs.  ``emit_element_spec_partitioned``
@@ -2346,6 +2368,7 @@ class BuiltModel:
                                 node_owners=node_owners,
                                 element_owner=element_owner,
                                 foreign_node_ndf=int(self.ndf),
+                                inferred_ndf=inferred_ndf,
                                 tags=tags,
                             )
                     finally:
@@ -4419,21 +4442,19 @@ class apeSees:
     # -- Flat methods ----------------------------------------------------
 
     def model(self, *, ndm: int, ndf: int) -> None:
-        """Set the model dimensionality (``ndm``) and DOFs/node (``ndf``).
+        """Set the model dimensionality (``ndm``) and the envelope ``ndf``.
 
-        The ``ndf`` value is the **envelope default** for nodes that
-        carry no per-node ``g.node_ndf`` declaration; OpenSees uses
-        it as ``model BasicBuilder -ndm K -ndf N`` and per-node
-        ``-ndf K`` overrides are emitted by the bridge when the
-        broker has explicit values (S2 / ADR 0033).  The envelope
-        must therefore be at least as large as the largest per-node
-        ``ndf`` declared on the broker — otherwise a ``ndf=6`` shell
-        node cannot live in a ``ndf=3`` envelope.  A mismatch raises
-        :class:`BridgeError` at call time so the user sees the
-        problem at the model declaration, not deep in an emit fan-out.
+        Per-node ``ndf`` is **inferred** from the declared element
+        classes (ADR 0048) — ``ndf`` here is only the OpenSees model
+        **envelope** (``model BasicBuilder -ndm K -ndf N``) and the
+        **fallback** for nodes inference cannot see: element-less /
+        decoupled nodes, and nodes touched only by adaptive elements
+        (the zeroLength family). Element-attached nodes get their
+        inferred value as a per-node ``-ndf`` override, emitted only
+        where it differs from this envelope. There is no per-node
+        ``ndf`` to declare on the geometry session — ``g.node_ndf``
+        was removed; the elements you declare determine it.
         """
-        from ._internal.build import validate_envelope_covers_broker_ndf
-        validate_envelope_covers_broker_ndf(self._fem, ndf)
         self._ndm = ndm
         self._ndf = ndf
 
@@ -4491,10 +4512,9 @@ class apeSees:
         # broker's neutral ``/model/meta`` has no bridge ``ndf`` (the
         # broker doesn't know the OpenSees envelope), so
         # ``OpenSeesModel.from_h5(path, fem_root="/model")`` would read
-        # ``ndf=0`` and ``validate_envelope_covers_broker_ndf`` would
-        # reject any ``g.node_ndf`` model.  Forwarding the bridge lets
+        # ``ndf=0``.  Forwarding the bridge lets
         # ``NativeWriter.write_opensees_from`` propagate the envelope
-        # ndf onto ``/model/meta`` so node_ndf models round-trip through
+        # ndf onto ``/model/meta`` so mixed-ndf models round-trip through
         # ``Results.from_native``.
         #
         # BUT the sidecar is written via ``self.h5(...)``, which raises
@@ -5484,6 +5504,13 @@ class apeSees:
         emitter = H5Emitter(model_name=name, snapshot_id=snapshot_id)
         bm.emit(emitter)
 
+        # ADR 0048 — recompute the per-node ndf inference map (same
+        # deterministic inputs bm.emit used) so the persisted
+        # /opensees/nodes_ndf matches the emitted deck exactly and
+        # model_hash stays stable across a from_h5 → to_h5 round-trip.
+        _elements = [p for p in bm.primitives if isinstance(p, Element)]
+        _nodes_ndf = infer_node_ndf(self._fem, _elements, bm.ndm)
+
         # Single composition path, shared with ModelData.write (ADR
         # 0018 / _internal.compose).  apeSees passes snapshot_id=None:
         # the broker / bridge meta write is authoritative here, so
@@ -5495,6 +5522,7 @@ class apeSees:
             cuts=cuts,
             sweeps=sweeps,
             names=self._name_records(),
+            nodes_ndf=_nodes_ndf,
         )
 
     # -- Registration -----------------------------------------------------

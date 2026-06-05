@@ -1,13 +1,34 @@
 # ADR 0048 — Infer per-node `ndf` from declared element classes
 
-**Status:** Proposed (2026-05-31). **Supersedes** both
+**Status:** Accepted — **pragmatic variant** (2026-06-04). **Supersedes** both
 [ADR 0032](0032-explicit-only-per-node-ndf.md) (explicit-only `g.node_ndf`)
 and [ADR 0033](0033-s2-emit-wiring-per-node-ndf.md) (override-only emit
-envelope) — this is a **clean break, no compatibility shim**. Builds on the
+envelope). Builds on the
 node-sharing guard of [ADR 0046](0046-shell-on-solid-node-sharing-guard.md)
 and the element registry it shares. Related to
 [ADR 0021](0021-lineage-chain-replaces-snapshot-id.md) (lineage) and
 [ADR 0022](0022-mp-constraint-emission-fanout.md) (phantom nodes).
+
+> **Shipped variant note (2026-06-04).** Per-node `ndf` inference is now
+> **authoritative** at emit / persist / replay and `g.node_ndf` + the neutral
+> broker `_ndf` surface are **deleted** — the core of this ADR. Three
+> deliberate deviations from the purist text below bound the blast radius
+> (decided with the maintainer):
+> (1) **`ops.model(ndm, ndf)` is RETAINED** — `ndf` is now just the envelope
+> AND the fallback for nodes inference can't see (element-less / decoupled /
+> adaptive-only). The "ceiling" objection in Context dissolves once
+> `g.node_ndf` is gone and per-node values are inferred.
+> (2) **No `ops.ndf`** (ADR 0049 DOF half) — those nodes take the envelope;
+> deferred. (3) **No neutral *major* schema bump** — the broker `_ndf` removal
+> is a read-tolerant deletion (Phase 2), not a 3.0.0 break.
+>
+> **Adaptive carve-out (new, required for authority):** a node touched ONLY by
+> adaptive elements (the zeroLength family, `ndf_ok={1..6}`) is omitted from
+> the inferred map → it takes the envelope (its structural partner supplies the
+> real count). Mixed nodes use the non-adaptive max. **Cross-rank consistency:**
+> the inferred map is global + deterministic, so a foreign/ghost node emits the
+> same `ndf` its owner does — no per-node broker store (replaces the ADR 0033
+> `fem_hash` fold); `-ndf` is elided when it equals the envelope.
 
 > **No straddling.** The explicit-only API (`g.node_ndf`, the `ndf=` kwarg on
 > `ops.model`, the broker `_ndf` array, `ndf_for`,

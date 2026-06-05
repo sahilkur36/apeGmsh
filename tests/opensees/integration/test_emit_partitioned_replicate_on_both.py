@@ -259,8 +259,8 @@ def test_cross_rank_equalDOF_replicates_on_both_owner_ranks(tmp_path) -> None:
         f"INV-2: foreign node 4 must precede equalDOF on rank 0 "
         f"(decl at {foreign_idx_r0}, ed at {ed_idx_r0})"
     )
-    # Foreign decl carries -ndf 6; native node 2 does not.
-    assert "-ndf" in r0[foreign_idx_r0]
+    # Uniform ndf-6 model: foreign + native both elide -ndf (envelope wins).
+    assert "-ndf" not in r0[foreign_idx_r0]
     native_idx_r0 = _tcl_node_decl_index(r0, 2)
     assert native_idx_r0 != -1, (
         f"rank 0 must declare its own node 2; lines={r0!r}"
@@ -278,7 +278,7 @@ def test_cross_rank_equalDOF_replicates_on_both_owner_ranks(tmp_path) -> None:
         f"rank 1 must declare foreign node 2 before equalDOF; lines={r1!r}"
     )
     assert foreign_idx_r1 < ed_idx_r1
-    assert "-ndf" in r1[foreign_idx_r1]
+    assert "-ndf" not in r1[foreign_idx_r1]
     native_idx_r1 = _tcl_node_decl_index(r1, 4)
     assert native_idx_r1 != -1
     assert "-ndf" not in r1[native_idx_r1]
@@ -312,14 +312,14 @@ def test_cross_rank_equalDOF_replicates_on_both_owner_ranks(tmp_path) -> None:
     f0 = _py_node_decl_index(pr0, 4)
     e0 = _py_ed_index(pr0)
     assert 0 <= f0 < e0
-    assert "'-ndf'" in pr0[f0]
+    assert "'-ndf'" not in pr0[f0]
     n0 = _py_node_decl_index(pr0, 2)
     assert n0 != -1 and "'-ndf'" not in pr0[n0]
 
     f1 = _py_node_decl_index(pr1, 2)
     e1 = _py_ed_index(pr1)
     assert 0 <= f1 < e1
-    assert "'-ndf'" in pr1[f1]
+    assert "'-ndf'" not in pr1[f1]
     n1 = _py_node_decl_index(pr1, 4)
     assert n1 != -1 and "'-ndf'" not in pr1[n1]
 
@@ -376,13 +376,13 @@ def test_cross_rank_rigidLink_replicates_on_both_owner_ranks(tmp_path) -> None:
     f0 = _idx_line_startswith(r0, "node 4 ")
     rl0 = _idx_line_startswith(r0, "rigidLink ")
     assert 0 <= f0 < rl0, f"INV-2: rank 0 foreign decl/rigidLink: {r0!r}"
-    assert "-ndf" in r0[f0]
+    assert "-ndf" not in r0[f0]
 
     r1 = tcl_by_rank[1]
     f1 = _idx_line_startswith(r1, "node 2 ")
     rl1 = _idx_line_startswith(r1, "rigidLink ")
     assert 0 <= f1 < rl1, f"INV-2: rank 1 foreign decl/rigidLink: {r1!r}"
-    assert "-ndf" in r1[f1]
+    assert "-ndf" not in r1[f1]
 
     # ----- Py side ---------------------------------------------------------
     py_rl_per_rank = {
@@ -400,13 +400,13 @@ def test_cross_rank_rigidLink_replicates_on_both_owner_ranks(tmp_path) -> None:
     pf0 = _idx_line_startswith(pr0, "ops.node(4,")
     prl0 = _idx_line_startswith(pr0, "ops.rigidLink(")
     assert 0 <= pf0 < prl0
-    assert "'-ndf'" in pr0[pf0]
+    assert "'-ndf'" not in pr0[pf0]
 
     pr1 = py_by_rank[1]
     pf1 = _idx_line_startswith(pr1, "ops.node(2,")
     prl1 = _idx_line_startswith(pr1, "ops.rigidLink(")
     assert 0 <= pf1 < prl1
-    assert "'-ndf'" in pr1[pf1]
+    assert "'-ndf'" not in pr1[pf1]
 
 
 # ---------------------------------------------------------------------------
@@ -554,32 +554,32 @@ def test_cross_rank_rigidDiaphragm_replicates_on_all_slave_owner_ranks(
     # Foreign slaves 4 and 6 declared before rigidDiaphragm on rank 0.
     n4_r0 = _idx_line_startswith(r0, "node 4 ")
     n6_r0 = _idx_line_startswith(r0, "node 6 ")
-    assert n4_r0 != -1 and "-ndf" in r0[n4_r0]
-    assert n6_r0 != -1 and "-ndf" in r0[n6_r0]
+    assert n4_r0 != -1 and "-ndf" not in r0[n4_r0]
+    assert n6_r0 != -1 and "-ndf" not in r0[n6_r0]
     assert max(n4_r0, n6_r0) < rd_r0
 
     # Rank 1: foreign master + foreign slave 6.
     r1 = tcl_by_rank[1]
     n7_r1 = _idx_line_startswith(r1, "node 7 ")
     rd_r1 = _idx_line_startswith(r1, "rigidDiaphragm ")
-    assert n7_r1 != -1 and "-ndf" in r1[n7_r1], (
+    assert n7_r1 != -1 and "-ndf" not in r1[n7_r1], (
         f"rank 1: master 7 is foreign and must carry -ndf: {r1!r}"
     )
     n2_r1 = _idx_line_startswith(r1, "node 2 ")
     n6_r1 = _idx_line_startswith(r1, "node 6 ")
-    assert n2_r1 != -1 and "-ndf" in r1[n2_r1]
-    assert n6_r1 != -1 and "-ndf" in r1[n6_r1]
+    assert n2_r1 != -1 and "-ndf" not in r1[n2_r1]
+    assert n6_r1 != -1 and "-ndf" not in r1[n6_r1]
     assert max(n7_r1, n2_r1, n6_r1) < rd_r1
 
     # Rank 2: foreign master + foreign slaves 2 and 4.
     r2 = tcl_by_rank[2]
     n7_r2 = _idx_line_startswith(r2, "node 7 ")
     rd_r2 = _idx_line_startswith(r2, "rigidDiaphragm ")
-    assert n7_r2 != -1 and "-ndf" in r2[n7_r2]
+    assert n7_r2 != -1 and "-ndf" not in r2[n7_r2]
     n2_r2 = _idx_line_startswith(r2, "node 2 ")
     n4_r2 = _idx_line_startswith(r2, "node 4 ")
-    assert n2_r2 != -1 and "-ndf" in r2[n2_r2]
-    assert n4_r2 != -1 and "-ndf" in r2[n4_r2]
+    assert n2_r2 != -1 and "-ndf" not in r2[n2_r2]
+    assert n4_r2 != -1 and "-ndf" not in r2[n4_r2]
     assert max(n7_r2, n2_r2, n4_r2) < rd_r2
 
     # ----- Py side ---------------------------------------------------------

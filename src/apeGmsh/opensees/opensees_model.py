@@ -153,6 +153,12 @@ class OpenSeesModel:
     #: D3b; empty when none emitted). Replayed before elements so an
     #: element-flag ``-damp`` resolves.
     _dampings: tuple[DampingObjectRecord, ...] = field(default_factory=tuple)
+    #: Effective per-node ndf read from ``/opensees/nodes_ndf`` (ADR 0048).
+    #: The single read-side ndf source for re-emit — element-class inference
+    #: cannot be re-run from rehydrated ``ElementRecord``s, so the deck's
+    #: emitted map is persisted and read back here. Empty for older files
+    #: without the group (re-emit then falls to the envelope for all nodes).
+    _nodes_ndf: "dict[int, int]" = field(default_factory=dict)
 
     # ------------------------------------------------------------------
     # Construction
@@ -271,18 +277,16 @@ class OpenSeesModel:
             elements = cls._load_elements(model)
             fixes, masses = cls._load_bcs(model)
             analysis_attrs, analyze_call = cls._load_analysis(model)
+            # ADR 0048: capture the effective per-node ndf map persisted
+            # at /opensees/nodes_ndf. This is the sole read-side ndf source
+            # for re-emit (inference cannot run from ElementRecords). None
+            # for older files → empty map → re-emit falls to the envelope.
+            nodes_ndf = model.nodes_ndf() or {}
 
         # ADR 0021 lineage chain.  Read the stamped ``/meta/lineage``
         # attrs and recompute them from the loaded zones; on mismatch,
         # surface drift warnings — never raise (INV-2).
         lineage = _resolve_lineage(spath, fem, fem_root)
-
-        # S2 (ADR 0033): the stored envelope must cover every
-        # per-node declaration in the rehydrated FEM.  Catches
-        # hand-corrupted H5 files that claim ``ndf=6`` on a node in
-        # an ``ndf=3`` envelope.
-        from ._internal.build import validate_envelope_covers_broker_ndf
-        validate_envelope_covers_broker_ndf(fem, ndf)
 
         return cls(
             _fem=fem,
@@ -309,6 +313,7 @@ class OpenSeesModel:
             _sweeps=tuple(sweeps),
             _lineage=lineage,
             _names=tuple(names),
+            _nodes_ndf=nodes_ndf,
         )
 
     @classmethod
@@ -356,15 +361,12 @@ class OpenSeesModel:
             model_hash=snapshot_id or None,
         )
 
-        # S2 (ADR 0033): the envelope ``ndf`` carried on the emitter
-        # buffers must cover every per-node declaration on the broker
-        # FEM.  ``apeSees.model()`` already runs the same check at
-        # call time, but ``from_compose_buffers`` is reachable from
-        # programmatic compose flows that bypass ``apeSees.model``;
-        # rechecking here is cheap and guarantees the published
-        # broker is consistent.
-        from ._internal.build import validate_envelope_covers_broker_ndf
-        validate_envelope_covers_broker_ndf(fem, int(emitter._ndf or 0))
+        # ADR 0048: per-node ndf is inferred at emit and persisted to
+        # /opensees/nodes_ndf; the in-memory emitter buffers don't carry
+        # it, so a model published straight from buffers re-emits with the
+        # envelope fallback for every node (this path has no production
+        # caller — write-then-from_h5 is the round-trip that preserves the
+        # inferred map).
 
         return cls(
             _fem=fem,
@@ -852,25 +854,19 @@ class OpenSeesModel:
         complex_sections = tuple(
             s for s in self._sections if isinstance(s, SectionComplexRecord)
         )
-        # S2 (ADR 0033): widen per-node tuple to carry the broker's
-        # per-node ndf so the build path emits ``-ndf K`` for nodes
-        # declared via ``g.node_ndf`` (shell-on-solid).  ``ndf_for``
-        # raises ``LookupError`` for undeclared nodes; we pass ``None``
-        # in that case so the envelope ``ops.model(ndm, ndf=K)`` wins.
-        #
-        # Why widen the tuple instead of having ``_replay_into``
-        # consult the broker directly?  ``_replay_into`` is a
-        # FEM-agnostic free function that walks a typed-record graph;
-        # it does not (and should not) take a ``FEMData`` parameter.
-        # ``self._fem`` is reachable here at the OpenSeesModel
-        # boundary, so we resolve the per-node ndf at the lookup
-        # site and let the result travel in the tuple.  This keeps
-        # ``_replay_into`` decoupled from the broker.
+        # ADR 0048: widen the per-node tuple to carry the effective ndf
+        # the deck emitted, read back from ``/opensees/nodes_ndf`` (the
+        # sole read-side ndf source — element-class inference cannot be
+        # re-run from rehydrated ``ElementRecord``s). Emit ``-ndf K`` only
+        # when it differs from the envelope ``self._ndf``; otherwise pass
+        # ``None`` so the ``ops.model(ndm, ndf=K)`` directive supplies it
+        # (elide-on-equal, matching the live emit and keeping re-emitted
+        # decks byte-stable).
         def _ndf_or_none(nid: int) -> int | None:
-            try:
-                return int(self._fem.nodes.ndf_for(int(nid)))
-            except LookupError:
+            val = self._nodes_ndf.get(int(nid))
+            if val is None or int(val) == int(self._ndf):
                 return None
+            return int(val)
 
         nodes = tuple(
             (
@@ -1052,6 +1048,7 @@ class OpenSeesModel:
             sweeps=self._sweeps,
             names=self._names,
             snapshot_id=self._snapshot_id or None,
+            nodes_ndf=dict(self._nodes_ndf),
         )
 
     def _build_text(
