@@ -548,15 +548,22 @@ def _broker_node_xyz(fem: object, tag: int) -> tuple[float, float, float]:
 
 def _broker_node_ndf(
     fem: object, tag: int, *, envelope_ndf: int,
-) -> int:
-    """Mirror ``_emit_node_with_broker_ndf`` truth — broker-declared
-    value when available, envelope fallback on :class:`LookupError`.
+) -> "int | None":
+    """Expected per-node ``-ndf`` deck token under ADR 0048 inference.
+
+    Per-node ndf is inferred from the elements; the ``-ndf`` token is
+    ELIDED when it equals the ``ops.model`` envelope (the directive
+    supplies it). This helper returns the expected parsed token: ``None``
+    when the effective ndf equals the envelope (bare node line), else the
+    explicit value. The fixture is uniform (every node infers the
+    envelope), so the foreign cnodes here emit bare.
     """
     nodes = fem.nodes  # type: ignore[attr-defined]
     try:
-        return int(nodes.ndf_for(int(tag)))
+        val = int(nodes.ndf_for(int(tag)))
     except LookupError:
-        return int(envelope_ndf)
+        val = int(envelope_ndf)
+    return None if val == int(envelope_ndf) else val
 
 
 def test_cross_rank_embedded_with_rebar_nodes_owned(tmp_path) -> None:

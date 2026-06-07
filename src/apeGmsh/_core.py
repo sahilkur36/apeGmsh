@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from .core.DisplacementsComposite import DisplacementsComposite
     from .core.MassesComposite import MassesComposite
     from .core.DecoupledNodesComposite import DecoupledNodesComposite
-    from .core.NodeNDFComposite import NodeNDFComposite
     from .core._parts_registry import PartsRegistry
     from .sections._builder import SectionsBuilder
     from .mesh.Mesh import Mesh
@@ -52,7 +51,6 @@ class apeGmsh(_SessionBase):
         ("displacements",   ".core.DisplacementsComposite", "DisplacementsComposite", False),
         ("masses",          ".core.MassesComposite",       "MassesComposite",       False),
         ("decoupled_nodes", ".core.DecoupledNodesComposite", "DecoupledNodesComposite", False),
-        ("node_ndf",        ".core.NodeNDFComposite",      "NodeNDFComposite",      False),
         ("mesh",            ".mesh.Mesh",                  "Mesh",                  False),
         ("loader",          ".mesh.MshLoader",             "MshLoader",             False),
         ("physical",        ".mesh.PhysicalGroups",        "PhysicalGroups",        False),
@@ -80,7 +78,6 @@ class apeGmsh(_SessionBase):
     displacements: DisplacementsComposite
     masses: MassesComposite
     decoupled_nodes: DecoupledNodesComposite
-    node_ndf: NodeNDFComposite
     mesh: Mesh
     loader: MshLoader
     physical: PhysicalGroups

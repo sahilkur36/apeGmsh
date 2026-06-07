@@ -94,9 +94,8 @@ __all__ = [
     "emit_element_spec_partitioned",
     "validate_node_ndf_element_compat",
     "infer_node_ndf",
+    "validate_adaptive_element_endpoints",
     "assert_ndm_compatible",
-    "warn_on_ndf_inference_parity",
-    "NdfInferenceParityWarning",
     "emit_initial_stress_addtoparameter",
     "emit_initial_stress_global",
     "resolve_initial_stress_elements",
@@ -127,51 +126,6 @@ class BridgeError(RuntimeError):
     a PG is missing, or a fan-out cannot proceed for a structural
     reason. Distinct from :class:`ValueError` (caller error during
     primitive construction)."""
-
-
-def validate_envelope_covers_broker_ndf(
-    fem: "FEMData", envelope_ndf: int,
-) -> None:
-    """Raise :class:`BridgeError` when the envelope ``ndf`` is smaller
-    than the largest per-node ``ndf`` declared on the broker.
-
-    Runs at three sites per ADR 0033: :meth:`apeSees.model`,
-    :meth:`OpenSeesModel.from_h5`, and
-    :meth:`OpenSeesModel.from_compose_buffers`.  Sentinel zeros and
-    a missing ``_ndf`` channel are no-ops — the check fires only
-    when the user actually declared per-node ndf values.
-
-    The message names the offending node + the fix (raise the
-    envelope ``ndf`` in ``apeSees(fem).model(...)``) so the user
-    doesn't have to grep the broker.
-    """
-    import numpy as np
-    nodes = getattr(fem, "nodes", None)
-    if nodes is None:
-        return
-    ndf_arr = getattr(nodes, "_ndf", None)
-    if ndf_arr is None:
-        return
-    arr = np.asarray(ndf_arr, dtype=np.int8)
-    if arr.size == 0:
-        return
-    max_declared = int(arr.max())
-    if max_declared <= 0:
-        return
-    if int(envelope_ndf) >= max_declared:
-        return
-    # Find one offending node ID for the error message.
-    idx = int(np.argmax(arr))
-    try:
-        nid = int(nodes.ids[idx])
-    except Exception:
-        nid = -1
-    raise BridgeError(
-        f"OpenSeesModel(ndf={int(envelope_ndf)}) cannot host node "
-        f"nid={nid} declared with ndf={max_declared} via "
-        f"g.node_ndf.set(...); raise ndf in "
-        f"apeSees(fem).model(ndf=...) to at least {max_declared}."
-    )
 
 
 def validate_node_ndf_element_compat(
@@ -279,19 +233,11 @@ def validate_node_ndf_element_compat(
     return None
 
 
-class NdfInferenceParityWarning(UserWarning):
-    """Shadow-mode signal (ADR 0048, PR-1): the per-node ``ndf`` that
-    *element-class inference* would produce diverges from the ``ndf`` the deck
-    currently emits (the ``ops.model`` envelope + ``g.node_ndf`` overrides), or
-    inference would fail loud where the current path emits silently.
-
-    Emitted by :func:`warn_on_ndf_inference_parity`, which is **non-breaking**:
-    it never changes the emitted deck and never raises. It exists so the test
-    corpus validates the inference engine against real models *before* the
-    clean break (ADR 0048) swaps inference in as the only path. Because the
-    default pytest filter ignores bridge ``UserWarning`` subclasses, parity
-    tests must run with ``-W error::...NdfInferenceParityWarning``.
-    """
+#: ``ndf_ok`` of the adaptive zeroLength family — elements that accept any
+#: per-node ndf (``{1..6}``) and therefore carry no inference opinion. A node
+#: whose only incident elements are adaptive is omitted from the inferred map
+#: and falls back to the ``ops.model`` envelope (see :func:`_infer_ndf_from_incidence`).
+_ADAPTIVE_NDF_OK: "frozenset[int]" = frozenset({1, 2, 3, 4, 5, 6})
 
 
 def _infer_ndf_from_incidence(
@@ -332,8 +278,21 @@ def _infer_ndf_from_incidence(
                     f"ndf_required) for {cls!r} before emitting."
                 )
             incident.append((cls, ndf_ok))
+            # Adaptive elements (the zeroLength family: ``ndf_ok == {1..6}``)
+            # carry no real per-node opinion — their partner / the structural
+            # side supplies the count (the floor of 1 is a placeholder that
+            # must never inflate the max). They are skipped here; a node
+            # touched ONLY by adaptive elements gets no inferred value
+            # (``floor`` stays 0) and is omitted below, so it falls back to
+            # the ``ops.model`` envelope at emit (ADR 0048 / 0049).
+            if ndf_ok == _ADAPTIVE_NDF_OK:
+                continue
             if fl > floor:
                 floor = fl
+        if floor == 0:
+            # Every incident element is adaptive → no inferred opinion.
+            # Omit the node; the envelope supplies its ndf at emit time.
+            continue
         for cls, ndf_ok in incident:
             if floor not in ndf_ok:
                 raise BridgeError(
@@ -359,9 +318,12 @@ def infer_node_ndf(
     Walks each element spec's physical group to its mesh nodes (via
     :func:`expand_pg_to_elements`), then applies
     :func:`_infer_ndf_from_incidence`. Returns ``{node_tag: ndf}`` for every
-    node touched by >= 1 declared element. Nodes touched by NO declared element
-    are absent — the clean break (ADR 0048) fails loud on them; user-declared
-    element-less nodes get their ndf on the bridge (ADR 0049).
+    node touched by >= 1 declared element. Nodes touched by NO declared
+    element — and nodes touched only by adaptive elements — are **absent**
+    from the map; in this pragmatic variant (ADR 0048 PR-1) they fall back
+    to the ``ops.model`` envelope at emit (the purist clean break's
+    fail-loud-on-orphan-mesh-node and ``ops.ndf`` decoupled channel are
+    deferred).
     """
     node_to_classes: dict[int, list[str]] = {}
     for spec in elements:
@@ -370,6 +332,55 @@ def infer_node_ndf(
             for raw in node_tags:
                 node_to_classes.setdefault(int(raw), []).append(etype)
     return _infer_ndf_from_incidence(node_to_classes, ndm)
+
+
+def validate_adaptive_element_endpoints(
+    fem: "FEMData",
+    elements: "Iterable[Element]",
+    ndm: int,
+    inferred: "dict[int, int]",
+    envelope_ndf: int,
+) -> None:
+    """Fail loud when an adaptive element's endpoints resolve to different ndf.
+
+    Adaptive elements (the zeroLength family, ``ndf_ok == {1..6}``) accept
+    any per-node ndf but OpenSees requires **both** ends of a
+    ``zeroLength`` / ``twoNodeLink`` / ``CoupledZeroLength`` to carry the
+    SAME ndf (``ZeroLength.cpp``: ``dofNd1 == dofNd2``; on mismatch
+    ``setDomain`` bails and the element is **silently absent** — analysis
+    proceeds with no spring).
+
+    Inference omits adaptive-only nodes (a spring-to-ground node touched by
+    no structural element falls to the ``ops.model`` envelope), so a spring
+    whose structural end infers a value != envelope would silently emit
+    mismatched ends. This guard catches that — and the symmetric case of a
+    spring straddling two structural regions of differing ndf — at build
+    time, naming the element and the fix.
+    """
+    from .._element_capabilities import element_class_ndf_ok
+
+    for spec in elements:
+        cls = type(spec).__name__
+        if element_class_ndf_ok(cls) != _ADAPTIVE_NDF_OK:
+            continue
+        for eid, node_tags in expand_pg_to_elements(fem, spec.pg):  # type: ignore[attr-defined]
+            eff = {
+                int(n): inferred.get(int(n), int(envelope_ndf))
+                for n in node_tags
+            }
+            if len(set(eff.values())) > 1:
+                raise BridgeError(
+                    f"{cls} element {eid} connects nodes with differing "
+                    f"effective ndf {eff} — OpenSees requires equal ndf at "
+                    f"both ends of a zeroLength-family element (it is "
+                    f"silently dropped otherwise). Typically one end is an "
+                    f"element-less / ground node taking the ops.model "
+                    f"envelope ndf={int(envelope_ndf)} while the structural "
+                    f"end infers a different value. Fix: set the model "
+                    f"envelope to match the structural side, attach an "
+                    f"element to the ground node, or use separate coincident "
+                    f"nodes + g.constraints.equal_dof on the shared DOFs."
+                )
 
 
 def assert_ndm_compatible(class_names: "Iterable[str]", ndm: int) -> None:
@@ -409,131 +420,32 @@ def assert_ndm_compatible(class_names: "Iterable[str]", ndm: int) -> None:
         )
 
 
-def warn_on_ndf_inference_parity(
-    fem: "FEMData",
-    elements: "Iterable[Element]",
-    ndm: int,
-    envelope_ndf: int | None,
-) -> None:
-    """Non-breaking shadow check (ADR 0048, PR-1): compare the ``ndf`` that
-    element-class inference WOULD assign against the ``ndf`` the deck currently
-    emits, and :func:`warnings.warn` (never raise) on any divergence.
-
-    The current emit path (:func:`_emit_node_with_broker_ndf`) sources each
-    node's ndf from :meth:`fem.nodes.ndf_for` (``g.node_ndf`` overrides) and
-    falls back to the ``ops.model`` envelope. This function mirrors that
-    fallback to reconstruct the *effective* emitted ndf, then diffs it against
-    :func:`infer_node_ndf`. Two divergence classes are reported:
-
-    * **would-fail** — inference (or the ``ndm`` guard) raises
-      :class:`BridgeError` where the current path emits silently (an
-      unclassifiable element, an incompatible shared node, or a 2D/3D mix);
-    * **mismatch** — inference assigns a node a different ndf than the deck
-      emits (a genuine inference bug, or a model whose explicit ``g.node_ndf``
-      disagrees with its elements).
-
-    Emits at most one warning per build, summarising the first few cases. This
-    is the parity gate that proves inference correct against the test corpus
-    before the clean break makes it authoritative.
-
-    **Opt-in.** This is a *migration diagnostic*, not a user-facing check: it is
-    a no-op unless ``APEGMSH_NDF_PARITY`` is set (to ``1`` / ``true``). Off by
-    default it costs nothing and never warns — adaptive-only nodes (a bare
-    ``zeroLength`` / ``zeroLengthSection`` whose ndf comes from the structural
-    side or ``ops.ndf``, ADR 0049) legitimately infer floor 1 while the deck
-    emits the real count, so an always-on warning would be pure noise. Enable it
-    (e.g. ``APEGMSH_NDF_PARITY=1 pytest -W error::...NdfInferenceParityWarning``)
-    to validate inference against a model corpus during the ADR 0048 migration.
-    """
-    import os
-    import warnings
-
-    if os.environ.get("APEGMSH_NDF_PARITY", "").lower() not in ("1", "true", "yes"):
-        return
-
-    elements = list(elements)
-    class_names = [type(spec).__name__ for spec in elements]
-    try:
-        assert_ndm_compatible(class_names, ndm)
-        inferred = infer_node_ndf(fem, elements, ndm)
-    except BridgeError as exc:
-        warnings.warn(
-            f"ndf inference would fail loud on this model (ADR 0048 clean "
-            f"break): {exc}",
-            NdfInferenceParityWarning,
-            stacklevel=2,
-        )
-        return
-
-    mismatches: list[tuple[int, int, int | None]] = []
-    for tag, inf_ndf in inferred.items():
-        try:
-            emitted: int | None = int(fem.nodes.ndf_for(int(tag)))
-        except LookupError:
-            emitted = envelope_ndf
-        if emitted is None:
-            continue  # no envelope to compare against — indeterminate
-        if inf_ndf != emitted:
-            mismatches.append((int(tag), inf_ndf, emitted))
-
-    if mismatches:
-        head = ", ".join(
-            f"node {t}: inferred {i} vs emitted {e}"
-            for t, i, e in mismatches[:5]
-        )
-        more = "" if len(mismatches) <= 5 else f" (+{len(mismatches) - 5} more)"
-        warnings.warn(
-            f"ndf inference parity: {len(mismatches)} node(s) where element-"
-            f"class inference disagrees with the emitted ndf — {head}{more}. "
-            f"Under the ADR 0048 clean break inference becomes authoritative; "
-            f"reconcile g.node_ndf / the envelope with the declared elements.",
-            NdfInferenceParityWarning,
-            stacklevel=2,
-        )
-
-
-def _emit_node_with_broker_ndf(
+def _emit_node_with_inferred_ndf(
     emitter: "Emitter",
-    fem: "FEMData",
+    inferred: "dict[int, int]",
     tag: int,
     coords: tuple[float, float, float],
-    *,
-    envelope_ndf: int | None = None,
+    envelope_ndf: int,
 ) -> None:
-    """Emit one ``node(tag, *coords)`` call with broker-sourced ndf
-    (S2 — ADR 0033 emit-side semantics).
+    """Emit one ``node(tag, *coords)`` call with inference-sourced ndf
+    (ADR 0048 — element-class inference is authoritative).
 
-    Looks up the per-node ndf via :meth:`fem.nodes.ndf_for` and
-    passes ``ndf=K`` to the emitter only when a declaration covers
-    the node.  On :class:`LookupError` (no declaration), emits
-    without the override — the OpenSees envelope (``model ... -ndf
-    K`` set via :meth:`apeSees.model`) supplies the value, matching
-    the OpenSees-native semantics of ``model -ndf K`` + per-node
-    ``-ndf J``.
-
-    The optional ``envelope_ndf`` is consulted only when the
-    fallback path itself wants to force a value (e.g. foreign-node
-    declarations in the partitioned MP-constraint emit, where the
-    bridge's model-wide envelope is the documented fallback even
-    when no per-node declaration covers the foreign node).  Pass
-    ``None`` for the common "envelope wins via the model directive"
-    case at globally-owned and stage-owned emit sites.
+    The per-node ndf comes from the precomputed *inferred* map
+    (:func:`infer_node_ndf`); nodes absent from it — element-less /
+    decoupled nodes, and nodes touched only by adaptive elements —
+    take *envelope_ndf* (the ``ops.model`` value). The ``-ndf K``
+    token is **elided** when the resolved value equals the envelope,
+    since the OpenSees ``model ... -ndf K`` directive already supplies
+    it; this keeps homogeneous decks free of redundant ``-ndf`` lines.
     """
     x, y, z = coords
-    try:
-        ndf_val = fem.nodes.ndf_for(int(tag))
-    except LookupError:
-        if envelope_ndf is None:
-            emitter.node(int(tag), float(x), float(y), float(z))
-        else:
-            emitter.node(
-                int(tag), float(x), float(y), float(z),
-                ndf=int(envelope_ndf),
-            )
-        return
-    emitter.node(
-        int(tag), float(x), float(y), float(z), ndf=int(ndf_val),
-    )
+    ndf_val = inferred.get(int(tag), int(envelope_ndf))
+    if ndf_val == int(envelope_ndf):
+        emitter.node(int(tag), float(x), float(y), float(z))
+    else:
+        emitter.node(
+            int(tag), float(x), float(y), float(z), ndf=int(ndf_val),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3363,6 +3275,7 @@ def emit_stage_mp_constraints_partitioned(
     node_owners: dict[int, set[int]],
     element_owner: dict[int, int],
     foreign_node_ndf: int | None,
+    inferred_ndf: "dict[int, int]",
     tags: TagAllocator,
 ) -> None:
     """Per-rank stage-bound MP-constraint fan-out.
@@ -3408,10 +3321,14 @@ def emit_stage_mp_constraints_partitioned(
         emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
     for tag in sorted(plan.foreign_node_tags):
         xyz = _node_coords_safe(fem, tag)
-        _emit_node_with_broker_ndf(
-            emitter, fem, int(tag),
-            (xyz[0], xyz[1], xyz[2]),
-            envelope_ndf=foreign_node_ndf,
+        # Foreign (ghost) nodes are owned by another rank but DO appear
+        # in the global inferred map (inference walks every element across
+        # ranks), so the ghost takes the SAME inferred ndf its owner emits
+        # — cross-rank consistency by determinism (ADR 0048). Envelope
+        # fallback for nodes inference can't see.
+        _emit_node_with_inferred_ndf(
+            emitter, inferred_ndf, int(tag),
+            (xyz[0], xyz[1], xyz[2]), int(foreign_node_ndf or 0),
         )
 
     # Constraint emission — same ordering as the unpartitioned path.
@@ -3433,6 +3350,7 @@ def emit_mp_constraints_partitioned(
     node_owners: dict[int, set[int]],
     element_owner: dict[int, int],
     foreign_node_ndf: int | None,
+    inferred_ndf: "dict[int, int]",
     tags: TagAllocator,
     *,
     claimed_ids: "frozenset[int]" = frozenset(),
@@ -3448,10 +3366,12 @@ def emit_mp_constraints_partitioned(
        constraints (nodes not in this rank's owner set, plus phantoms).
     3. Emit the foreign-node declarations FIRST (INV-2): regular
        foreign nodes via ``node(tag, *xyz[, -ndf K])`` — per-node ndf
-       sourced from the FEM broker via ``fem.nodes.ndf_for(tag)``
-       (S2 / ADR 0033); on ``LookupError`` (no declaration covering
-       the foreign node) the call falls back to ``foreign_node_ndf``
-       — the bridge envelope.  Phantoms via
+       taken from the **global inferred map** (ADR 0048,
+       :func:`infer_node_ndf`), falling back to ``foreign_node_ndf``
+       (the ``ops.model`` envelope) for nodes the map doesn't cover.
+       Because the inferred map is global + deterministic, a ghost node
+       resolves to the SAME ndf its owner rank emits — cross-rank
+       consistency without per-rank broker state.  Phantoms via
        ``node(tag, *xyz, ndf=6)``.
     4. Emit the constraints in the same order as the unpartitioned
        :func:`emit_mp_constraints` (phantom-node pre-step → rigidLink
@@ -3520,16 +3440,19 @@ def emit_mp_constraints_partitioned(
     for tag in sorted(plan.referenced_phantoms):
         xyz = phantom_coords[tag]
         emitter.node(tag, xyz[0], xyz[1], xyz[2], ndf=6)
-    # Foreign nodes — per-node ndf via broker lookup; envelope
-    # fallback on LookupError (S2 / ADR 0033).  OpenSeesMP per-rank
-    # brokers carry identical ``_ndf`` arrays (lineage-folded per
-    # ADR 0021), so this lookup resolves consistently across ranks.
+    # Foreign nodes — owned by another rank but present in the global
+    # inferred map (ADR 0048), so each ghost takes the same inferred ndf
+    # its owner emits (cross-rank consistent). Envelope is the fallback.
     for tag in sorted(plan.foreign_node_tags):
         xyz = _node_coords_safe(fem, tag)
-        _emit_node_with_broker_ndf(
-            emitter, fem, int(tag),
-            (xyz[0], xyz[1], xyz[2]),
-            envelope_ndf=foreign_node_ndf,
+        # Foreign (ghost) nodes are owned by another rank but DO appear
+        # in the global inferred map (inference walks every element across
+        # ranks), so the ghost takes the SAME inferred ndf its owner emits
+        # — cross-rank consistency by determinism (ADR 0048). Envelope
+        # fallback for nodes inference can't see.
+        _emit_node_with_inferred_ndf(
+            emitter, inferred_ndf, int(tag),
+            (xyz[0], xyz[1], xyz[2]), int(foreign_node_ndf or 0),
         )
 
     # -- 2. Constraint emission, mirroring the unpartitioned order. ------

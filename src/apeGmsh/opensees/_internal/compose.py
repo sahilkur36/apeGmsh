@@ -29,18 +29,21 @@ __all__ = [
 ]
 
 
-def _write_opensees_nodes_ndf(f: "h5py.File", fem: Any, envelope_ndf: int) -> None:
-    """ADR 0048/0049 PR-2 — persist the *effective* per-node ndf the deck emits
-    into the opensees zone at ``/opensees/nodes_ndf`` (``tags`` int64 + ``ndf``
-    int8, aligned to the broker node order).
+def _write_opensees_nodes_ndf(
+    f: "h5py.File", fem: Any, envelope_ndf: int,
+    effective: "dict[int, int] | None" = None,
+) -> None:
+    """ADR 0048 — persist the *effective* per-node ndf the deck emits into the
+    opensees zone at ``/opensees/nodes_ndf`` (``tags`` int64 + ``ndf`` int8,
+    aligned to the broker node order).
 
-    Effective ndf mirrors the emit-side rule (:func:`_emit_node_with_broker_ndf`
-    / :meth:`OpenSeesModel._replay_through`): the per-node override from
-    ``fem.nodes.ndf_for`` when one exists, else the ``ops.model`` *envelope*.
-    Deterministic from ``(fem, envelope_ndf)`` — both of which round-trip
-    unchanged — so a ``from_h5 → to_h5`` re-emit is byte-identical and the
-    automatic ``model_hash`` fold (the opensees zone walks every dataset) stays
-    stable. A no-op when the broker carries no nodes.
+    *effective* is the precomputed ``{tag: ndf}`` map the deck emitted — the
+    element-class inference result (:func:`infer_node_ndf`) on a fresh bridge
+    write, or the map read back from ``/opensees/nodes_ndf`` on a
+    ``from_h5 → to_h5`` re-emit. Both feed the SAME map here, so the automatic
+    ``model_hash`` fold stays stable across round-trips. Nodes absent from the
+    map — element-less / decoupled, or adaptive-only — take the ``ops.model``
+    *envelope*. A no-op when the broker carries no nodes.
     """
     import numpy as np
 
@@ -54,12 +57,10 @@ def _write_opensees_nodes_ndf(f: "h5py.File", fem: Any, envelope_ndf: int) -> No
     if not ids:
         return
 
+    eff_map = effective or {}
     eff = np.empty(len(ids), dtype=np.int8)
     for i, tag in enumerate(ids):
-        try:
-            eff[i] = int(nodes.ndf_for(tag))
-        except LookupError:
-            eff[i] = int(envelope_ndf)
+        eff[i] = int(eff_map.get(int(tag), envelope_ndf))
 
     grp = f.require_group("opensees").create_group("nodes_ndf")
     grp.create_dataset("tags", data=np.asarray(ids, dtype=np.int64))
@@ -77,6 +78,7 @@ def _compose_model_h5(
     sweeps: "Sequence[Any]" = (),
     names: "Sequence[tuple[str, str, int]]" = (),
     snapshot_id: str | None = None,
+    nodes_ndf: "dict[int, int] | None" = None,
 ) -> None:
     """Compose a ``model.h5`` from a broker ``fem`` + a populated ``emitter``.
 
@@ -144,11 +146,11 @@ def _compose_model_h5(
             f["meta"].attrs["snapshot_id"] = snapshot_id
         emitter.write_opensees_into(f)
         if broker_used:
-            # ADR 0048/0049 PR-2 — persist the effective per-node ndf into the
-            # opensees zone (one bridge-owned ndf store). Only when the broker
-            # zone exists (a stub/bridge-only file has no per-node ndf to
-            # derive). Folds into model_hash, not fem_hash.
-            _write_opensees_nodes_ndf(f, fem, ndf)
+            # ADR 0048 — persist the effective per-node ndf into the opensees
+            # zone (one bridge-owned ndf store). Only when the broker zone
+            # exists (a stub/bridge-only file has no per-node ndf to derive).
+            # Folds into model_hash, not fem_hash.
+            _write_opensees_nodes_ndf(f, fem, ndf, nodes_ndf)
         # ADR 0023 §"Three per-zone version stamps" — when the broker
         # wrote /meta it only stamped the neutral per-zone key; the
         # bridge now contributes /opensees/... and so we add the

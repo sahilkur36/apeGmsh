@@ -75,8 +75,8 @@ def _build_fragmented_shell_on_solid(g):
     ]
     g.physical.add(2, wall_s, name="Wall")
     g.model.select(dim=2).on_plane((0, 0, -0.5), (0, 0, 1), tol=1e-3).to_physical("FootBase")
-    g.node_ndf.set_default(ndf=3)
-    g.node_ndf.set("Wall", ndf=6)
+    # ADR 0048: ndf is inferred — the shared-node conflict (shell 6 vs
+    # solid 3) is detected from the declared elements, no g.node_ndf.
     g.mesh.structured.set_recombine("Wall", dim=2)
     g.mesh.sizing.set_global_size(0.25)
     g.mesh.generation.generate(3)
@@ -434,8 +434,8 @@ def test_node_ndf_roundtrips_through_domain_capture(g, tmp_path):
     g.model.select(dim=2).on_plane((0, 0, -0.5), (0, 0, 1), tol=1e-4).to_physical("FootBase")
     g.physical.add(1, [l1], name="WallBase")
     g.physical.add(1, [l3], name="WallTop")
-    g.node_ndf.set_default(ndf=3)
-    g.node_ndf.set("Wall", ndf=6)
+    # ADR 0048: ndf inferred from the elements (tet→3, shell→6) on
+    # separate nodes; the envelope is set via ops.model(ndf=6) below.
     g.mesh.structured.set_recombine("Wall", dim=2)
     g.mesh.sizing.set_global_size(0.34)
     g.mesh.generation.generate(3)

@@ -33,7 +33,6 @@ def _build_box(g) -> None:
     g.model.sync()
     g.mesh.sizing.set_global_size(5.0)
     g.mesh.generation.generate(dim=3)
-    g.node_ndf.set_default(ndf=3)
 
 
 def _add_body_pg(g) -> None:
@@ -160,38 +159,6 @@ def test_mass_mutation_invalidates_cache(g):
     fem_b = g.mesh.queries.get_fem_data()
     assert fem_b is not fem_a, (
         "Mass mutation must invalidate the cache."
-    )
-
-
-# =====================================================================
-# 5. NodeNDF mutation invalidates the cache
-# =====================================================================
-
-def test_node_ndf_mutation_invalidates_cache(g):
-    """A ``g.node_ndf.set(...)`` / ``set_default`` / ``clear`` call
-    invalidates the cache.
-
-    The existing :meth:`NodeNDFComposite._warn_if_post_extraction`
-    will fire one ``UserWarning`` on the first post-extract mutation
-    — that's the pre-existing contract and is orthogonal to the
-    cache-identity check this test makes.
-    """
-    _build_box(g)
-    # The auto-PG path on apeGmsh leaves the label as a Tier 1 label
-    # (not a PG); add an explicit PG that the loads/masses resolver
-    # can match against without label-tier sugar.
-    _add_body_pg(g)
-
-    fem_a = g.mesh.queries.get_fem_data()
-
-    # Re-declare default ndf.  Triggers the historical
-    # post-extract UserWarning + the new counter bump.
-    with pytest.warns(UserWarning, match="get_fem_data"):
-        g.node_ndf.set_default(ndf=6)
-
-    fem_b = g.mesh.queries.get_fem_data()
-    assert fem_b is not fem_a, (
-        "node_ndf mutation must invalidate the cache."
     )
 
 

@@ -1,29 +1,19 @@
-"""ADR 0048 — element-class ndf inference engine + shadow-mode parity (PR-1).
+"""ADR 0048 — element-class ndf inference engine (authoritative).
 
-Covers the pure inference core, the ``ndm`` guard, the PG-walk over a
-lightweight FEM stub (the path the deleted P2a version never unit-tested), and
-the non-breaking parity check. No gmsh / openseespy needed.
+Covers the pure inference core, the adaptive-element carve-out, the ``ndm``
+guard, and the PG-walk over a lightweight FEM stub. No gmsh / openseespy
+needed. (The pre-clean-break shadow-mode parity gate was removed once
+inference became the only path.)
 """
-import warnings
-
 import pytest
 
 from apeGmsh.opensees._internal.build import (
     BridgeError,
-    NdfInferenceParityWarning,
     _infer_ndf_from_incidence,
     assert_ndm_compatible,
     infer_node_ndf,
-    warn_on_ndf_inference_parity,
+    validate_adaptive_element_endpoints,
 )
-
-
-@pytest.fixture(autouse=True)
-def _enable_ndf_parity(monkeypatch):
-    """``warn_on_ndf_inference_parity`` is opt-in (a migration diagnostic);
-    enable it for the tests in this module. Harmless for the pure-core tests
-    that never call it."""
-    monkeypatch.setenv("APEGMSH_NDF_PARITY", "1")
 
 
 # ── element-spec stubs: type(spec).__name__ must be the OpenSees class ───────
@@ -51,24 +41,12 @@ class _StubElements:
         return _StubSel(self._pg_groups[pg])
 
 
-class _StubNodes:
-    def __init__(self, ndf_map=None):
-        self._ndf = ndf_map or {}
-
-    def ndf_for(self, tag):
-        try:
-            return self._ndf[int(tag)]
-        except KeyError:
-            raise LookupError(tag) from None
-
-
 class _StubFem:
-    """Exposes just the surface ``infer_node_ndf`` / parity touch:
-    ``elements.select(pg).groups()`` and ``nodes.ndf_for(tag)``."""
+    """Exposes just the surface ``infer_node_ndf`` touches:
+    ``elements.select(pg).groups()``."""
 
-    def __init__(self, pg_groups, ndf_map=None):
+    def __init__(self, pg_groups):
         self.elements = _StubElements(pg_groups)
-        self.nodes = _StubNodes(ndf_map)
 
 
 # ─────────────────────────── pure core ──────────────────────────────────────
@@ -92,6 +70,23 @@ class _StubFem:
 )
 def test_infer_core(classes, ndm, expected):
     assert _infer_ndf_from_incidence({1: classes}, ndm)[1] == expected
+
+
+@pytest.mark.parametrize(
+    "classes",
+    [
+        ["ZeroLength"],
+        ["TwoNodeLink"],
+        ["CoupledZeroLength"],
+        ["ZeroLength", "TwoNodeLink"],
+    ],
+)
+def test_infer_adaptive_only_node_is_omitted(classes):
+    """A node touched ONLY by adaptive elements (the zeroLength family,
+    ndf_ok={1..6}) carries no inference opinion — it is omitted from the
+    map so the ``ops.model`` envelope supplies its ndf at emit (ADR 0048)."""
+    out = _infer_ndf_from_incidence({5: classes}, 3)
+    assert 5 not in out
 
 
 @pytest.mark.parametrize(
@@ -157,36 +152,43 @@ def test_infer_node_ndf_walk_shared_incompatible_fails():
         infer_node_ndf(fem, elements, ndm=3)
 
 
-# ─────────────────────── shadow-mode parity ─────────────────────────────────
+# ──────────────── adaptive-element endpoint guard (ADR 0048 review) ───────────
 
-def test_parity_clean_homogeneous_no_warning():
-    fem = _StubFem({"Solid": [[(1, (10, 11, 12, 13))]]})
-    elements = [_spec("stdBrick", "Solid")]
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", NdfInferenceParityWarning)
-        # envelope ndf 3 == inferred 3 for every brick node → no warning
-        warn_on_ndf_inference_parity(fem, elements, ndm=3, envelope_ndf=3)
-
-
-def test_parity_mismatch_warns():
-    fem = _StubFem({"Solid": [[(1, (10, 11, 12, 13))]]})
-    elements = [_spec("stdBrick", "Solid")]
-    with pytest.warns(NdfInferenceParityWarning, match="inferred 3 vs emitted 6"):
-        # envelope ndf 6 but bricks infer 3 → mismatch on every node
-        warn_on_ndf_inference_parity(fem, elements, ndm=3, envelope_ndf=6)
+def test_adaptive_endpoint_mismatch_fails_loud():
+    """A zeroLength whose structural end infers a value != envelope while
+    its ground end (element-less) falls to the envelope would emit
+    mismatched ndf and OpenSees silently drops the spring — fail loud."""
+    fem = _StubFem({"Spring": [[(9, (20, 21))]]})
+    elements = [_spec("ZeroLength", "Spring")]
+    # node 20 is structural (inferred 3 elsewhere); node 21 is element-less
+    # (absent → envelope). Envelope 6 → 20 emits 3, 21 emits 6 → mismatch.
+    with pytest.raises(BridgeError, match="differing effective ndf"):
+        validate_adaptive_element_endpoints(
+            fem, elements, ndm=3, inferred={20: 3}, envelope_ndf=6,
+        )
 
 
-def test_parity_respects_broker_override_no_warning():
-    # g.node_ndf set node 13 to 6, others uncovered (fall back to envelope 3).
-    # Brick infers 3 everywhere → node 13 mismatches (6 vs 3) → warns.
-    fem = _StubFem({"Solid": [[(1, (10, 11, 12, 13))]]}, ndf_map={13: 6})
-    elements = [_spec("stdBrick", "Solid")]
-    with pytest.warns(NdfInferenceParityWarning, match="node 13"):
-        warn_on_ndf_inference_parity(fem, elements, ndm=3, envelope_ndf=3)
+def test_adaptive_endpoint_match_ok():
+    """Both ends resolve to the same effective ndf → no raise (the common
+    uniform-envelope spring-to-ground case)."""
+    fem = _StubFem({"Spring": [[(9, (20, 21))]]})
+    elements = [_spec("ZeroLength", "Spring")]
+    # node 20 structural 3, node 21 absent → envelope 3 → both 3 → OK.
+    validate_adaptive_element_endpoints(
+        fem, elements, ndm=3, inferred={20: 3}, envelope_ndf=3,
+    )
+    # both ends structural and equal → OK.
+    validate_adaptive_element_endpoints(
+        fem, elements, ndm=3, inferred={20: 6, 21: 6}, envelope_ndf=3,
+    )
 
 
-def test_parity_would_fail_warns_not_raises():
-    fem = _StubFem({"Bad": [[(1, (10, 11))]]})
-    elements = [_spec("TotallyUnknownElement", "Bad")]
-    with pytest.warns(NdfInferenceParityWarning, match="would fail loud"):
-        warn_on_ndf_inference_parity(fem, elements, ndm=3, envelope_ndf=3)
+def test_adaptive_guard_ignores_non_adaptive_elements():
+    """Non-adaptive elements (e.g. ZeroLengthSection {3,6}) are not subject
+    to the endpoint-equality guard here (their ndf is inferred, and the
+    shared-node validity gate handles their compatibility)."""
+    fem = _StubFem({"Sec": [[(9, (20, 21))]]})
+    elements = [_spec("ZeroLengthSection", "Sec")]
+    validate_adaptive_element_endpoints(
+        fem, elements, ndm=3, inferred={20: 6}, envelope_ndf=3,
+    )
