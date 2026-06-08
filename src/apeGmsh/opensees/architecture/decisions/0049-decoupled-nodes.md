@@ -52,7 +52,7 @@ and reuses the `∩ ndf_ok` gate of
 > (inference is adaptive-inert for the ground, so `ops.ndf(ground)` still owns
 > it). Endpoints must resolve to **distinct** tags (OpenSees has no same-node
 > guard). Connectivity persists via a new optional `inline_connectivity` dataset
-> under `/opensees/element_meta/{type}/` (schema 2.16.0, folds into
+> under `/opensees/element_meta/{type}/` (schema 2.17.0, folds into
 > `model_hash`) since a node-pair element has no neutral gmsh cell. **Deferred:**
 > staged node-pair springs (global-only in v1) and partitioned/MPI emit
 > (fail-loud guard — per-rank node-ownership of an explicit node-pair is

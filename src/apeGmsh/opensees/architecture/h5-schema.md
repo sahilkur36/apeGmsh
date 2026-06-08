@@ -522,7 +522,7 @@ index to the broker's `/elements/{gmsh_alias}` keyed by GMSH alias.
 ├── args_str          (N, max_tail) vlen-utf-8    — string tokens (present only
 │                                                    when any slot is a string)
 └── inline_connectivity (N,) vlen-int64           — node-pair endpoint tags
-                                                    (schema 2.16.0; present only
+                                                    (schema 2.17.0; present only
                                                     when a row has fem_eid < 0)
 ```
 
@@ -534,7 +534,7 @@ vocabulary-aware reader recovers cross-references (`transf_ref`,
 `section_ref`, `integration_ref`, …) by indexing into the element type's
 known signature.
 
-`inline_connectivity` (schema 2.16.0, ADR 0049) carries the endpoint node
+`inline_connectivity` (schema 2.17.0, ADR 0049) carries the endpoint node
 tags of **node-pair** elements (`ops.element.ZeroLength(nodes=…)` and the
 rest of the zeroLength family wired to a `g.decouple_node` ground).  Such
 an element has `fem_eid = -1` and **no gmsh cell** in the neutral
@@ -977,16 +977,19 @@ detail lives in the `SCHEMA_VERSION` docstring in
   sentinel, `rotational` (`-rot`), `pressure` (`-p`). Defaults match
   the C++ parser, so legacy decks behave identically. Additive — old
   2.11.x readers ignore the new columns.
-- `2.13.0`–`2.15.0` — see the `SCHEMA_VERSION` docstring in
+- `2.13.0`–`2.16.0` — see the `SCHEMA_VERSION` docstring in
   [`opensees/emitter/h5.py`](../emitter/h5.py) (named primitives sidecar,
-  `/opensees/nodes_ndf`, `/opensees/dampings`).
-- `2.16.0` — ADR 0049 (node-pair zeroLength): optional
+  `/opensees/nodes_ndf`, `/opensees/dampings`, `/opensees/initial_stress`).
+  From 2.16.0 onward a minor bump is a producer **hard floor** — a 2.N.x
+  reader REFUSES a 2.(N+1).x file (the window only lets a newer reader open
+  an older file, never the reverse).
+- `2.17.0` — ADR 0049 (node-pair zeroLength): optional
   `inline_connectivity` vlen-int64 dataset under
   `/opensees/element_meta/{type}/` carrying the endpoint tags of node-pair
   spring elements (no neutral gmsh cell to source them from). Written only
   for type groups with a node-pair (`fem_eid < 0`) row, so PG-only models
-  are byte-identical; folds into `model_hash`. Additive — old 2.15.x
-  readers ignore it.
+  are byte-identical; folds into `model_hash`. Additive group; a 2.16.x
+  reader refuses a 2.17.x file (hard floor), a 2.17 reader opens 2.16 + 2.17.
 
 A reader skeleton:
 
