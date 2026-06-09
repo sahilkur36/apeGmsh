@@ -511,11 +511,14 @@ class PartsRegistry(_PartsFragmentationMixin):
             ``ops.element.absorbing_boundary(materials=[m0, m1, …])`` (ADR 0054 AB-1c).
         skin_thickness : float | (tx, ty, tz) | None
             Absorbing-skin thickness.  ``None`` (default) matches the adjacent
-            soil element size per face.
+            soil element size per face.  A skin much thicker than the adjacent
+            soil element warns (`WarnAbsorbingSkinAspect`) — it absorbs poorly.
         center : (cx, cy, cz)
             World location of the soil top-face centre (free surface).
         rotation_z_deg : float
-            Must be ``0.0`` in this slice (rotation is a later slice).
+            Must be ``0`` — the ASDAbsorbingBoundary3D element requires
+            boundary-face normals along global X or Y, so a rotated absorbing
+            box is rejected by the solver.
         name, names, apply_transfinite :
             PG-name prefix, per-PG override dict, and transfinite toggle —
             mirroring :meth:`add_DRM_box`.

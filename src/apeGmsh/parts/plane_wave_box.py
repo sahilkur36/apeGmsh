@@ -24,6 +24,7 @@ btype → axis mapping (proven against the element source and a real STKO export
 """
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,49 @@ if TYPE_CHECKING:
 
 # Canonical btype letter order — also the OpenSees-accepted set.
 _BTYPE_ORDER = "BLRFK"
+
+# A skin much thicker than its adjacent soil element degrades absorption
+# (STKO ships ~2:1); warn above this skin-thickness / soil-element ratio.
+_SKIN_ASPECT_THRESHOLD = 4.0
+
+
+class WarnAbsorbingSkinAspect(UserWarning):
+    """The absorbing skin is much thicker than the adjacent soil element.
+
+    A high skin-thickness / soil-element ratio (well above STKO's ~2:1) gives
+    elongated boundary hexes that absorb outgoing waves poorly.  Fail-soft — a
+    thick skin is legal, just flagged.
+    """
+
+
+def _warn_skin_aspect(
+    thick: tuple[float, float, float],
+    soil_elem: tuple[float, float, float],
+    active: set[str],
+    *,
+    threshold: float = _SKIN_ASPECT_THRESHOLD,
+) -> None:
+    """Warn if any active face's skin is > ``threshold``× its soil element.
+
+    ``active`` is the set of face letters present; the per-axis ratio is the
+    skin thickness over the adjacent soil element size along the same axis.
+    """
+    axis_faces = {"x": ("L", "R"), "y": ("F", "K"), "z": ("B",)}
+    worst_axis, worst_ratio = None, 0.0
+    for (t, e), axis in zip(zip(thick, soil_elem), ("x", "y", "z")):
+        if not (active & set(axis_faces[axis])):
+            continue
+        ratio = t / e if e > 0 else 0.0
+        if ratio > worst_ratio:
+            worst_axis, worst_ratio = axis, ratio
+    if worst_axis is not None and worst_ratio > threshold:
+        warnings.warn(
+            f"absorbing skin on {worst_axis} is {worst_ratio:.1f}x the adjacent "
+            f"soil element (> ~2:1 may degrade absorption); consider a thinner "
+            f"skin_thickness or a finer soil mesh.",
+            WarnAbsorbingSkinAspect,
+            stacklevel=3,
+        )
 
 
 @dataclass(frozen=True)
@@ -432,13 +476,16 @@ def build_plane_wave_box(
     """Build a plane-wave soil box + absorbing skin in the live session.
 
     See module docstring and ``g.parts.add_plane_wave_box`` for the user-facing
-    contract.  AB-1a scope: axis-aligned (``rotation_z_deg == 0``), single soil
-    segment per axis (layered Z is AB-1c).
+    contract.  Supports layered Z (``z`` as a list).  Rotation is rejected — the
+    OpenSees ASDAbsorbingBoundary3D element requires axis-aligned boundary-face
+    normals.
     """
-    # ── Fail-loud guards ────────────────────────────────────────────
     if abs(float(rotation_z_deg)) > 1e-15:
-        raise NotImplementedError(
-            "add_plane_wave_box: rotation is AB-1c; rotation_z_deg must be 0.0."
+        raise ValueError(
+            "add_plane_wave_box: rotation_z_deg must be 0 — the OpenSees "
+            "ASDAbsorbingBoundary3D element requires boundary-face normals along "
+            "global X or Y (ASDAbsorbingBoundary3D.cpp:2135), so a rotated "
+            "absorbing box is rejected by the solver.  Build it axis-aligned."
         )
 
     Lx, nx = _as_size_count(x, "x")
@@ -472,6 +519,10 @@ def build_plane_wave_box(
             raise ValueError(
                 f"add_plane_wave_box: skin_thickness on {ax} must be > 0, got {t}."
             )
+    _warn_skin_aspect(
+        (tx, ty, tz), (Lx / nx, Ly / ny, d_bottom / n_bottom),
+        {"L", "R", "F", "K", "B"},
+    )
 
     # ── Axis descriptors (local frame; soil centred laterally, top z=0) ──
     axis_x = Axis1D("x", (
@@ -514,11 +565,18 @@ def build_plane_wave_box(
     for off in axis_z.slice_offsets():
         geom.slice(target=_box_vols(), axis="z", offset=float(off))
 
-    # Place: translate the whole block to the requested center.  Done before
-    # PG-tagging / transfinite so no synchronize follows group creation.
+    # Place: rotate about +Z at the origin (the block is origin-centred, so it
+    # spins in place), then translate to ``center`` — matching the ``to_local``
+    # inverse above and add_DRM_box.  Done before PG-tagging / transfinite so no
+    # synchronize follows group creation.
     if cx or cy or cz:
         gmsh.model.occ.translate([(3, v) for v in _box_vols()], cx, cy, cz)
         gmsh.model.occ.synchronize()
+        # The OCC translate + sync renumbers entities, stranding the slice's
+        # _metadata keys (their old tags vanish).  Reap them so the pre-mesh
+        # validator stays clean — the box is fully connected, so no geometry is
+        # removed, only the stale bookkeeping.
+        session.model.geometry.remove_orphans()
 
     # ── Classify sub-volumes, tag PGs, apply the transfinite cascade ─
     return _tag_and_structure(
@@ -604,6 +662,16 @@ def build_absorbing_shell(
 
     axis_x, axis_y, axis_z = _axes_from_extent(
         (xmin, ymin, zmin, xmax, ymax, zmax), sizes, thick, active, layers=layers,
+    )
+
+    # Soil element size per axis (the base skin abuts the bottom layer on z).
+    def _soil_elem(axis: Axis1D) -> float:
+        for region, lo, hi, count in axis.segments:
+            if _is_soil_region(region):
+                return (hi - lo) / count   # first (=deepest on z) soil segment
+        return float("inf")
+    _warn_skin_aspect(
+        thick, (_soil_elem(axis_x), _soil_elem(axis_y), _soil_elem(axis_z)), active,
     )
 
     geom = session.model.geometry

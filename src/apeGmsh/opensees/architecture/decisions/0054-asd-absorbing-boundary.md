@@ -201,8 +201,18 @@ flip idiom; per-partition flip is the real idiom, not merely a deferral).
   `ops.element.absorbing_boundary(materials=[m0,m1,…])` fans one derived `G/v/ρ`
   per layer (STKO adjacent-element rule). Layering lives in the shared
   `_tag_and_structure` (per `(btype, layer)`) + `_layered_axis_z`; the BYO weld
-  slices the box at layer interfaces first. **Rotation / grading / per-axis
-  thickness remain** (rest of AB-1c).
+  slices the box at layer interfaces first.
+- **AB-1c (close-out):** ✅ **DONE / CLOSED.** Per-axis `skin_thickness` was
+  already shipped (AB-1a tuple form). A fail-soft `WarnAbsorbingSkinAspect` warns
+  when the skin is ≫ the adjacent soil element (both entry points). A latent
+  centred-box bug was fixed (OCC `translate`+`synchronize` renumber stranded the
+  slice's `_metadata`; the builder now `remove_orphans()` after the move).
+  **Rotation is CLOSED as infeasible:** the element requires boundary-face normals
+  along global X or Y (`ASDAbsorbingBoundary3D.cpp:2135` — *"normal vector can be
+  only X or Y"*), so a rotated absorbing box is rejected by the solver;
+  `rotation_z_deg != 0` now raises a clear `ValueError` (verified by running a
+  rotated deck — it dies in the element, not apeGmsh). Graded-mesh skin is not
+  pursued (1-element skin; the aspect warning covers the failure mode).
 - **AB-2 (bridge):** ✅ **DONE.** `ASDAbsorbingBoundary3D` frozen `Element`
   (`opensees/element/absorbing.py`) — raw `G/v/rho`, fixed `btype` (illegal/
   opposite/repeated letters rejected), optional `-fx/-fy/-fz` guarded to bottom
