@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Iterable
+from typing import TYPE_CHECKING, Callable, Iterable
 
 import numpy as np
 
@@ -100,6 +100,7 @@ __all__ = [
     "resolve_ndf_overlay",
     "validate_constraint_master_ndf",
     "validate_record_ndf_consistency",
+    "fit_dof_vector",
     "assert_ndm_compatible",
     "emit_initial_stress_addtoparameter",
     "emit_initial_stress_global",
@@ -611,6 +612,46 @@ def validate_constraint_master_ndf(
     _walk(stage_constraint_records)
 
 
+def fit_dof_vector(
+    values: "Iterable[float]",
+    node_ndf: int,
+    *,
+    kind: str,
+    node: int,
+) -> tuple[float, ...]:
+    """Fit a DOF-ordered ``load`` / ``mass`` vector to a node's ``ndf``.
+
+    The per-node ``ndf`` is authoritative (ADR 0048); the user sets it via the
+    declared elements / ``ops.ndf`` and we trust it. A vector SHORTER than the
+    node ndf is zero-padded on the trailing DOFs (no force / mass on the higher
+    DOFs). A vector LONGER than the node ndf is accepted only when the overflow
+    is all-zero (it is trimmed); a **non-zero** overflow component addresses a
+    DOF the node does not have and OpenSees ``Node::addUnbalancedLoad`` /
+    ``setMass`` (``Node.cpp:940`` / ``:1272``) would drop the WHOLE vector — so
+    it fails loud.
+    """
+    vals = [float(v) for v in values]
+    if len(vals) > int(node_ndf):
+        overflow = vals[int(node_ndf):]
+        if any(v != 0.0 for v in overflow):
+            lost = ", ".join(
+                f"DOF {int(node_ndf) + i + 1}={v:g}"
+                for i, v in enumerate(overflow)
+                if v != 0.0
+            )
+            raise BridgeError(
+                f"{kind} on node {node} has {len(vals)} components but the "
+                f"node's ndf is {int(node_ndf)}; component(s) {lost} address "
+                f"DOFs the node does not have. OpenSees "
+                f"Node::addUnbalancedLoad / setMass (Node.cpp:940/1272) drop a "
+                f"size-mismatched vector wholesale — the load / mass would be "
+                f"silently lost. Drop the extra component(s) or raise the "
+                f"node's ndf (ops.ndf for a decoupled node)."
+            )
+        vals = vals[:int(node_ndf)]
+    return tuple(vals) + (0.0,) * (int(node_ndf) - len(vals))
+
+
 def validate_record_ndf_consistency(
     fem: "FEMData",
     effective: "dict[int, int]",
@@ -623,15 +664,18 @@ def validate_record_ndf_consistency(
     support_records: "Iterable[SupportRecord]" = (),
 ) -> None:
     """ADR 0049 G3 — fail loud when a ``fix`` / ``mass`` / ``load`` / ``sp``
-    record addresses DOFs inconsistent with the node's effective ndf.
+    record addresses DOFs the node's effective ndf cannot carry.
 
     OpenSees ``Node::addUnbalancedLoad`` (``Node.cpp:940``) and
     ``Node::setMass`` (``Node.cpp:1272``) warn-and-return on a vector whose
     size ``!=`` the node's numDOF, silently dropping the WHOLE load / mass.
-    The tcl/py deck emits raw record lengths (no padding — ``tcl.py:156/159/
-    326``), so:
+    The bridge therefore **fits** every mass / load vector to the node's ndf
+    at emit (:func:`fit_dof_vector`): a short vector is zero-padded on the
+    trailing DOFs, so the only unrecoverable case is a vector LONGER than the
+    node ndf carrying a non-zero overflow component. Hence:
 
-      * ``mass`` / nodal-``load`` vectors must EQUAL the node ndf;
+      * ``mass`` / nodal-``load`` vectors may be SHORTER than the node ndf
+        (zero-padded), but a non-zero component beyond the node ndf raises;
       * a ``fix`` / ``support`` DOF-mask must not EXCEED the node ndf (a short
         mask fixes only the leading DOFs, which OpenSees accepts);
       * an ``sp`` DOF index (1-based) must be ``<=`` the node ndf.
@@ -642,7 +686,9 @@ def validate_record_ndf_consistency(
     Known limitation: ``g.loads`` + ``p.from_model(case)`` loads are expanded
     into per-node lines inside the bridge at emit (``Plain.from_model_cases``,
     pattern.py:176-183) and are NOT :class:`_LoadRecord` instances — they are
-    out of this guard's reach.
+    out of this guard's reach, but the emit-time mapping
+    (:func:`broker_load_components` at the per-node ndf) fits + fail-loud-checks
+    them directly.
     """
     def ndf_of(n: int) -> int:
         return int(effective.get(int(n), int(envelope_ndf)))
@@ -660,33 +706,19 @@ def validate_record_ndf_consistency(
             return list(expand_pg_to_nodes(fem, rec.target))
         return [int(rec.target)]
 
-    # mass — EXACT size (Node::setMass !=).
+    # mass — fit to node ndf; a non-zero overflow beyond ndf raises.
     for mrec in mass_records:
-        n_vals = len(mrec.values)
         for node in _pg_or_nodes(mrec):
-            if ndf_of(node) != n_vals:
-                raise BridgeError(
-                    f"mass on node {node} has {n_vals} components but the "
-                    f"node's ndf is {ndf_of(node)}. OpenSees Node::setMass "
-                    f"(Node.cpp:1272) requires the mass vector size to EQUAL "
-                    f"the node ndf — a mismatched mass is silently dropped. "
-                    f"Make the mass vector length-{ndf_of(node)} (or fix the "
-                    f"node's ndf via ops.ndf for a decoupled node)."
-                )
+            fit_dof_vector(
+                mrec.values, ndf_of(node), kind="mass", node=node,
+            )
 
-    # nodal load — EXACT size (Node::addUnbalancedLoad !=).
+    # nodal load — fit to node ndf; a non-zero overflow beyond ndf raises.
     for lrec in load_records:
-        n_f = len(lrec.forces)
         for node in _target_nodes(lrec):
-            if ndf_of(node) != n_f:
-                raise BridgeError(
-                    f"nodal load on node {node} has {n_f} components but the "
-                    f"node's ndf is {ndf_of(node)}. OpenSees "
-                    f"Node::addUnbalancedLoad (Node.cpp:940) requires the load "
-                    f"vector size to EQUAL the node ndf — a mismatched load is "
-                    f"silently dropped. Make the force vector length-"
-                    f"{ndf_of(node)} (or fix the node's ndf via ops.ndf)."
-                )
+            fit_dof_vector(
+                lrec.forces, ndf_of(node), kind="nodal load", node=node,
+            )
 
     # fix / support — DOF-mask must not exceed ndf.
     fix_like: "list[FixRecord | SupportRecord]" = [
@@ -1894,6 +1926,8 @@ def emit_pattern_spec(
     fem: "FEMData",
     ndf: int,
     ndm: int = 3,
+    *,
+    effective_ndf: "dict[int, int] | None" = None,
 ) -> None:
     """Drive a pattern's emit, expanding any ``pg=`` records to per-node calls.
 
@@ -1914,14 +1948,19 @@ def emit_pattern_spec(
         spec._emit(emitter, tag)
         return
 
+    eff = effective_ndf or {}
+
+    def ndf_of(n: int) -> int:
+        return int(eff.get(int(n), ndf))
+
     ts_tag = resolve_tag(emitter, spec.series)
     emitter.pattern_open("Plain", tag, ts_tag)
     for rec in spec.loads:
-        _emit_load_record(rec, emitter, fem)
+        _emit_load_record(rec, emitter, fem, ndf_of)
     for sp_rec in spec.sps:
         _emit_sp_record(sp_rec, emitter, fem)
     for case in spec.from_model_cases:
-        _emit_from_model_case(case, emitter, fem, ndf, ndm)
+        _emit_from_model_case(case, emitter, fem, ndf_of, ndm)
     emitter.pattern_close()
 
 
@@ -1988,7 +2027,11 @@ def broker_load_components(
 
 
 def _emit_from_model_case(
-    case: str, emitter: "Emitter", fem: "FEMData", ndf: int, ndm: int = 3,
+    case: str,
+    emitter: "Emitter",
+    fem: "FEMData",
+    ndf_of: "Callable[[int], int]",
+    ndm: int = 3,
 ) -> None:
     """Expand a ``Plain.from_model(case)`` import into load / sp lines.
 
@@ -1996,6 +2039,12 @@ def _emit_from_model_case(
     homogeneous (prescribed) SPs tagged with ``case`` become ``sp``
     lines. Homogeneous fixes are model-level and never imported here.
     Element-form loads are out of scope (all-nodal, ADR 0051).
+
+    The DOF-agnostic spatial load is mapped onto **each node's** effective
+    ndf (``ndf_of`` — inferred per node, envelope fallback), not the model
+    envelope: a force on a 3-DOF solid node emits 3 components even in a
+    6-DOF-envelope model. :func:`broker_load_components` fails loud if a
+    non-zero component cannot land on that node's DOFs.
     """
     nodes = getattr(fem, "nodes", None)
     if nodes is None:
@@ -2004,7 +2053,9 @@ def _emit_from_model_case(
     if load_set is not None:
         for rec in load_set.by_pattern(case):
             emitter.load(
-                int(rec.node_id), *broker_load_components(rec, ndf, ndm))
+                int(rec.node_id),
+                *broker_load_components(rec, ndf_of(int(rec.node_id)), ndm),
+            )
     sp_set = getattr(nodes, "sp", None)
     if sp_set is not None:
         for rec in sp_set.prescribed():
@@ -2013,14 +2064,25 @@ def _emit_from_model_case(
 
 
 def _emit_load_record(
-    rec: _LoadRecord, emitter: "Emitter", fem: "FEMData",
+    rec: _LoadRecord,
+    emitter: "Emitter",
+    fem: "FEMData",
+    ndf_of: "Callable[[int], int]",
 ) -> None:
     if rec.target_kind == "node":
-        emitter.load(int(rec.target), *rec.forces)
+        node = int(rec.target)
+        emitter.load(
+            node, *fit_dof_vector(
+                rec.forces, ndf_of(node), kind="nodal load", node=node),
+        )
         return
     # PG fan-out.
     for node_tag in expand_pg_to_nodes(fem, rec.target):
-        emitter.load(node_tag, *rec.forces)
+        emitter.load(
+            node_tag, *fit_dof_vector(
+                rec.forces, ndf_of(int(node_tag)), kind="nodal load",
+                node=int(node_tag)),
+        )
 
 
 def _emit_sp_record(

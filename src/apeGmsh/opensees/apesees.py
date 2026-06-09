@@ -68,6 +68,7 @@ from ._internal.build import (
     resolve_ndf_overlay,
     validate_constraint_master_ndf,
     validate_record_ndf_consistency,
+    fit_dof_vector,
     assert_ndm_compatible,
 )
 from ._internal.build import _element_transf as _build_element_transf
@@ -1099,7 +1100,7 @@ class BuiltModel:
         # import (expanded in emit_pattern_spec) or bridge-authored
         # p.load(...).  There is no broker-loads auto-emitter.
         self._emit_fixes(emitter)
-        self._emit_masses(emitter)
+        self._emit_masses(emitter, inferred_ndf)
         self._emit_regions(emitter, tags)
         self._emit_rayleigh(emitter, tags, fem_eid_to_ops_tag)
         self._emit_damping_attach(emitter, tags, fem_eid_to_ops_tag)
@@ -1154,7 +1155,10 @@ class BuiltModel:
                 # emit inside their owning stage's block; skip here.
                 if id(p) in claimed_pattern_ids:
                     continue
-                emit_pattern_spec(p, emitter, tag, self.fem, self.ndf, self.ndm)
+                emit_pattern_spec(
+                    p, emitter, tag, self.fem, self.ndf, self.ndm,
+                    effective_ndf=inferred_ndf,
+                )
             elif isinstance(p, Recorder):
                 if id(p) in claimed_recorder_ids:
                     continue
@@ -1350,7 +1354,7 @@ class BuiltModel:
             )
             # Intra-part fix + mass (reuse the owned-node-set filter).
             self._emit_fixes_partitioned(emitter, owned_nodes)
-            self._emit_masses_partitioned(emitter, owned_nodes)
+            self._emit_masses_partitioned(emitter, owned_nodes, inferred_ndf)
             modules.append((label, span_start, len(emitter.lines())))
         module_end = len(emitter.lines())
 
@@ -1373,7 +1377,10 @@ class BuiltModel:
         for p in post_element:
             tag = self.tag_for[id(p)]
             if isinstance(p, Pattern):
-                emit_pattern_spec(p, emitter, tag, self.fem, self.ndf, self.ndm)
+                emit_pattern_spec(
+                    p, emitter, tag, self.fem, self.ndf, self.ndm,
+                    effective_ndf=inferred_ndf,
+                )
             elif isinstance(p, Recorder):
                 if id(p) in claimed_recorder_ids:
                     continue
@@ -1618,7 +1625,10 @@ class BuiltModel:
                     emitter.fix(int(node_tag), *rec.dofs)
             for rec in stage.mass_records:
                 for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
-                    emitter.mass(int(node_tag), *rec.values)
+                    node = int(node_tag)
+                    emitter.mass(node, *fit_dof_vector(
+                        rec.values, int(inferred_ndf.get(node, self.ndf)),
+                        kind="mass", node=node))
             self._emit_stage_regions(stage, emitter, tags)
             # Stage-bound MP constraints — emit AFTER regions, BEFORE
             # domain_change so the constrained nodes / elements (which
@@ -1727,7 +1737,10 @@ class BuiltModel:
             # from_model(case) expansion match the non-staged path.
             for pat in stage.pattern_specs:
                 pat_tag = self.tag_for[id(pat)]
-                emit_pattern_spec(pat, emitter, pat_tag, self.fem, self.ndf, self.ndm)
+                emit_pattern_spec(
+                    pat, emitter, pat_tag, self.fem, self.ndf, self.ndm,
+                    effective_ndf=inferred_ndf,
+                )
 
             # 8. Stage-bound recorders (Phase SSI-2.D PR-C) — emit
             # AFTER the chain so the recorder sees the bound analysis
@@ -2044,7 +2057,8 @@ class BuiltModel:
 
                 # 7. Fixes / masses (per-rank ownership).
                 self._emit_fixes_partitioned(emitter, rank_owned_nodes[rank])
-                self._emit_masses_partitioned(emitter, rank_owned_nodes[rank])
+                self._emit_masses_partitioned(
+                    emitter, rank_owned_nodes[rank], inferred_ndf)
 
                 # 7-bis. Named regions (per-rank intersection — INV-4).
                 self._emit_regions_partitioned(
@@ -2103,6 +2117,7 @@ class BuiltModel:
                 # stage-claimed patterns emit inside their stage block.
                 self._emit_patterns_partitioned(
                     emitter, post_element, rank_owned_nodes[rank],
+                    inferred_ndf=inferred_ndf,
                     claimed_pattern_ids=frozenset(
                         self._claimed_pattern_ids()
                     ),
@@ -2483,7 +2498,10 @@ class BuiltModel:
                         for rec, nid in rank_fix:
                             emitter.fix(nid, *rec.dofs)
                         for rec, nid in rank_mass:
-                            emitter.mass(nid, *rec.values)
+                            emitter.mass(int(nid), *fit_dof_vector(
+                                rec.values,
+                                int(inferred_ndf.get(int(nid), self.ndf)),
+                                kind="mass", node=int(nid)))
                         self._emit_stage_regions_partitioned(
                             stage, emitter, tags,
                             owned_nodes=rank_owned,
@@ -2610,6 +2628,7 @@ class BuiltModel:
                     rank_owned = {int(n) for n in part.node_ids}
                     if not self._stage_pattern_specs_have_owned_content(
                         stage.pattern_specs, rank_owned,
+                        inferred_ndf=inferred_ndf,
                     ):
                         continue
                     emitter.partition_open(rank)
@@ -2617,6 +2636,7 @@ class BuiltModel:
                         for pat in stage.pattern_specs:
                             self._emit_one_pattern_partitioned(
                                 emitter, pat, rank_owned,
+                                inferred_ndf=inferred_ndf,
                             )
                     finally:
                         emitter.partition_close()
@@ -3462,10 +3482,17 @@ class BuiltModel:
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 emitter.fix(node_tag, *rec.dofs)
 
-    def _emit_masses(self, emitter: Emitter) -> None:
+    def _emit_masses(
+        self, emitter: Emitter,
+        inferred_ndf: "dict[int, int] | None" = None,
+    ) -> None:
+        eff = inferred_ndf or {}
         for rec in self.mass_records:
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
-                emitter.mass(node_tag, *rec.values)
+                node = int(node_tag)
+                emitter.mass(node, *fit_dof_vector(
+                    rec.values, int(eff.get(node, self.ndf)),
+                    kind="mass", node=node))
 
     def _emit_fixes_partitioned(
         self, emitter: Emitter, owned_nodes: set[int],
@@ -3483,12 +3510,17 @@ class BuiltModel:
 
     def _emit_masses_partitioned(
         self, emitter: Emitter, owned_nodes: set[int],
+        inferred_ndf: "dict[int, int] | None" = None,
     ) -> None:
         """Per-rank mass fan-out (ADR 0027). Mirror of :meth:`_emit_fixes_partitioned`."""
+        eff = inferred_ndf or {}
         for rec in self.mass_records:
             for node_tag in self._resolve_node_target(rec.pg, rec.nodes):
                 if int(node_tag) in owned_nodes:
-                    emitter.mass(node_tag, *rec.values)
+                    node = int(node_tag)
+                    emitter.mass(node, *fit_dof_vector(
+                        rec.values, int(eff.get(node, self.ndf)),
+                        kind="mass", node=node))
 
     def _emit_rayleigh(
         self,
@@ -3937,6 +3969,7 @@ class BuiltModel:
         post_element: "list[Primitive]",
         owned_nodes: set[int],
         *,
+        inferred_ndf: "dict[int, int] | None" = None,
         claimed_pattern_ids: "frozenset[int]" = frozenset(),
     ) -> None:
         """Per-rank pattern fan-out (ADR 0027).
@@ -3958,13 +3991,17 @@ class BuiltModel:
                 continue
             if id(p) in claimed_pattern_ids:
                 continue
-            self._emit_one_pattern_partitioned(emitter, p, owned_nodes)
+            self._emit_one_pattern_partitioned(
+                emitter, p, owned_nodes, inferred_ndf=inferred_ndf,
+            )
 
     def _emit_one_pattern_partitioned(
         self,
         emitter: Emitter,
         p: "Pattern",
         owned_nodes: set[int],
+        *,
+        inferred_ndf: "dict[int, int] | None" = None,
     ) -> bool:
         """Emit one pattern's rank-owned ``load`` / ``sp`` lines.
 
@@ -3987,6 +4024,11 @@ class BuiltModel:
             p._emit(emitter, tag)
             return True
 
+        eff = inferred_ndf or {}
+
+        def ndf_of(n: int) -> int:
+            return int(eff.get(int(n), self.ndf))
+
         ts_tag = resolve_tag(emitter, p.series)
         # Pre-filter loads / sps so we don't open an empty pattern.
         owned_loads = [
@@ -3999,7 +4041,7 @@ class BuiltModel:
         ]
         # ADR 0051: from_model(case) imports, expanded + rank-filtered.
         fm_loads, fm_sps = self._owned_from_model_lines(
-            p.from_model_cases, owned_nodes,
+            p.from_model_cases, owned_nodes, inferred_ndf=eff,
         )
         if (not owned_loads and not owned_sps
                 and not fm_loads and not fm_sps):
@@ -4007,7 +4049,7 @@ class BuiltModel:
         emitter.pattern_open("Plain", tag, ts_tag)
         for rec in owned_loads:
             _emit_pattern_load_partitioned(
-                rec, emitter, self.fem, owned_nodes,
+                rec, emitter, self.fem, owned_nodes, ndf_of,
             )
         for rec in owned_sps:
             _emit_pattern_sp_partitioned(
@@ -4024,6 +4066,8 @@ class BuiltModel:
         self,
         specs: "tuple[Plain, ...]",
         owned_nodes: set[int],
+        *,
+        inferred_ndf: "dict[int, int] | None" = None,
     ) -> bool:
         """Pure pre-check: would any ``specs`` pattern emit a line for
         this rank?  Used to skip opening an empty ``partition_open``
@@ -4045,21 +4089,29 @@ class BuiltModel:
             ):
                 return True
             fm_loads, fm_sps = self._owned_from_model_lines(
-                p.from_model_cases, owned_nodes,
+                p.from_model_cases, owned_nodes, inferred_ndf=inferred_ndf,
             )
             if fm_loads or fm_sps:
                 return True
         return False
 
     def _owned_from_model_lines(
-        self, cases: "tuple[str, ...]", owned_nodes: set[int],
+        self,
+        cases: "tuple[str, ...]",
+        owned_nodes: set[int],
+        *,
+        inferred_ndf: "dict[int, int] | None" = None,
     ) -> "tuple[list[tuple[int, tuple[float, ...]]], list[tuple[int, int, float]]]":
         """Expand from_model ``cases`` to rank-owned (load, sp) lines.
 
         Mirrors the flat ``emit_pattern_spec`` from_model expansion, but
-        filters to nodes owned by the current rank (ADR 0027 / 0051).
+        filters to nodes owned by the current rank (ADR 0027 / 0051). The
+        DOF-agnostic spatial load is mapped onto **each node's** effective
+        ndf (``inferred_ndf`` — envelope fallback), not the model envelope.
         """
         from ._internal.build import broker_load_components
+
+        eff = inferred_ndf or {}
 
         fm_loads: list[tuple[int, tuple[float, ...]]] = []
         fm_sps: list[tuple[int, int, float]] = []
@@ -4074,9 +4126,10 @@ class BuiltModel:
             if load_set is not None:
                 for rec in load_set.by_pattern(case):
                     if int(rec.node_id) in owned_nodes:
+                        node_ndf = int(eff.get(int(rec.node_id), self.ndf))
                         fm_loads.append(
                             (int(rec.node_id),
-                             broker_load_components(rec, self.ndf, self.ndm)),
+                             broker_load_components(rec, node_ndf, self.ndm)),
                         )
             if sp_set is not None:
                 for rec in sp_set.prescribed():
@@ -4303,12 +4356,18 @@ def _pattern_record_owned(
 
 
 def _emit_pattern_load_partitioned(
-    rec: "Any", emitter: Emitter, fem: "FEMData", owned_nodes: set[int],
+    rec: "Any",
+    emitter: Emitter,
+    fem: "FEMData",
+    owned_nodes: set[int],
+    ndf_of: "Callable[[int], int]",
 ) -> None:
     """Per-rank version of the inner load fan-out."""
     if rec.target_kind == "node":
-        if int(rec.target) in owned_nodes:
-            emitter.load(int(rec.target), *rec.forces)
+        node = int(rec.target)
+        if node in owned_nodes:
+            emitter.load(node, *fit_dof_vector(
+                rec.forces, ndf_of(node), kind="nodal load", node=node))
         return
     # PG — fan out only owned nodes.
     try:
@@ -4317,7 +4376,9 @@ def _emit_pattern_load_partitioned(
         return
     for node_tag in ids:
         if int(node_tag) in owned_nodes:
-            emitter.load(int(node_tag), *rec.forces)
+            emitter.load(int(node_tag), *fit_dof_vector(
+                rec.forces, ndf_of(int(node_tag)), kind="nodal load",
+                node=int(node_tag)))
 
 
 def _emit_pattern_sp_partitioned(

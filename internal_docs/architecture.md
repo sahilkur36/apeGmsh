@@ -67,7 +67,6 @@ g
   |-- .constraints        Pre-mesh constraint definitions (13 types)
   |-- .loads              Pre-mesh load definitions (7 types, pattern grouping)
   |-- .masses             Pre-mesh mass definitions (4 types)
-  |-- .node_ndf           Explicit per-node ndf (DOF count) declarations
   |
   |-- .mesh               Meshing pipeline
   |     |-- .generation   generate, set_order, refine, optimize, algorithms

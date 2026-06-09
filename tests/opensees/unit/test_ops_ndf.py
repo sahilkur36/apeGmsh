@@ -181,10 +181,10 @@ def test_g2_stage_constraint_master_checked() -> None:
 _NOFEM = object()
 
 
-def test_g3_mass_size_must_equal_ndf() -> None:
+def test_g3_mass_short_is_padded_ok() -> None:
+    # A 2-component mass on a 6-DOF node is zero-padded to fit (no raise).
     rec = MassRecord(pg=None, nodes=(2,), values=(1.0, 1.0))
-    with pytest.raises(BridgeError, match="Node::setMass"):
-        validate_record_ndf_consistency(_NOFEM, {2: 6}, 3, 6, mass_records=[rec])
+    validate_record_ndf_consistency(_NOFEM, {2: 6}, 3, 6, mass_records=[rec])
 
 
 def test_g3_mass_exact_ok() -> None:
@@ -192,10 +192,30 @@ def test_g3_mass_exact_ok() -> None:
     validate_record_ndf_consistency(_NOFEM, {2: 2}, 2, 2, mass_records=[rec])
 
 
-def test_g3_nodal_load_size_must_equal_ndf() -> None:
+def test_g3_mass_nonzero_overflow_raises() -> None:
+    # A 3-component mass with a non-zero 3rd entry on a 2-DOF node cannot fit.
+    rec = MassRecord(pg=None, nodes=(2,), values=(1.0, 1.0, 5.0))
+    with pytest.raises(BridgeError, match="node's ndf is 2"):
+        validate_record_ndf_consistency(_NOFEM, {2: 2}, 2, 2, mass_records=[rec])
+
+
+def test_g3_nodal_load_short_is_padded_ok() -> None:
+    # A 3-component force on a 6-DOF node is zero-padded to fit (no raise).
     rec = _LoadRecord(target_kind="node", target="2", forces=(1.0, 0.0, 0.0))
-    with pytest.raises(BridgeError, match="addUnbalancedLoad"):
-        validate_record_ndf_consistency(_NOFEM, {2: 6}, 3, 6, load_records=[rec])
+    validate_record_ndf_consistency(_NOFEM, {2: 6}, 3, 6, load_records=[rec])
+
+
+def test_g3_nodal_load_nonzero_overflow_raises() -> None:
+    # Fz on a 2-DOF (ndm=2) node would be dropped — fail loud.
+    rec = _LoadRecord(target_kind="node", target="2", forces=(1.0, 0.0, 5.0))
+    with pytest.raises(BridgeError, match="silently lost"):
+        validate_record_ndf_consistency(_NOFEM, {2: 2}, 2, 2, load_records=[rec])
+
+
+def test_g3_nodal_load_zero_overflow_ok() -> None:
+    # A trailing zero beyond ndf is harmless — trimmed, no raise.
+    rec = _LoadRecord(target_kind="node", target="2", forces=(1.0, 0.0, 0.0))
+    validate_record_ndf_consistency(_NOFEM, {2: 2}, 2, 2, load_records=[rec])
 
 
 def test_g3_fix_short_mask_ok_long_mask_raises() -> None:
@@ -299,3 +319,55 @@ def test_ops_ndf_persists_through_h5(tmp_path: Path) -> None:
             assert nn.get(int(h.tag)) == 6
     finally:
         g.end()
+
+
+# =====================================================================
+# Loads / masses fit the per-node ndf, not the envelope (fit-to-ndf)
+# =====================================================================
+
+def _truss_in_envelope6(tmp_path: Path):
+    """A 3D truss (inferred per-node ndf=3) emitted under a 6-DOF envelope,
+    carrying a from_model force, a direct short force and a direct short
+    mass on the truss tip (effective ndf=3). Returns the emitted py deck."""
+    with apeGmsh(model_name="fit") as g:
+        a = g.model.geometry.add_point(0.0, 0.0, 0.0)
+        b = g.model.geometry.add_point(1.0, 0.0, 0.0)
+        line = g.model.geometry.add_line(a, b)
+        g.model.sync()
+        g.physical.add(1, [line], name="bar")
+        g.physical.add(0, [a], name="base")
+        g.physical.add(0, [b], name="tip")
+        g.mesh.sizing.set_global_size(1.0)
+        g.mesh.generation.generate(1)
+        with g.loads.case("push"):
+            g.loads.point.force("tip", (0.0, 0.0, -5.0e4))
+        fem = g.mesh.queries.get_fem_data(dim=1)
+
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=6)                      # envelope 6, truss infers 3
+    ops.element.Truss(
+        pg="bar", A=0.01,
+        material=ops.uniaxialMaterial.ElasticMaterial(E=200e9),
+    )
+    ops.fix(pg="base", dofs=(1, 1, 1))
+    ops.mass(pg="tip", values=(2.0, 2.0, 2.0))   # direct short mass (3 on ndf-3)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.from_model("push")                     # from_model force on tip
+        p.load(pg="tip", forces=(1.0, 0.0, 0.0))  # direct short force
+    out = tmp_path / "fit.py"
+    ops.py(str(out))
+    return out.read_text(encoding="utf-8")
+
+
+def test_loads_and_masses_fit_per_node_ndf_not_envelope(tmp_path: Path) -> None:
+    deck = _truss_in_envelope6(tmp_path)
+    # The truss tip (node 2) infers ndf=3, so every load / mass on it must
+    # carry exactly 3 components even though the model envelope is 6.
+    load_lines = [ln.strip() for ln in deck.splitlines() if "ops.load(" in ln]
+    mass_lines = [ln.strip() for ln in deck.splitlines() if "ops.mass(" in ln]
+    assert load_lines, deck
+    assert mass_lines, deck
+    for ln in load_lines + mass_lines:
+        # ops.load(tag, c1, c2, c3) -> 1 tag + 3 comps = 4 args
+        n_args = ln.count(",") + 1
+        assert n_args == 4, f"expected 3 components (per-node ndf=3): {ln!r}"

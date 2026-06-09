@@ -283,11 +283,23 @@ principle holds:**
   **not** partially apply a mismatched record — `Node::addUnbalancedLoad` /
   `setMass` warn-and-return and drop the whole load / mass, so the deficiency is
   silent. Catches a control / **mass anchor** (a named decoupled-node use case)
-  stated with too few DOFs for the load or mass it carries. (Whether the bound
-  is `==` or `≥` depends on the emit-time vector padding the clean break
-  inherits — apeGmsh pads a short vector up to the node's `ndf`, so the live
-  failure is a record *longer* than `ndf`; pin this predicate against the final
-  padding behavior when implementing G3.)
+  stated with too few DOFs for the load or mass it carries.
+
+  > **Predicate resolved (`≥`, not `==`) — fit-to-`ndf`.** The open question
+  > below (whether the bound is `==` or `≥`) is settled by the emit-time
+  > behavior: `load` / `mass` vectors are **fitted to the per-node `ndf`** at
+  > emit (`build.py::fit_dof_vector`) — a short vector is zero-padded on the
+  > trailing DOFs, and `from_model` loads map through `broker_load_components`
+  > at the **per-node** `ndf` (not the model envelope — the silent-drop bug a
+  > mixed-`ndf` model hit before this). So G3 accepts a vector **shorter than
+  > or equal to** the node `ndf` and raises only on a **non-zero component
+  > beyond** it (the only unrecoverable case — a longer vector with a non-zero
+  > tail addresses a DOF the node lacks). `fix` / `support` mask-length and
+  > `sp` DOF-index checks are unchanged (a short `fix` mask fixes the leading
+  > DOFs, which OpenSees accepts). *(Earlier shipped G3 required `==` for
+  > load/mass; relaxed to fit-to-`ndf` so the user sets the `ndf` and the
+  > bridge makes loads/masses compatible with it, failing loud only when a real
+  > component cannot land.)*
 
 G1–G3 **generalize** the 0046 guard from "per-node `ndf_ok` set-intersection"
 to "the full set of node-DOF contracts the bridge can see (element, link
