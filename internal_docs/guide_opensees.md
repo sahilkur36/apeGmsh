@@ -332,7 +332,12 @@ reads only its own `ops.mass(...)` / `ops.fix(...)` records, **not**
 ops.mass(pg="Roof", values=(m, m, m, 0.0, 0.0, 0.0))
 ```
 
-`values` is an `ndf`-length tuple. No pattern grouping, no ordering
+`values` is fitted to each target node's **per-node `ndf`** (inferred
+from its elements, ADR 0048): a shorter tuple is zero-padded on the
+trailing DOFs — so `values=(m, m, m)` is the natural translational-only
+mass on a 6-DOF node — and a non-zero component beyond the node's `ndf`
+(e.g. a rotational-inertia term on a 3-DOF solid node) fails loud rather
+than being silently dropped by OpenSees. No pattern grouping, no ordering
 concerns -- one lumped-mass declaration per physical group.
 
 ### 4.2 Loads and prescribed SP -- patterns
@@ -355,11 +360,17 @@ with ops.pattern.Plain(series=ts) as p:   # also UniformExcitation
 forces become `load` lines, non-homogeneous (prescribed) displacements
 become `sp` lines, both scaled by the pattern's series. Homogeneous
 fixes are model-level and are **not** imported (use `ops.fix`). The
-DOF-agnostic 3-D records map onto the model `ndf` at emit time.
+DOF-agnostic 3-D records map onto each node's **per-node `ndf`** at emit
+time — a force on a 3-DOF solid node emits 3 components even in a 6-DOF
+model, and a component the node's DOFs can't carry (e.g. a moment on a
+solid node) fails loud.
 
 `p.load` / `p.sp` fan a `pg=` across the group's nodes at build time;
 `node=` takes an explicit tag or a `Node` from `ops.nodes.get(...)`. The
-`forces=` tuple length must match the model `ndf`.
+`forces=` tuple is fitted to each target node's **per-node `ndf`**: a
+shorter vector is zero-padded on the trailing DOFs, and a non-zero
+component beyond the node's `ndf` fails loud (OpenSees would otherwise
+drop the whole load silently).
 
 Distributed/body loads (gravity, surface pressure) are **not** patterns
 -- they are element parameters (`body_force=`, `pressure=`) on the
@@ -794,31 +805,39 @@ are scalar kwargs (`A=0.04, E=200e9`) for `elasticBeamColumn`, or a
 a `geomTransf` handle. Forgetting it is the most common beam-model
 error -- `build()` catches it.
 
-### Shell elements need ndf=6
+### Per-node ndf is inferred from the elements
 
-Shell elements require six DOFs per node. If your model mixes shells
-with solids, set `ndf=6` for the entire model.
-
-For shell-on-solid mixed-ndf models where the model-wide bump is
-wasteful, the top-level `g.node_ndf` composite (sibling to
-`g.constraints` / `g.loads` / `g.masses`) declares per-region DOF
-counts. Pair a default with a targeted override:
+Shell elements require six DOFs per node, solids three, a 3-D beam six,
+a 3-D truss three. You do **not** declare any of this: apeGmsh **infers
+each node's `ndf` from the element classes you declared** on it
+(ADR 0048). `ops.model(ndm=K, ndf=N)` still takes `ndf`, but it is only
+the **envelope** — the OpenSees builder default and the fallback for
+nodes inference can't see (element-less / decoupled nodes). Set it to the
+largest DOF count in the model (e.g. `6` when shells are present); the
+emitter writes a per-node `-ndf K` token wherever a node's inferred value
+differs from the envelope, and elides it where they match (so a uniform
+model's deck is token-free).
 
 ```python
-g.node_ndf.set_default(ndf=3)          # solids stay at 3
-g.node_ndf.set("ShellRegion", ndf=6)   # shell nodes get rotational DOFs
+ops.model(ndm=3, ndf=6)                 # envelope = 6 (shells present)
+ops.element.ShellMITC4(pg="Deck", ...)  # Deck nodes infer 6 → -ndf elided
+ops.element.FourNodeTetrahedron(pg="Soil", ...)  # Soil nodes infer 3 → "-ndf 3"
 ```
 
-apeGmsh resolves per-node `ndf` at FEM-build time; nodes not covered
-by any declaration raise `LookupError` from `fem.nodes.ndf_for(nid)`.
-See [ADR 0032](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md)
-for the explicit-only doctrine and the dimensional-resolution-contract
-alignment. See [ADR 0033](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md)
-for how the broker's per-node `ndf` flows into the OpenSees emit paths:
-`-ndf K` is passed per-node when an override exists (`g.node_ndf.set`);
-sentinel slots elide `-ndf` and the envelope (`apeSees(fem).model(ndm,
-ndf=K)`) wins — matching OpenSees-native `model -ndf K` + per-node
-override semantics.
+A node **shared** by two elements whose DOF counts disagree (a shell's
+`{6}` meeting a solid's `{3}`) cannot exist — OpenSees would mis-assemble
+it (`FE_Element::setID` truncation). apeGmsh **fails loud** at build; the
+fix is separate coincident nodes joined by `equal_dof` / `tie` on the
+shared (translational) DOFs, never a shared node. See
+[ADR 0046](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0046-shell-on-solid-node-sharing-guard.md)
+for the shell-on-solid idiom and
+[ADR 0048](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0048-infer-per-node-ndf-from-elements.md)
+for the inference rule. The one explicit per-node `ndf` channel is
+`ops.ndf(target, ndf=K)`, restricted to **element-less decoupled nodes**
+(a stand-alone constraint master / control node, created via
+`g.decouple_node`) — it never competes with inference because those
+nodes have no element to infer from. See
+[ADR 0049](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0049-decoupled-nodes.md).
 
 ### The deck stops at model definition
 

@@ -471,12 +471,12 @@ the bridge follows the policy in ADR 0027:
 - **Declare foreign node tags before the constraint line.** If
   rank K's block references a node tag K does not natively own, the
   bridge emits `node <tag> <x> <y> <z> -ndf 6` on K's block before
-  the constraint line (INV-2). The coordinates and `ndf` come from
-  the broker — identical to those used on the natively-owning rank —
-  via the per-foreign-node `fem.nodes.ndf_for(tag)` lookup in
-  `_internal/build.py::emit_mp_constraints_partitioned` (override-only
-  per ADR 0033; sentinel slots elide `-ndf` and fall back to the
-  envelope).
+  the constraint line (INV-2). The coordinates come from the broker and
+  the `ndf` from the bridge's deterministic per-node inference — identical
+  to those used on the natively-owning rank — applied in
+  `_internal/build.py::emit_mp_constraints_partitioned` (ADR 0048; a node
+  whose inferred `ndf` equals the envelope elides `-ndf` and falls back to
+  the `ops.model(ndm, ndf=)` envelope).
 - **Phantom nodes get broker-deterministic tags** (INV-3). When a
   `node_to_surface` constraint synthesises phantom nodes at
   build time, those tags and coordinates come from one canonical
@@ -683,37 +683,34 @@ expected to change.
   so MPCO stitches the per-rank `.mpco` outputs by tag identity at
   read time. See § 5.1 for the full emit shape.
 
-- **Per-node `ndf` metadata is on the broker.** The top-level
-  `g.node_ndf` composite (sibling to `g.constraints` / `g.loads` /
-  `g.masses`) is the user-facing API for declaring DOF counts per
-  region; `fem.nodes.ndf_for(nid)` is the broker-side query.
-  Declarations are explicit-only — apeGmsh does not infer `ndf`
-  from element class — and `ndf_for` raises `LookupError` on
-  undeclared nodes naming both fixes
-  (`g.node_ndf.set(target, ndf=K)` and
-  `g.node_ndf.set_default(ndf=K)`). See
-  [ADR 0032](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0032-explicit-only-per-node-ndf.md)
-  for the doctrine.
+- **Per-node `ndf` is inferred on the bridge, not declared.** apeGmsh
+  infers each node's DOF count from the element classes declared on it
+  (a `ShellMITC4` node → 6, a `stdBrick` node → 3); there is no
+  `g.node_ndf` composite. `ops.model(ndm, ndf=K)` keeps `ndf` only as the
+  **envelope** — the builder default and the fallback for element-less
+  nodes. The sole explicit per-node channel is `ops.ndf(target, ndf=K)`,
+  restricted to element-less **decoupled** nodes. See
+  [ADR 0048](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0048-infer-per-node-ndf-from-elements.md)
+  (inference) and
+  [ADR 0049](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0049-decoupled-nodes.md)
+  (`ops.ndf`).
 
   Foreign node declarations under cross-partition replication (§ 7)
-  now consume per-node `ndf` directly. The partitioned fan-out in
-  `_internal/build.py::emit_mp_constraints_partitioned` looks up
-  `fem.nodes.ndf_for(tag)` per foreign-node decl and passes `-ndf K`
-  on the `node(...)` call when the broker carries an override;
-  sentinel slots elide `-ndf` and OpenSees applies the envelope
-  (`apeSees(fem).model(ndm, ndf=K)`) — matching OpenSees-native
-  semantics. This unblocks mixed-ndf partitioned models such as
-  `ndf=3` solid nodes coexisting with `ndf=6` shell nodes across
-  rank boundaries.
+  consume the resolved per-node `ndf` directly: the partitioned fan-out
+  in `_internal/build.py::emit_mp_constraints_partitioned` passes
+  `-ndf K` on the `node(...)` call when a node's inferred value differs
+  from the envelope, and elides it where they match. This unblocks
+  mixed-ndf partitioned models such as `ndf=3` solid nodes coexisting
+  with `ndf=6` shell nodes across rank boundaries.
 
-  Cross-rank consistency is **hash-guaranteed** per
-  [ADR 0021](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0021-lineage-chain-replaces-snapshot-id.md):
-  the resolved `_ndf` array folds into `fem_hash`, so every rank
-  deserialises identical declarations and agrees on per-node `ndf`
-  for shared nodes without explicit cross-rank communication. See
+  Cross-rank consistency is **determinism-guaranteed** (ADR 0048): every
+  OpenSeesMP rank runs the *same* inference over the same broker and the
+  same element declarations, so a foreign / ghost node resolves to the
+  identical `ndf` its owning rank assigns — without cross-rank
+  communication and without folding a per-node `_ndf` array into
+  `fem_hash` (the mechanism the superseded
   [ADR 0033](https://github.com/nmorabowen/apeGmsh/blob/main/src/apeGmsh/opensees/architecture/decisions/0033-s2-emit-wiring-per-node-ndf.md)
-  for the full emit-wiring contract (override-only semantics +
-  validator at three materialisation sites + phantom carveout).
+  previously relied on).
 
 - **`partition()` after `renumber()` is the canonical order.**
   Call `g.mesh.partitioning.renumber(dim=, method="simple",
