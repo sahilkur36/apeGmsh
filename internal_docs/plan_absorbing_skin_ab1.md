@@ -235,9 +235,15 @@ class AbsorbingSkinResult:
   `absorbing_boundary(materials=[…])` per-layer `G/v/ρ`; layering in the shared
   `_tag_and_structure` + `_layered_axis_z`, BYO weld slices the box at layer
   interfaces; single-layer byte-identical; tests in both `tests/parts` files; live
-  2-layer transient solves). **Still REMAINING in AB-1c:** `center` + `rotation_z`
-  via local-frame classification (refuse other rotations); grading + aspect-ratio
-  warning (generous threshold — STKO ships ~2:1 bottom); per-axis `skin_thickness`.
+  2-layer transient solves).  **AB-1c CLOSE-OUT ✅ DONE:** per-axis
+  `skin_thickness` was already shipped (AB-1a tuple form); `WarnAbsorbingSkinAspect`
+  warns on a too-thick skin (both entry points); a latent centred-box bug was fixed
+  (OCC `translate`+`synchronize` stranded `_metadata` → `remove_orphans()` after the
+  move).  **`rotation_z` is CLOSED as infeasible** — the element requires X/Y
+  boundary-face normals (`ASDAbsorbingBoundary3D.cpp:2135`), so a rotated box is
+  rejected by the solver; the builder raises a clear `ValueError` (verified by
+  running a rotated deck).  Graded-mesh skin not pursued (1-element skin).  **AB-1c
+  complete.**
 - (deferred) — post-mesh surgery path for wrapping an arbitrary/foreign mesh;
   3-component/oblique base input (`base_series: dict[dir, TimeSeries]`).
 

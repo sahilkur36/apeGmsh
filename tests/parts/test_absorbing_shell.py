@@ -388,3 +388,35 @@ class TestLayeredBridge:
                 ops.element.absorbing_boundary(skin=res, materials=[m, m], material=m)
         finally:
             g.end()
+
+
+# ── AB-1c: skin aspect-ratio warning (BYO) ───────────────────────────────
+class TestSkinAspect:
+    def test_thick_skin_warns(self):
+        from apeGmsh.parts.plane_wave_box import WarnAbsorbingSkinAspect
+        g = apeGmsh(model_name="shell_aspect", verbose=False)
+        g.begin()
+        try:
+            v = g.model.geometry.add_box(0.0, 0.0, -BOX_DZ, BOX_DX, BOX_DY, BOX_DZ)
+            g.physical.add_volume([v], name="soil")
+            # soil element = 10; skin 60 -> 6:1 -> warns.
+            with pytest.warns(WarnAbsorbingSkinAspect):
+                g.parts.add_absorbing_shell(
+                    box="soil", element_size=10.0, skin_thickness=60.0,
+                )
+        finally:
+            g.end()
+
+    def test_matched_skin_silent(self):
+        import warnings as _w
+        from apeGmsh.parts.plane_wave_box import WarnAbsorbingSkinAspect
+        g = apeGmsh(model_name="shell_noaspect", verbose=False)
+        g.begin()
+        try:
+            v = g.model.geometry.add_box(0.0, 0.0, -BOX_DZ, BOX_DX, BOX_DY, BOX_DZ)
+            g.physical.add_volume([v], name="soil")
+            with _w.catch_warnings():
+                _w.simplefilter("error", WarnAbsorbingSkinAspect)
+                g.parts.add_absorbing_shell(box="soil", element_size=10.0)
+        finally:
+            g.end()

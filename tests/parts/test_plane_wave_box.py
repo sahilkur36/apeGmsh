@@ -10,7 +10,11 @@ import gmsh
 import pytest
 
 from apeGmsh import apeGmsh
-from apeGmsh.parts.plane_wave_box import AbsorbingSkinResult, _btype_for
+from apeGmsh.parts.plane_wave_box import (
+    AbsorbingSkinResult,
+    WarnAbsorbingSkinAspect,
+    _btype_for,
+)
 
 # Small mesh-friendly box.  nx=4, ny=5, nz=3 -> distinct counts per axis so a
 # transposed btype mapping would be caught.
@@ -257,11 +261,49 @@ class TestStagedFlip:
 
 class TestGuards:
     def test_rotation_rejected(self):
+        # The ASDAbsorbingBoundary3D element requires X/Y face normals
+        # (ASDAbsorbingBoundary3D.cpp:2135) — a rotated box is unsupported.
         g = apeGmsh(model_name="pwb_rot", verbose=False)
         g.begin()
         try:
-            with pytest.raises(NotImplementedError, match="rotation"):
+            with pytest.raises(ValueError, match="X or Y"):
                 g.parts.add_plane_wave_box(**BOX, rotation_z_deg=15.0)
+        finally:
+            g.end()
+
+    def test_center_offset_meshes(self):
+        # center != 0 translates the block; the OCC translate + sync renumbers
+        # entities, which used to strand _metadata keys and trip the pre-mesh
+        # validator.  Build + mesh at an offset must stay clean.
+        g = apeGmsh(model_name="pwb_center", verbose=False)
+        g.begin()
+        try:
+            res = g.parts.add_plane_wave_box(**BOX, center=(100.0, 200.0, -5.0))
+            g.mesh.generation.generate(dim=3)   # would raise on stale metadata
+            assert _pg_element_count(res.soil_pg) == SOIL_HEX
+            assert _pg_element_count(res.skin_all_pg) == SKIN_HEX
+            assert res.free_surface_pg  # top face still resolved after the shift
+        finally:
+            g.end()
+
+    def test_thick_skin_warns(self):
+        g = apeGmsh(model_name="pwb_aspect", verbose=False)
+        g.begin()
+        try:
+            # soil element = 40/4 = 10; skin 60 -> 6:1 -> warns.
+            with pytest.warns(WarnAbsorbingSkinAspect):
+                g.parts.add_plane_wave_box(**BOX, skin_thickness=60.0)
+        finally:
+            g.end()
+
+    def test_matched_skin_silent(self):
+        import warnings as _w
+        g = apeGmsh(model_name="pwb_noaspect", verbose=False)
+        g.begin()
+        try:
+            with _w.catch_warnings():
+                _w.simplefilter("error", WarnAbsorbingSkinAspect)
+                g.parts.add_plane_wave_box(**BOX)  # matched default -> silent
         finally:
             g.end()
 
