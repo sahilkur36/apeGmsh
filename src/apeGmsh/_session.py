@@ -141,10 +141,19 @@ class _SessionBase:
         if verbose is not None:
             self._verbose = verbose
         _gmsh_acquire()
-        gmsh.model.add(self.name)
-        if self._verbose:
-            print(f"Gmsh version: {gmsh.__version__}")
-        self._create_composites()
+        try:
+            gmsh.model.add(self.name)
+            if self._verbose:
+                print(f"Gmsh version: {gmsh.__version__}")
+            self._create_composites()
+        except BaseException:
+            # ``_active`` is still False, so ``end()`` will never run for
+            # this session — release the acquire here or the refcount
+            # leaks and gmsh can never finalize for the process lifetime.
+            # BaseException: a KeyboardInterrupt mid-begin in a notebook
+            # leaves the kernel alive and must not leak either.
+            _gmsh_release()
+            raise
         self._active = True
         return self
 

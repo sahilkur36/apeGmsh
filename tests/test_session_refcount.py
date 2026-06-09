@@ -69,6 +69,78 @@ def test_nested_sessions_share_init() -> None:
     assert _session_mod._GMSH_INIT_COUNT == 0
 
 
+def test_failed_begin_releases_refcount(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failure between ``_gmsh_acquire()`` and ``_active = True``
+    (e.g. a composite constructor raising) must release the acquire —
+    ``end()`` never runs for a session whose ``begin()`` raised, so a
+    leaked refcount would keep gmsh from ever finalizing."""
+    g = apeGmsh(model_name="doomed")
+    monkeypatch.setattr(
+        g,
+        "_create_composites",
+        lambda: (_ for _ in ()).throw(RuntimeError("composite boom")),
+    )
+
+    with pytest.raises(RuntimeError, match="composite boom"):
+        g.begin()
+
+    assert _session_mod._GMSH_INIT_COUNT == 0
+    assert not gmsh.isInitialized()
+    assert not g.is_active
+
+
+def test_failed_inner_begin_keeps_outer_session_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A nested session whose ``begin()`` fails must drop only its own
+    acquire: the outer session's gmsh runtime stays up."""
+    with apeGmsh(model_name="outer") as g:  # noqa: F841
+        assert _session_mod._GMSH_INIT_COUNT == 1
+
+        inner = Part("doomed_inner")
+        monkeypatch.setattr(
+            inner,
+            "_create_composites",
+            lambda: (_ for _ in ()).throw(RuntimeError("composite boom")),
+        )
+        with pytest.raises(RuntimeError, match="composite boom"):
+            inner.begin()
+
+        assert gmsh.isInitialized(), (
+            "a failed inner begin() must not tear down the outer "
+            "session's gmsh runtime"
+        )
+        assert _session_mod._GMSH_INIT_COUNT == 1
+
+    assert not gmsh.isInitialized()
+    assert _session_mod._GMSH_INIT_COUNT == 0
+
+
+def test_session_reusable_after_failed_begin(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """After a failed ``begin()`` the same instance can begin again —
+    the failed attempt left no half-open state behind."""
+    g = apeGmsh(model_name="retry")
+    monkeypatch.setattr(
+        g,
+        "_create_composites",
+        lambda: (_ for _ in ()).throw(RuntimeError("composite boom")),
+    )
+    with pytest.raises(RuntimeError, match="composite boom"):
+        g.begin()
+    monkeypatch.undo()
+
+    with g:
+        assert g.is_active
+        assert _session_mod._GMSH_INIT_COUNT == 1
+
+    assert not gmsh.isInitialized()
+    assert _session_mod._GMSH_INIT_COUNT == 0
+
+
 def test_underflow_raises() -> None:
     """Releasing without a matching acquire is a lifecycle bug."""
     assert _session_mod._GMSH_INIT_COUNT == 0
