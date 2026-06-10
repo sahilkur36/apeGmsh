@@ -75,7 +75,7 @@ boundary INV-5 draws.
 """
 from __future__ import annotations
 
-from typing import Any, Iterable, Literal
+from typing import Any, Iterable, Literal, cast
 
 from ._internal.build import (
     BridgeError,
@@ -83,6 +83,7 @@ from ._internal.build import (
     expand_pg_to_elements,
 )
 from ._internal.compose import _compose_model_h5, _path_stem
+from .emitter.base import Emitter
 from .emitter.h5 import H5Emitter
 from .recorder import RecorderDeclaration, build_recorder_declaration
 
@@ -351,7 +352,10 @@ class ModelData:
         sink = _LiveRecorderSink(ops)
         for decl in self._recorder_decls:
             _emit_recorder_declaration(
-                decl, sink, self._fem, fem_eid_to_ops_tag=None,
+                decl,
+                cast(Emitter, sink),  # _LiveRecorderSink implements only the three recorder methods
+                self._fem,
+                fem_eid_to_ops_tag=None,
             )
 
     def recorder_commands(
@@ -569,7 +573,7 @@ class ModelData:
                         float(vec_arr[2]),
                     )
                     # Append the same record-shape the writer produces.
-                    from .emitter.h5 import _TransformRecord  # local — private record
+                    from ._internal.typed_records import TransformRecord as _TransformRecord  # local
                     md._em._transforms.append(
                         _TransformRecord(
                             type_token=ttype, tag=ttag, vec=vec,
@@ -606,7 +610,7 @@ class ModelData:
                     else:
                         type_token = str(type_attr)
 
-                    from .emitter.h5 import _ElementRecord  # local — private
+                    from ._internal.typed_records import ElementRecord as _ElementRecord  # local
 
                     n_rows = min(len(ids), len(fem_eids))
                     for i in range(n_rows):
@@ -621,6 +625,18 @@ class ModelData:
                                         row_args.append(str(s))
                                         continue
                                 row_args.append(float(args[i, j]))
+                            # Trim TRAILING ragged-pad cells (NaN + empty
+                            # string): rows narrower than the group's widest
+                            # sibling are end-padded by the writer; replaying
+                            # the pads would emit literal ``nan`` args.
+                            # Interior NaNs (orientation-inject placeholders)
+                            # are real slots and stay.
+                            while (
+                                row_args
+                                and isinstance(row_args[-1], float)
+                                and np.isnan(row_args[-1])
+                            ):
+                                row_args.pop()
                         else:
                             row_args = []
                         # ADR 0049: node-pair row (fem_eid<0) restores its

@@ -10,9 +10,9 @@ Each method is fully kw-only with explicit types — no ``**kwargs``
 """
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
-from ...element.absorbing import ASDAbsorbingBoundary3D
+from ...element.absorbing import ASDAbsorbingBoundary2D, ASDAbsorbingBoundary3D
 from ...element.beam_column import (
     ElasticTimoshenkoBeam,
     dispBeamColumn,
@@ -74,6 +74,12 @@ __all__ = ["_ElementNS"]
 # Beam-column transforms — concrete subclasses of GeomTransf.
 _AnyTransf = Linear | PDelta | Corotational
 
+# Annotation-safe aliases: inside ``_ElementNS`` the facade METHODS shadow the
+# imported absorbing classes, so class-scope annotations would resolve to the
+# methods ("Function is not valid as a type").
+_Absorbing2D = ASDAbsorbingBoundary2D
+_Absorbing3D = ASDAbsorbingBoundary3D
+
 # Shell sections — only plate-flavored sections accepted at construction
 # (catches "wired a Fiber section into a shell" at the type checker).
 _ShellSection = (
@@ -103,7 +109,7 @@ class _ElementNS(_BridgeNamespace):
         c_mass: bool = False,
         damp: Damping | None = None,
     ) -> elasticBeamColumn:
-        transf = self._bridge._resolve(transf, base=GeomTransf)
+        transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         return self._bridge._register(
             elasticBeamColumn(
                 pg=pg, transf=transf,
@@ -132,7 +138,7 @@ class _ElementNS(_BridgeNamespace):
         registered names.  ``damp`` attaches a ``damping`` object directly to
         this element (ADR 0053 D3b) instead of via a region.
         """
-        transf = self._bridge._resolve(transf, base=GeomTransf)
+        transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         integration = self._bridge._resolve(integration, base=BeamIntegration)
         return self._bridge._register(
             forceBeamColumn(
@@ -152,7 +158,7 @@ class _ElementNS(_BridgeNamespace):
         damp: Damping | None = None,
     ) -> dispBeamColumn:
         """``element dispBeamColumn`` — displacement-based distributed-plasticity."""
-        transf = self._bridge._resolve(transf, base=GeomTransf)
+        transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         integration = self._bridge._resolve(integration, base=BeamIntegration)
         return self._bridge._register(
             dispBeamColumn(
@@ -177,7 +183,7 @@ class _ElementNS(_BridgeNamespace):
         mass: float | None = None,
         c_mass: bool = False,
     ) -> ElasticTimoshenkoBeam:
-        transf = self._bridge._resolve(transf, base=GeomTransf)
+        transf = cast(_AnyTransf, self._bridge._resolve(transf, base=GeomTransf))
         return self._bridge._register(
             ElasticTimoshenkoBeam(
                 pg=pg, transf=transf,
@@ -345,27 +351,27 @@ class _ElementNS(_BridgeNamespace):
     def ShellMITC3(
         self, *, pg: str, section: _ShellSection | str
     ) -> ShellMITC3:
-        section = self._bridge._resolve(section, base=Section)
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
-            ShellMITC3(pg=pg, section=section)
+            ShellMITC3(pg=pg, section=section_r)
         )
 
     def ShellMITC4(
         self, *, pg: str, section: _ShellSection | str,
         damp: Damping | None = None,
     ) -> ShellMITC4:
-        section = self._bridge._resolve(section, base=Section)
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
-            ShellMITC4(pg=pg, section=section, damp=damp)
+            ShellMITC4(pg=pg, section=section_r, damp=damp)
         )
 
     def ShellDKGQ(
         self, *, pg: str, section: _ShellSection | str,
         damp: Damping | None = None,
     ) -> ShellDKGQ:
-        section = self._bridge._resolve(section, base=Section)
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
-            ShellDKGQ(pg=pg, section=section, damp=damp)
+            ShellDKGQ(pg=pg, section=section_r, damp=damp)
         )
 
     def ASDShellQ4(
@@ -378,11 +384,11 @@ class _ElementNS(_BridgeNamespace):
         local_cs: tuple[float, ...] | None = None,
         damp: Damping | None = None,
     ) -> ASDShellQ4:
-        section = self._bridge._resolve(section, base=Section)
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
             ASDShellQ4(
                 pg=pg,
-                section=section,
+                section=section_r,
                 corotational=corotational,
                 drilling_nt_alpha=drilling_nt_alpha,
                 local_cs=local_cs,
@@ -400,11 +406,11 @@ class _ElementNS(_BridgeNamespace):
         local_cs: tuple[float, ...] | None = None,
         damp: Damping | None = None,
     ) -> ASDShellT3:
-        section = self._bridge._resolve(section, base=Section)
+        section_r = cast(Section, self._bridge._resolve(section, base=Section))
         return self._bridge._register(
             ASDShellT3(
                 pg=pg,
-                section=section,
+                section=section_r,
                 corotational=corotational,
                 drilling_dof=drilling_dof,
                 local_cs=local_cs,
@@ -488,26 +494,32 @@ class _ElementNS(_BridgeNamespace):
     # -- Absorbing boundary (ADR 0054) ----------------------------------
 
     def _absorbing_props(
-        self, material, G, v, rho,
+        self,
+        material: ElasticIsotropic | str | None,
+        G: float | None,
+        v: float | None,
+        rho: float | None,
+        *,
+        who: str = "ASDAbsorbingBoundary3D",
     ) -> tuple[float, float, float]:
         """Resolve the ``(G, v, rho)`` triple from either a material or raw nums."""
         if material is not None:
             if G is not None or v is not None or rho is not None:
                 raise ValueError(
-                    "ASDAbsorbingBoundary3D: pass either material= or "
+                    f"{who}: pass either material= or "
                     "G/v/rho, not both."
                 )
             mat = self._bridge._resolve(material, base=NDMaterial)
             if not isinstance(mat, ElasticIsotropic):
                 raise TypeError(
-                    "ASDAbsorbingBoundary3D: material= must be an "
+                    f"{who}: material= must be an "
                     f"ElasticIsotropic (got {type(mat).__name__}); or pass "
                     "raw G/v/rho."
                 )
             return mat.E / (2.0 * (1.0 + mat.nu)), mat.nu, mat.rho
         if G is None or v is None or rho is None:
             raise ValueError(
-                "ASDAbsorbingBoundary3D: pass either material= or all of "
+                f"{who}: pass either material= or all of "
                 "G, v, rho."
             )
         return float(G), float(v), float(rho)
@@ -524,7 +536,7 @@ class _ElementNS(_BridgeNamespace):
         fx: TimeSeries | str | None = None,
         fy: TimeSeries | str | None = None,
         fz: TimeSeries | str | None = None,
-    ) -> ASDAbsorbingBoundary3D:
+    ) -> _Absorbing3D:
         """One absorbing-boundary declaration over a single-btype skin PG.
 
         Supply the soil properties either as ``material=ElasticIsotropic(...)``
@@ -544,6 +556,44 @@ class _ElementNS(_BridgeNamespace):
             )
         )
 
+    def ASDAbsorbingBoundary2D(  # noqa: N802 — mirrors the OpenSees token
+        self,
+        *,
+        pg: str,
+        btype: str,
+        thickness: float,
+        material: ElasticIsotropic | str | None = None,
+        G: float | None = None,
+        v: float | None = None,
+        rho: float | None = None,
+        fx: TimeSeries | str | None = None,
+        fy: TimeSeries | str | None = None,
+    ) -> _Absorbing2D:
+        """One 2D absorbing-boundary declaration over a single-btype skin PG.
+
+        The plane-strain sibling of :meth:`ASDAbsorbingBoundary3D` (ADR 0054,
+        AB-5).  ``thickness`` is the **out-of-plane slab thickness** (it
+        scales the element's mass/stiffness/dashpot terms — match your 2D
+        continuum elements' thickness).  ``btype`` draws from ``B``/``L``/``R``;
+        ``-fx/-fy`` base-input series are only valid on a bottom boundary.
+        Usually you call :meth:`absorbing_boundary` instead, which fans this
+        across all skin PGs of a 2D :class:`AbsorbingSkinResult`.
+        """
+        Gval, vval, rhoval = self._absorbing_props(
+            material, G, v, rho, who="ASDAbsorbingBoundary2D",
+        )
+        fxs = (self._bridge._resolve(fx, base=TimeSeries)
+               if fx is not None else None)
+        fys = (self._bridge._resolve(fy, base=TimeSeries)
+               if fy is not None else None)
+        return self._bridge._register(
+            ASDAbsorbingBoundary2D(
+                pg=pg, G=Gval, v=vval, rho=rhoval,
+                thickness=float(thickness), btype=btype,
+                fx=fxs, fy=fys,
+            )
+        )
+
     def absorbing_boundary(
         self,
         *,
@@ -555,8 +605,15 @@ class _ElementNS(_BridgeNamespace):
         materials: "list[ElasticIsotropic | str] | None" = None,
         base_series: TimeSeries | str | None = None,
         base_dirs: tuple[str, ...] = ("x",),
-    ) -> list[ASDAbsorbingBoundary3D]:
-        """Emit ``ASDAbsorbingBoundary3D`` over every btype of a plane-wave skin.
+        thickness: float | None = None,
+    ) -> "list[_Absorbing3D | _Absorbing2D]":
+        """Emit ``ASDAbsorbingBoundary3D``/``2D`` over every btype of a skin.
+
+        Dispatches on ``skin.ndm``: a 3D skin fans ``ASDAbsorbingBoundary3D``
+        bricks; a 2D skin (built with ``add_plane_wave_box_2d`` /
+        ``add_absorbing_shell_2d``) fans ``ASDAbsorbingBoundary2D`` quads and
+        **requires** ``thickness=`` (the out-of-plane plane-strain slab
+        thickness — match your soil quads').
 
         For a **homogeneous** skin, pass a single ``material=`` (or raw
         ``G/v/rho``): one declaration per ``skin.skin_pgs`` entry (each with its
@@ -565,9 +622,24 @@ class _ElementNS(_BridgeNamespace):
         ``len(materials) == skin.n_layers`` — and each layer's skin cells get that
         layer's derived ``G/v/rho`` (the base skin takes the bottom layer's
         material).  ``base_series`` is attached as ``-fx/-fy/-fz`` (per
-        ``base_dirs``) to every bottom (``B``-containing) skin PG only.  Returns
-        the registered specs.
+        ``base_dirs``; ``"z"`` is invalid for a 2D skin) to every bottom
+        (``B``-containing) skin PG only.  Returns the registered specs.
         """
+        ndm = int(getattr(skin, "ndm", 3))
+        who = ("ASDAbsorbingBoundary2D" if ndm == 2
+               else "ASDAbsorbingBoundary3D")
+        if ndm == 2 and thickness is None:
+            raise ValueError(
+                "absorbing_boundary: a 2D skin requires thickness= (the "
+                "out-of-plane plane-strain slab thickness; match your soil "
+                "quads')."
+            )
+        if ndm == 3 and thickness is not None:
+            raise ValueError(
+                "absorbing_boundary: thickness= is 2D-only (the 3D element "
+                "derives everything from its hex geometry); drop it for a "
+                "3D skin."
+            )
         if materials is not None and (
             material is not None or G is not None or v is not None or rho is not None
         ):
@@ -580,15 +652,29 @@ class _ElementNS(_BridgeNamespace):
             if base_series is not None else None
         )
         dirs = tuple(base_dirs)
+        ok_dirs = ("x", "y") if ndm == 2 else ("x", "y", "z")
         for d in dirs:
-            if d not in ("x", "y", "z"):
+            if d not in ok_dirs:
                 raise ValueError(
                     f"absorbing_boundary: base_dirs entries must be "
-                    f"'x'/'y'/'z', got {d!r}."
+                    f"{'/'.join(repr(o) for o in ok_dirs)} for a {ndm}D "
+                    f"skin, got {d!r}."
                 )
 
-        def _emit(pg: str, btype: str, gv: float, vv: float, rv: float):
+        def _emit(
+            pg: str, btype: str, gv: float, vv: float, rv: float,
+        ) -> "_Absorbing3D | _Absorbing2D":
             bottom = "B" in btype and series is not None
+            if ndm == 2:
+                return self._bridge._register(
+                    ASDAbsorbingBoundary2D(
+                        pg=pg, G=gv, v=vv, rho=rv,
+                        thickness=float(thickness),  # type: ignore[arg-type]
+                        btype=btype,
+                        fx=series if (bottom and "x" in dirs) else None,
+                        fy=series if (bottom and "y" in dirs) else None,
+                    )
+                )
             return self._bridge._register(
                 ASDAbsorbingBoundary3D(
                     pg=pg, G=gv, v=vv, rho=rv, btype=btype,
@@ -598,7 +684,7 @@ class _ElementNS(_BridgeNamespace):
                 )
             )
 
-        out: list[ASDAbsorbingBoundary3D] = []
+        out: "list[_Absorbing3D | _Absorbing2D]" = []
         if materials is not None:
             if len(materials) != skin.n_layers:
                 raise ValueError(
@@ -606,13 +692,18 @@ class _ElementNS(_BridgeNamespace):
                     f"but the skin has {skin.n_layers} layer(s); pass one material "
                     "per layer, top → bottom."
                 )
-            props = [self._absorbing_props(m, None, None, None) for m in materials]
+            props = [
+                self._absorbing_props(m, None, None, None, who=who)
+                for m in materials
+            ]
             for layer, by_btype in skin.skin_pgs_by_layer.items():
                 gv, vv, rv = props[layer]
                 for btype, pg in by_btype.items():
                     out.append(_emit(pg, btype, gv, vv, rv))
         else:
-            Gval, vval, rhoval = self._absorbing_props(material, G, v, rho)
+            Gval, vval, rhoval = self._absorbing_props(
+                material, G, v, rho, who=who,
+            )
             for btype, pg in skin.skin_pgs.items():
                 out.append(_emit(pg, btype, Gval, vval, rhoval))
         return out

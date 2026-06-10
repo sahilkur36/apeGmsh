@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import warnings
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Callable, Iterable
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Iterator, Literal, cast
 
 import numpy as np
 
@@ -95,6 +95,7 @@ __all__ = [
     "emit_element_spec",
     "emit_element_spec_partitioned",
     "validate_node_ndf_element_compat",
+    "validate_absorbing_quad_geometry",
     "infer_node_ndf",
     "validate_adaptive_element_endpoints",
     "resolve_ndf_overlay",
@@ -1852,6 +1853,75 @@ def _node_coord(fem: "FEMData", node_id: int) -> np.ndarray:
     return np.asarray(fem.nodes.coords[idx], dtype=float)
 
 
+def validate_absorbing_quad_geometry(
+    fem: "FEMData", elements: "Iterable[Element]",
+) -> None:
+    """ADR 0054 (AB-5) — fail loud on a distorted 2D absorbing quad.
+
+    ``ASDAbsorbingBoundary2D`` has **no source-side distortion handling**: it
+    sizes its dashpots / free-field column from the sorted nodal x/y
+    coordinates assuming an axis-aligned rectangle
+    (``getElementSizes``, ASDAbsorbingBoundary2D.cpp:986-1003 — no Jacobian
+    check, no normal check), so a skewed / rotated / degenerate quad runs
+    with silently wrong terms.  The 3D element guards itself
+    (``handleDistortion`` + singular-Jacobian exit), so only 2D is checked.
+
+    Every fan-out quad of every ``ASDAbsorbingBoundary2D`` spec must have its
+    4 nodes on exactly 2 distinct x and 2 distinct y stations (the 4 corners
+    of an axis-aligned rectangle), coplanar in z, with non-degenerate spans.
+    """
+    # Deferred import: avoids an _internal -> element import cycle at load.
+    from ..element.absorbing import ASDAbsorbingBoundary2D
+
+    for spec in elements:
+        if not isinstance(spec, ASDAbsorbingBoundary2D):
+            continue
+        bad: list[tuple[int, str]] = []
+        for eid, conn in expand_spec_to_elements(fem, spec):
+            coords = [_node_coord(fem, int(t)) for t in conn]
+            if len(coords) != 4:
+                bad.append((int(eid), f"{len(coords)} nodes (expected 4)"))
+                continue
+            xs = sorted(float(c[0]) for c in coords)
+            ys = sorted(float(c[1]) for c in coords)
+            zs = [float(c[2]) for c in coords]
+            dx, dy = xs[-1] - xs[0], ys[-1] - ys[0]
+            scale = max(dx, dy, 1e-300)
+            tol = 1e-6 * scale
+            if dx <= tol or dy <= tol:
+                bad.append((int(eid), f"degenerate spans dx={dx:.3g} dy={dy:.3g}"))
+                continue
+            if max(zs) - min(zs) > tol:
+                bad.append((int(eid), "nodes not coplanar in z"))
+                continue
+            on_corners = all(
+                min(abs(float(c[0]) - xs[0]), abs(float(c[0]) - xs[-1])) <= tol
+                and min(abs(float(c[1]) - ys[0]), abs(float(c[1]) - ys[-1])) <= tol
+                for c in coords
+            )
+            corners = {
+                (round(float(c[0]) / tol), round(float(c[1]) / tol))
+                for c in coords
+            }
+            if not on_corners or len(corners) != 4:
+                bad.append((int(eid), "skewed / non-axis-aligned quad"))
+        if bad:
+            examples = "; ".join(
+                f"element {eid}: {why}" for eid, why in bad[:3]
+            )
+            more = f" (+{len(bad) - 3} more)" if len(bad) > 3 else ""
+            raise BridgeError(
+                f"ASDAbsorbingBoundary2D over pg {spec.pg!r}: {len(bad)} "
+                f"quad(s) are not axis-aligned rectangles — {examples}{more}. "
+                "The 2D element has NO distortion handling in OpenSees "
+                "(it sizes itself from sorted nodal x/y coordinates), so a "
+                "skewed or rotated skin runs with silently wrong "
+                "dashpot/stiffness terms.  Build the absorbing skin "
+                "axis-aligned (see g.parts.add_plane_wave_box_2d / "
+                "add_absorbing_shell_2d)."
+            )
+
+
 def sweep_asdconcrete_element_size(
     spec: "Element",
     elements: "list[tuple[int, tuple[int, ...]]]",
@@ -2874,7 +2944,7 @@ def emit_reinforce_ties(
 
 
 def _emit_phantom_nodes(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
 ) -> None:
     """Emit ``node(tag, *xyz, ndf=6)`` for every phantom node.
 
@@ -2913,11 +2983,16 @@ def _emit_phantom_nodes(
 
 
 def _emit_rigid_links(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
+    *, allowed_ids: frozenset[int] | None = None,
 ) -> None:
     """Emit ``rigidLink`` per :class:`NodePairRecord` (rigid_beam /
     rigid_rod) plus the rigid_body and node_to_surface compound
     expansions.  Preserves the per-record ``name`` for INV-2.
+
+    When ``allowed_ids`` is given, only records whose ``id(rec)`` is in
+    the set emit — the partitioned paths pass each rank's claimed
+    subset (see :class:`_RankConstraintPlan`).
     """
     from apeGmsh._kernel.records._constraints import (
         NodeGroupRecord, NodePairRecord, NodeToSurfaceRecord,
@@ -2928,9 +3003,13 @@ def _emit_rigid_links(
         ConstraintKind.RIGID_BEAM, ConstraintKind.RIGID_ROD,
     }
     for rec in node_constraints:
+        if allowed_ids is not None and id(rec) not in allowed_ids:
+            continue
         if isinstance(rec, NodePairRecord):
             if rec.kind in rigid_pair_kinds:
-                kind = "beam" if rec.kind == ConstraintKind.RIGID_BEAM else "bar"
+                kind: Literal["beam", "bar"] = (
+                    "beam" if rec.kind == ConstraintKind.RIGID_BEAM else "bar"
+                )
                 _emit_name(emitter, rec.name)
                 emitter.rigidLink(
                     kind, int(rec.master_node), int(rec.slave_node),
@@ -2951,22 +3030,25 @@ def _emit_rigid_links(
         elif isinstance(rec, NodeToSurfaceRecord):
             for pair in rec.rigid_link_records:
                 if pair.kind in rigid_pair_kinds:
-                    kind = (
+                    pair_kind: Literal["beam", "bar"] = (
                         "beam"
                         if pair.kind == ConstraintKind.RIGID_BEAM
                         else "bar"
                     )
                     _emit_name(emitter, pair.name)
                     emitter.rigidLink(
-                        kind, int(pair.master_node), int(pair.slave_node),
+                        pair_kind, int(pair.master_node), int(pair.slave_node),
                     )
 
 
 def _emit_equal_dofs(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
+    *, allowed_ids: frozenset[int] | None = None,
 ) -> None:
     """Emit ``equalDOF`` per :class:`NodePairRecord` (equal_dof) plus
     the :attr:`NodeToSurfaceRecord.equal_dof_records` expansion.
+
+    ``allowed_ids`` filters to a rank's claimed subset when given.
     """
     from apeGmsh._kernel.records._constraints import (
         NodePairRecord, NodeToSurfaceRecord,
@@ -2974,6 +3056,8 @@ def _emit_equal_dofs(
     from apeGmsh._kernel.records._kinds import ConstraintKind
 
     for rec in node_constraints:
+        if allowed_ids is not None and id(rec) not in allowed_ids:
+            continue
         if isinstance(rec, NodePairRecord):
             if rec.kind == ConstraintKind.EQUAL_DOF:
                 _emit_name(emitter, rec.name)
@@ -2991,13 +3075,16 @@ def _emit_equal_dofs(
 
 
 def _emit_rigid_diaphragms(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
+    *, allowed_ids: frozenset[int] | None = None,
 ) -> None:
     """Emit ``rigidDiaphragm(perp_dir, master, *slaves)`` per
     :class:`NodeGroupRecord` row with ``kind == 'rigid_diaphragm'``.
     Uses the broker's :meth:`rigid_diaphragms` iterator for the
     perp_dir derivation; iterates the raw records in parallel to keep
     the per-record ``name`` aligned with each emit.
+
+    ``allowed_ids`` filters to a rank's claimed subset when given.
     """
     from apeGmsh._kernel.records._constraints import NodeGroupRecord
     from apeGmsh._kernel.records._kinds import ConstraintKind
@@ -3006,6 +3093,8 @@ def _emit_rigid_diaphragms(
     # ``rigid_diaphragms()`` helper) so we still have access to the
     # original record's ``name`` field — the helper drops it.
     for rec in node_constraints:
+        if allowed_ids is not None and id(rec) not in allowed_ids:
+            continue
         if not (
             isinstance(rec, NodeGroupRecord)
             and rec.kind == ConstraintKind.RIGID_DIAPHRAGM
@@ -3020,7 +3109,8 @@ def _emit_rigid_diaphragms(
 
 
 def _emit_kinematic_couplings(
-    emitter: "Emitter", node_constraints: object,
+    emitter: "Emitter", node_constraints: Iterable[object],
+    *, allowed_ids: frozenset[int] | None = None,
 ) -> None:
     """Emit ``equalDOF`` per (master, slave) pair for
     :class:`NodeGroupRecord` rows with ``kind == 'kinematic_coupling'``.
@@ -3029,11 +3119,15 @@ def _emit_kinematic_couplings(
     couple); collapsing onto ``rigidDiaphragm`` would over-constrain
     by promoting all 6 DOFs.  ``equalDOF`` with the explicit dofs
     list is the correct OpenSees primitive.
+
+    ``allowed_ids`` filters to a rank's claimed subset when given.
     """
     from apeGmsh._kernel.records._constraints import NodeGroupRecord
     from apeGmsh._kernel.records._kinds import ConstraintKind
 
     for rec in node_constraints:
+        if allowed_ids is not None and id(rec) not in allowed_ids:
+            continue
         if not (
             isinstance(rec, NodeGroupRecord)
             and rec.kind == ConstraintKind.KINEMATIC_COUPLING
@@ -3734,12 +3828,12 @@ class _ExcludeClaimedConstraints:
         self._inner = inner
         self._claimed = claimed
 
-    def __iter__(self):
-        for rec in self._inner:
+    def __iter__(self) -> Iterator[object]:
+        for rec in cast(Iterable[object], self._inner):
             if id(rec) not in self._claimed:
                 yield rec
 
-    def node_to_surfaces(self):
+    def node_to_surfaces(self) -> Iterator[object]:
         inner_method = getattr(self._inner, "node_to_surfaces", None)
         if inner_method is None:
             return
@@ -3747,7 +3841,7 @@ class _ExcludeClaimedConstraints:
             if id(rec) not in self._claimed:
                 yield rec
 
-    def interpolations(self):
+    def interpolations(self) -> Iterator[object]:
         inner_method = getattr(self._inner, "interpolations", None)
         if inner_method is None:
             return
@@ -3780,16 +3874,16 @@ class _StageConstraintAdapter:
     def __init__(self, records: "Iterable[ConstraintRecord]") -> None:
         self._records = tuple(records)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator[object]:
         return iter(self._records)
 
-    def node_to_surfaces(self):
+    def node_to_surfaces(self) -> Iterator[object]:
         from apeGmsh._kernel.records._constraints import NodeToSurfaceRecord
         for rec in self._records:
             if isinstance(rec, NodeToSurfaceRecord):
                 yield rec
 
-    def interpolations(self):
+    def interpolations(self) -> Iterator[object]:
         from apeGmsh._kernel.records._constraints import (
             InterpolationRecord, SurfaceCouplingRecord,
         )
@@ -3832,7 +3926,7 @@ def emit_stage_mp_constraints(
     # Additive phantom-tag predicate update — see docstring.
     stage_phantoms = set(_gather_phantom_nodes(adapter).keys())
     if stage_phantoms:
-        existing = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
+        existing: frozenset[int] = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
         set_phantom_node_tags(emitter, set(existing) | stage_phantoms)
 
     # Same ordering as emit_mp_constraints (INV-3).
@@ -3875,7 +3969,7 @@ def emit_stage_mp_constraints_partitioned(
 
     phantom_coords = _gather_phantom_nodes(adapter)
     if phantom_coords:
-        existing = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
+        existing: frozenset[int] = getattr(emitter, ATTR_PHANTOM_NODE_TAGS, frozenset())
         set_phantom_node_tags(
             emitter, set(existing) | set(phantom_coords.keys()),
         )
@@ -3909,10 +4003,11 @@ def emit_stage_mp_constraints_partitioned(
         )
 
     # Constraint emission — same ordering as the unpartitioned path.
-    _emit_rigid_links_filtered(emitter, adapter, plan.allowed_record_ids)
-    _emit_equal_dofs_filtered(emitter, adapter, plan.allowed_record_ids)
-    _emit_rigid_diaphragms_filtered(emitter, adapter, plan.allowed_record_ids)
-    _emit_kinematic_couplings_filtered(emitter, adapter, plan.allowed_record_ids)
+    ids = plan.allowed_record_ids
+    _emit_rigid_links(emitter, adapter, allowed_ids=ids)
+    _emit_equal_dofs(emitter, adapter, allowed_ids=ids)
+    _emit_rigid_diaphragms(emitter, adapter, allowed_ids=ids)
+    _emit_kinematic_couplings(emitter, adapter, allowed_ids=ids)
 
     if plan.embedded_records:
         _emit_surface_couplings_for_rank(
@@ -4034,18 +4129,11 @@ def emit_mp_constraints_partitioned(
 
     # -- 2. Constraint emission, mirroring the unpartitioned order. ------
     if node_constraints is not None:
-        _emit_rigid_links_filtered(
-            emitter, node_constraints, plan.allowed_record_ids,
-        )
-        _emit_equal_dofs_filtered(
-            emitter, node_constraints, plan.allowed_record_ids,
-        )
-        _emit_rigid_diaphragms_filtered(
-            emitter, node_constraints, plan.allowed_record_ids,
-        )
-        _emit_kinematic_couplings_filtered(
-            emitter, node_constraints, plan.allowed_record_ids,
-        )
+        ids = plan.allowed_record_ids
+        _emit_rigid_links(emitter, node_constraints, allowed_ids=ids)
+        _emit_equal_dofs(emitter, node_constraints, allowed_ids=ids)
+        _emit_rigid_diaphragms(emitter, node_constraints, allowed_ids=ids)
+        _emit_kinematic_couplings(emitter, node_constraints, allowed_ids=ids)
 
     # ASDEmbeddedNodeElement: only the host-element-owning rank emits.
     if surface_constraints is not None and plan.embedded_records:
@@ -4069,7 +4157,7 @@ class _RankConstraintPlan:
 
 def _plan_rank_constraints(
     *,
-    node_constraints: object,
+    node_constraints: Iterable[object] | None,
     surface_constraints: object,
     partition_rank: int,
     node_owners: dict[int, set[int]],
@@ -4206,124 +4294,6 @@ def _plan_rank_constraints(
         referenced_phantoms=frozenset(referenced_phantoms),
         embedded_records=tuple(embedded),
     )
-
-
-def _emit_rigid_links_filtered(
-    emitter: "Emitter", node_constraints: object,
-    allowed_ids: frozenset[int],
-) -> None:
-    """Subset of :func:`_emit_rigid_links` honoring ``allowed_ids``."""
-    from apeGmsh._kernel.records._constraints import (
-        NodeGroupRecord, NodePairRecord, NodeToSurfaceRecord,
-    )
-    from apeGmsh._kernel.records._kinds import ConstraintKind
-
-    rigid_pair_kinds = {
-        ConstraintKind.RIGID_BEAM, ConstraintKind.RIGID_ROD,
-    }
-    for rec in node_constraints:
-        if id(rec) not in allowed_ids:
-            continue
-        if isinstance(rec, NodePairRecord):
-            if rec.kind in rigid_pair_kinds:
-                kind = "beam" if rec.kind == ConstraintKind.RIGID_BEAM else "bar"
-                _emit_name(emitter, rec.name)
-                emitter.rigidLink(
-                    kind, int(rec.master_node), int(rec.slave_node),
-                )
-        elif isinstance(rec, NodeGroupRecord):
-            if rec.kind == ConstraintKind.RIGID_BODY:
-                _emit_name(emitter, rec.name)
-                for sn in rec.slave_nodes:
-                    emitter.rigidLink(
-                        "beam", int(rec.master_node), int(sn),
-                    )
-        elif isinstance(rec, NodeToSurfaceRecord):
-            for pair in rec.rigid_link_records:
-                if pair.kind in rigid_pair_kinds:
-                    kind = (
-                        "beam"
-                        if pair.kind == ConstraintKind.RIGID_BEAM
-                        else "bar"
-                    )
-                    _emit_name(emitter, pair.name)
-                    emitter.rigidLink(
-                        kind, int(pair.master_node), int(pair.slave_node),
-                    )
-
-
-def _emit_equal_dofs_filtered(
-    emitter: "Emitter", node_constraints: object,
-    allowed_ids: frozenset[int],
-) -> None:
-    from apeGmsh._kernel.records._constraints import (
-        NodePairRecord, NodeToSurfaceRecord,
-    )
-    from apeGmsh._kernel.records._kinds import ConstraintKind
-
-    for rec in node_constraints:
-        if id(rec) not in allowed_ids:
-            continue
-        if isinstance(rec, NodePairRecord):
-            if rec.kind == ConstraintKind.EQUAL_DOF:
-                _emit_name(emitter, rec.name)
-                emitter.equalDOF(
-                    int(rec.master_node), int(rec.slave_node),
-                    *(int(d) for d in rec.dofs),
-                )
-        elif isinstance(rec, NodeToSurfaceRecord):
-            for pair in rec.equal_dof_records:
-                _emit_name(emitter, pair.name)
-                emitter.equalDOF(
-                    int(pair.master_node), int(pair.slave_node),
-                    *(int(d) for d in pair.dofs),
-                )
-
-
-def _emit_rigid_diaphragms_filtered(
-    emitter: "Emitter", node_constraints: object,
-    allowed_ids: frozenset[int],
-) -> None:
-    from apeGmsh._kernel.records._constraints import NodeGroupRecord
-    from apeGmsh._kernel.records._kinds import ConstraintKind
-
-    for rec in node_constraints:
-        if id(rec) not in allowed_ids:
-            continue
-        if not (
-            isinstance(rec, NodeGroupRecord)
-            and rec.kind == ConstraintKind.RIGID_DIAPHRAGM
-        ):
-            continue
-        perp = _perp_dirn_from_normal(rec.plane_normal)
-        _emit_name(emitter, rec.name)
-        emitter.rigidDiaphragm(
-            perp, int(rec.master_node),
-            *(int(s) for s in rec.slave_nodes),
-        )
-
-
-def _emit_kinematic_couplings_filtered(
-    emitter: "Emitter", node_constraints: object,
-    allowed_ids: frozenset[int],
-) -> None:
-    from apeGmsh._kernel.records._constraints import NodeGroupRecord
-    from apeGmsh._kernel.records._kinds import ConstraintKind
-
-    for rec in node_constraints:
-        if id(rec) not in allowed_ids:
-            continue
-        if not (
-            isinstance(rec, NodeGroupRecord)
-            and rec.kind == ConstraintKind.KINEMATIC_COUPLING
-        ):
-            continue
-        _emit_name(emitter, rec.name)
-        for sn in rec.slave_nodes:
-            emitter.equalDOF(
-                int(rec.master_node), int(sn),
-                *(int(d) for d in rec.dofs),
-            )
 
 
 def _canonical_host_rank(

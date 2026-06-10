@@ -11,6 +11,36 @@ Non-partitioned staged builds (`ops.stage(...)`) now **archive to and load from 
 
 Both slices were adversarially panel-reviewed pre-PR (plan gate caught 4 fatal design defects; diff gates caught the phantom-node coordinate gap, the direct-`write()` bypass, recorder-order hash drift, equalDOF pad leakage, and the silent-default corruption-laundering holes — all fixed before merge).
 
+### FIXED / INTERNAL — `apeGmsh.opensees` is mypy-clean (178 → 0); `MYPY_BASELINE: 0`
+
+The bridge package now passes `mypy src/apeGmsh/opensees` with zero errors,
+and the `static-gates` CI ratchet is lowered to a hard gate (`MYPY_BASELINE: 0`).
+Two of the 178 were real API-surface bugs:
+
+- **`ops.pattern.Plain/UniformExcitation(series=…)` falsely rejected newer
+  TimeSeries.** The `series=` annotation was a concrete union frozen at
+  Linear/Constant/Path/Trig/Pulse — the Ricker wavelet and the cyclic
+  protocols (PR #558) never made it in, so type-checked callers were
+  rejected and the internal stage-pattern helpers (typed against the
+  abstract base) didn't type-check at all. `series=` now accepts
+  `TimeSeries | str` (any subclass; runtime resolution is unchanged).
+- **Quoted-annotation names that were never imported** (`Plain`,
+  `ConstraintRecord`, `Any`) blinded mypy at ~20 signatures (fixed in the
+  ruff sweep, completed here).
+
+Everything else is annotation/narrowing only — zero behavior change:
+renamed reused loop variables, fail-loud guards on Optionals whose
+invariants are now stated in the error message (e.g. `split='parts'`
+requires a buffered Tcl/Py emitter), removed stale `type: ignore`s, and
+`type-abstract` disabled package-wide (the `_resolve(ref, base=…)`
+convention only isinstance-checks `base`; direct abstract instantiation
+is still caught by the `abstract` code). Docs sweep alongside: README
+viewer callout de-versioned (was "v1.5.0"), `guide_loads.md` broken TOC
+anchor, `docs/api/loads.md` autorefs updated `pattern` → `case`
+(ADR 0051 vocabulary).
+
+### ADDED / FIXED — absorbing-skin aspect warning, centred-box fix, rotation guard (ADR 0054, AB-1c close-out)
+
 Closes AB-1c. Three things, all surfaced by source/run verification:
 
 - **Aspect-ratio warning.** A new fail-soft `WarnAbsorbingSkinAspect` (from
@@ -91,7 +121,7 @@ Rotation / layered-Z / graded skins remain AB-1c.
 ### ADDED — plane-wave SSI worked example (ADR 0054, AB-4)
 
 Closes the `ASDAbsorbingBoundary` arc (AB-1a → AB-4) with a run-verified,
-end-to-end docs example, [`docs/examples/plane-wave-ssi.md`](docs/examples/plane-wave-ssi.md):
+end-to-end docs example, [`docs/examples/plane-wave-ssi.md`](examples/plane-wave-ssi.md):
 a soil column built by `g.parts.add_plane_wave_box`, wrapped by an
 `ASDAbsorbingBoundary3D` skin via `ops.element.absorbing_boundary` (a base
 shear-velocity `Ricker` injected on the bottom faces), flipped to absorbing in a
