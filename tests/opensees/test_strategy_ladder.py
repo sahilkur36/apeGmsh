@@ -23,6 +23,7 @@ Pins, per the ADR:
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -277,16 +278,14 @@ def _run_deck(deck: Path) -> "subprocess.CompletedProcess[str]":
     return subprocess.run(
         [sys.executable, str(deck)],
         capture_output=True, text=True, check=False, timeout=120,
-        env={"LADRUNO_OPENSEES_QUIET": "1", "PYTHONIOENCODING": "utf-8",
-             **__import__("os").environ},
+        env={**os.environ, "LADRUNO_OPENSEES_QUIET": "1",
+             "PYTHONIOENCODING": "utf-8"},
     )
 
 
-@pytest.mark.skipif(
-    not pytest.importorskip("importlib.util").find_spec("openseespy"),
-    reason="openseespy not installed",
-)
+@pytest.mark.live
 def test_laddered_deck_converging_runs_clean(tmp_path: Path) -> None:
+    pytest.importorskip("openseespy.opensees")
     ops = _staged_bridge(max_iter=50, strategy=profile("non-smooth"))
     deck = tmp_path / "deck.py"
     ops.py(str(deck), run=False)
@@ -296,11 +295,9 @@ def test_laddered_deck_converging_runs_clean(tmp_path: Path) -> None:
     assert "apeGmsh strategy" not in proc.stdout
 
 
-@pytest.mark.skipif(
-    not pytest.importorskip("importlib.util").find_spec("openseespy"),
-    reason="openseespy not installed",
-)
+@pytest.mark.live
 def test_laddered_deck_exhaustion_fails_loud(tmp_path: Path) -> None:
+    pytest.importorskip("openseespy.opensees")
     # max_iter=1: Newton on even a LINEAR step needs 2 iterations to
     # certify NormDispIncr (solve + zero-correction check), so every
     # rung fails and the deck must abort with the exhaustion banner —
