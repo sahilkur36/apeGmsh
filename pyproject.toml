@@ -59,12 +59,9 @@ all = ["matplotlib", "scipy", "openseespy", "ezdxf",
        "trame>=3.0", "trame-vtk>=2.6", "trame-vuetify>=2.6",
        "ipywidgets>=8.0", "nest_asyncio2"]
 
-[project.scripts]
-apegmsh-viewer = "apeGmshViewer.__main__:main"
-
 [tool.setuptools.packages.find]
-where = ["src", "."]
-include = ["apeGmsh*", "apeGmshViewer*"]
+where = ["src"]
+include = ["apeGmsh*"]
 
 [tool.setuptools.package-data]
 apeGmsh = ["py.typed"]
@@ -127,10 +124,6 @@ reportPrivateImportUsage = false
 # mypy: the library ``src/apeGmsh/`` aims for strict typing, but is
 # not error-free today — CI gates ``src/apeGmsh/opensees`` via a
 # baseline ratchet (see ``static-gates`` in .github/workflows/tests.yml).
-# The standalone viewer app ``apeGmshViewer/`` is deliberately not
-# typed (it's a Qt/PyVista application, not a library — the
-# cost/benefit of strict typing is different); silence follow-imports
-# into the viewer so it doesn't pollute library checks.
 # ─────────────────────────────────────────────────────────────────────
 [tool.mypy]
 ignore_missing_imports = true
@@ -140,11 +133,6 @@ ignore_missing_imports = true
 # errors. "silent" still resolves types from those modules so opensees code
 # is checked correctly — only the imported modules' own errors are hidden.
 follow_imports = "silent"
-
-[[tool.mypy.overrides]]
-module = "apeGmshViewer.*"
-follow_imports = "skip"
-ignore_errors = true
 
 # ─────────────────────────────────────────────────────────────────────
 # The new ``apeGmsh.opensees`` package is held to the strict bar per
