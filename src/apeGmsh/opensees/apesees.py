@@ -1147,6 +1147,7 @@ class BuiltModel:
         emit_mp_constraints(
             emitter, self.fem, tags,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
+            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
         )
 
         # 7b'. Embedded reinforcement ties (g.reinforce, ADR 20 / R2b).
@@ -1410,6 +1411,7 @@ class BuiltModel:
         emit_mp_constraints(
             emitter, self.fem, tags,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
+            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
         )
         emit_reinforce_ties(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
@@ -1699,6 +1701,7 @@ class BuiltModel:
             if stage.stage_constraint_records:
                 emit_stage_mp_constraints(
                     stage.stage_constraint_records, emitter, tags,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
             # ADR 0052: stage-bound HOLD supports — emit AFTER the MP
@@ -2193,6 +2196,7 @@ class BuiltModel:
                     inferred_ndf=inferred_ndf,
                     tags=tags,
                     claimed_ids=stage_claimed_constraint_ids,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
                 # 7d. Initial stress — per-rank ``addToParameter`` fan-
@@ -2639,6 +2643,7 @@ class BuiltModel:
                                 foreign_node_ndf=int(self.ndf),
                                 inferred_ndf=inferred_ndf,
                                 tags=tags,
+                                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                             )
                         # ADR 0052: stage-bound HOLD supports — emit AFTER
                         # the MP constraints, mirroring the flat path
