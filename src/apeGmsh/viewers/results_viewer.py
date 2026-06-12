@@ -2279,6 +2279,7 @@ class ResultsViewer:
                     deform_field=geom.deform_field,
                     deform_scale=float(geom.deform_scale),
                     offset=tuple(float(c) for c in geom.offset),
+                    stage_id=geom.stage_id,
                     visible=bool(geom.visible),
                     show_mesh=bool(geom.show_mesh),
                     show_nodes=bool(geom.show_nodes),
@@ -2498,6 +2499,14 @@ class ResultsViewer:
                 ):
                     first = geom.compositions.compositions[0]
                     geom.compositions.set_active(first.id)
+                # ADR 0058 S3b — restore the stage pin via the owner
+                # mutator, AFTER the composition/layer loop so the
+                # director's reattach observer fires against recorded
+                # membership, once, instead of churning per layer.
+                # No-op at the None default (legacy sessions).
+                geom_mgr.set_stage_pin(
+                    geom.id, getattr(gsnap, "stage_id", None),
+                )
             # Restore active geometry pointer (by name match — saved
             # UUIDs don't survive a re-bootstrap).
             saved_active = self._geom_name_for(
