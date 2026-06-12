@@ -218,8 +218,9 @@ class ResultsViewer:
         self._definitions_panel: Any = None
         # diagram instance -> side panel; lifecycle tied to registry.
         self._diagram_side_panels: dict = {}
-        # (node_id, component) -> TimeHistoryPanel; user-closable from
-        # the plot-pane tab × button.
+        # (node_id, component, stage_id) -> TimeHistoryPanel; user-
+        # closable from the plot-pane tab × button. ``stage_id`` is the
+        # pick's stage pin (None = active stage; ADR 0058 S3b).
         self._history_panels: dict = {}
 
     # ------------------------------------------------------------------
@@ -3028,7 +3029,7 @@ class ResultsViewer:
     # Shift-click → time-history series
     # ------------------------------------------------------------------
 
-    def _on_shift_click_world(self, world_pos) -> None:
+    def _on_shift_click_world(self, world_pos, prop=None) -> None:
         """Shift-click callback — open a time-history for the picked node.
 
         Snaps the shift-click world position to the nearest FEM node
@@ -3036,6 +3037,13 @@ class ResultsViewer:
         active diagram's component, falling back to the first
         available nodal component), and opens a plot-pane history
         tab.
+
+        ADR 0058 S3b — pin-aware: ``prop`` (the picked actor, handed
+        through by ``install_navigation``) resolves to the hit
+        geometry via the S2c actor→scene map; the snap reads THAT
+        geometry's grid and the history is scoped to its stage pin
+        (``None`` pin / unattributed prop = active stage, the legacy
+        behavior).
         """
         if (
             self._director is None
@@ -3043,9 +3051,13 @@ class ResultsViewer:
             or self._plot_pane is None
         ):
             return
+        geometry_id, _scene = self._resolve_pick_scene(
+            id(prop) if prop is not None else None,
+        )
         try:
             node_id, _, _ = self._probe_overlay._snap_to_nearest_node(
                 world_pos,
+                scene=self._scene_for_geometry_id(geometry_id),
             )
         except Exception:
             return
@@ -3058,7 +3070,13 @@ class ResultsViewer:
                     timeout=4000,
                 )
             return
-        self._open_time_history(int(node_id), component)
+        stage_pin = None
+        if geometry_id is not None:
+            geom = self._director.geometries.find(geometry_id)
+            stage_pin = getattr(geom, "stage_id", None) if geom else None
+        self._open_time_history(
+            int(node_id), component, stage_id=stage_pin,
+        )
 
     def _default_component_for_history(self) -> "Optional[str]":
         """Pick a component for shift-click time-history plots.
@@ -3080,22 +3098,29 @@ class ResultsViewer:
             return None
         return available[0] if available else None
 
-    def _open_time_history(self, node_id: int, component: str) -> None:
+    def _open_time_history(
+        self, node_id: int, component: str, *,
+        stage_id: "Optional[str]" = None,
+    ) -> None:
         """Open (or focus) a TimeHistoryPanel as a plot-pane tab.
 
         Reuses an existing tab if one is already open for the same
-        ``(node_id, component)`` so repeated shift-clicks on the same
-        node don't multiply tabs.
+        ``(node_id, component, stage_id)`` so repeated shift-clicks on
+        the same node don't multiply tabs. ``stage_id`` scopes the
+        history read to one stage (ADR 0058 S3b — the picked
+        geometry's stage pin); ``None`` keeps the active-stage read.
         """
         if self._director is None or self._plot_pane is None:
             return
-        key = ("history", int(node_id), str(component))
+        key = ("history", int(node_id), str(component), stage_id)
         if self._plot_pane.has_tab(key):
             self._plot_pane.set_active(key)
             return
         try:
             from .ui._time_history import TimeHistoryPanel
-            panel = TimeHistoryPanel(self._director, node_id, component)
+            panel = TimeHistoryPanel(
+                self._director, node_id, component, stage_id=stage_id,
+            )
             # Migrate the panel's step / stage subscriptions onto the
             # dispatcher's UI lane so rapid scrubber drags collapse to
             # one marker redraw per Qt tick.
@@ -3106,8 +3131,12 @@ class ResultsViewer:
             report("ResultsViewer._open_time_history", exc)
             return
         label = f"u(t) · node {node_id} · {component}"
+        if stage_id is not None:
+            label += f" · {stage_id}"
         self._plot_pane.add_tab(key, label, panel.widget, closable=True)
-        self._history_panels[(int(node_id), str(component))] = panel
+        self._history_panels[
+            (int(node_id), str(component), stage_id)
+        ] = panel
         self._plot_pane.set_active(key)
 
     def _sync_side_panels(self) -> None:
@@ -3179,8 +3208,10 @@ class ResultsViewer:
             return
         kind = key[0]
         if kind == "history":
-            _, node_id, component = key
-            panel = self._history_panels.pop((node_id, component), None)
+            _, node_id, component, stage_id = key
+            panel = self._history_panels.pop(
+                (node_id, component, stage_id), None,
+            )
             if panel is not None:
                 try:
                     panel.close()
