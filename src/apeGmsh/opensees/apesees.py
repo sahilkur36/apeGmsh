@@ -1147,6 +1147,7 @@ class BuiltModel:
         emit_mp_constraints(
             emitter, self.fem, tags,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
+            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
         )
 
         # 7b'. Embedded reinforcement ties (g.reinforce, ADR 20 / R2b).
@@ -1410,6 +1411,7 @@ class BuiltModel:
         emit_mp_constraints(
             emitter, self.fem, tags,
             claimed_ids=frozenset(self._claimed_constraint_ids()),
+            fem_eid_to_ops_tag=fem_eid_to_ops_tag,
         )
         emit_reinforce_ties(
             emitter, self.fem, tags, name_to_tag=self.name_to_tag,
@@ -1531,13 +1533,12 @@ class BuiltModel:
            ``stage.fix_records`` / ``stage.mass_records``.  Validators
            V1 / V2 (PR-A) already gated these at build time.  PR-C
            will add stage-bound ``region`` emit at this same slot.
-        5. ``domain_change()`` — fires if this stage added ANY
-           topology OR any stage-bound BC (Phase SSI-2.D unifies the
-           gate).  Single barrier per stage; the next analysis-chain
-           bind post-``wipeAnalysis`` reads the Domain fresh so the
-           dirty flag is decorative for chain rebuild but load-
-           bearing for any in-place mid-stage mutation we may add
-           later.
+        5. ``domain_change()`` — UNCONDITIONAL stage barrier (one per
+           stage).  The MPCO/Ladruno recorders open a new
+           ``MODEL_STAGE`` group only when the domain-change stamp
+           moves; a pure-loading stage never moves it on its own, so
+           without the barrier its steps merge into the previous
+           stage's group.
         6. Stage's initial_stress records (parameter declarations +
            step_hook_ramp procs + addToParameter calls, exactly the
            same shape as the Phase SSI-1 non-staged global emit).
@@ -1699,6 +1700,7 @@ class BuiltModel:
             if stage.stage_constraint_records:
                 emit_stage_mp_constraints(
                     stage.stage_constraint_records, emitter, tags,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
             # ADR 0052: stage-bound HOLD supports — emit AFTER the MP
@@ -1723,26 +1725,17 @@ class BuiltModel:
                                 emitter.sp_hold(int(node_tag), dof_idx)
                 emitter.pattern_close()
 
-            # 5. domainChange — unified gate: fires if this stage added
-            # ANY topology OR any stage-bound BC OR any stage-bound
-            # constraint.  Phase SSI-2.E widens the gate to include
-            # ``s.remove_sp`` / ``s.remove_element`` removals: they
-            # too mutate the Domain's SP / element set and therefore
-            # need the renumbered DOF map rebuild before the stage's
-            # analysis chain binds.  ADR 0052 adds HOLD supports.
-            # Single barrier per stage.
-            if (
-                owned_nodes
-                or owned_specs
-                or stage.fix_records
-                or stage.mass_records
-                or stage.region_records
-                or stage.stage_constraint_records
-                or stage.support_records
-                or stage.remove_sp_records
-                or stage.remove_element_records
-            ):
-                emitter.domain_change()
+            # 5. domainChange — unconditional stage barrier.  Earlier
+            # phases gated this on the stage mutating the domain, but
+            # the MPCO/Ladruno recorders open a new MODEL_STAGE group
+            # only when the domain-change stamp moves — a pure-loading
+            # stage (nodal-load pattern + analyze) never moves it, so
+            # its steps were silently appended into the PREVIOUS
+            # stage's MODEL_STAGE (stages "lost" in results/viewer).
+            # A nodal load does not set the Domain's changed flag
+            # (Domain::addNodalLoad), so the barrier must fire every
+            # stage.  Single barrier per stage.
+            emitter.domain_change()
 
             # 5b. Stage-bound damping (ADR 0053 D5).  Emitted AFTER
             # domainChange so the stage's elements are in the renumbered
@@ -2193,6 +2186,7 @@ class BuiltModel:
                     inferred_ndf=inferred_ndf,
                     tags=tags,
                     claimed_ids=stage_claimed_constraint_ids,
+                    fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                 )
 
                 # 7d. Initial stress — per-rank ``addToParameter`` fan-
@@ -2321,9 +2315,11 @@ class BuiltModel:
            owned stage-bound elements + per-rank-filtered stage-bound
            ``fix`` / ``mass`` lines (Phase SSI-2.D PR-B); ``partition_close()``.
            Then a single GLOBAL ``domain_change()`` so every rank
-           rebuilds its DOF map.  Per-rank brackets are SKIPPED for
-           ranks with no content (Phase SSI-2.D) so the Py emitter
-           never produces an empty ``if getPID() == K:`` block.
+           rebuilds its DOF map — UNCONDITIONAL per stage (recorder
+           MODEL_STAGE boundaries key off the domain-change stamp).
+           Per-rank brackets are SKIPPED for ranks with no content
+           (Phase SSI-2.D) so the Py emitter never produces an empty
+           ``if getPID() == K:`` block.
         3. **(only if the stage carries initial-stress records)**
            Initial-stress globals (parameter declarations + step_hook
            procs) emit GLOBALLY, then a per-rank loop emits the
@@ -2639,6 +2635,7 @@ class BuiltModel:
                                 foreign_node_ndf=int(self.ndf),
                                 inferred_ndf=inferred_ndf,
                                 tags=tags,
+                                fem_eid_to_ops_tag=fem_eid_to_ops_tag,
                             )
                         # ADR 0052: stage-bound HOLD supports — emit AFTER
                         # the MP constraints, mirroring the flat path
@@ -2662,10 +2659,15 @@ class BuiltModel:
                     finally:
                         emitter.partition_close()
 
-                # 3. Global ``domain_change`` — rebuild DOF map on every
-                # rank after topology+BC activation.  Single global call;
-                # OpenSeesMP executes it locally on each rank.
-                emitter.domain_change()
+            # 3. Global ``domain_change`` — rebuild DOF map on every
+            # rank.  UNCONDITIONAL (outside the content gate above):
+            # the MPCO/Ladruno recorders open a new MODEL_STAGE only
+            # when the domain-change stamp moves, and a pure-loading
+            # stage never moves it on its own — without this barrier
+            # such a stage's steps merge into the previous stage's
+            # MODEL_STAGE group.  Single global call; OpenSeesMP
+            # executes it locally on each rank.
+            emitter.domain_change()
 
             # 3b. Stage-bound damping (ADR 0053 D5) — single global emit
             # after domainChange, mirroring the global partitioned damping
