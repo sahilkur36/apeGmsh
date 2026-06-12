@@ -66,12 +66,19 @@ class PickResult:
         marker, in which case the highlight uses the element id).
     gp_index
         GP row index within the diagram's slab — set for ``"gp"``.
+    geometry_id
+        ADR 0058 S2c (additive, ADR 0047 widening precedent): id of
+        the :class:`Geometry` whose substrate actor was hit — set when
+        the viewer-injected ``scene_resolver`` recognised the hit
+        actor; ``None`` for single-scene installs, overlay (GP-marker)
+        hits, and unregistered actors.
     """
     kind: str
     world: tuple
     element_id: Optional[int] = None
     cell_id: Optional[int] = None
     gp_index: Optional[int] = None
+    geometry_id: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -95,6 +102,11 @@ class BoxPickResult:
         ``(x0, y0, x1, y1)`` in display pixels.
     crossing
         ``True`` when the drag went right→left (``x1 < x0``).
+    geometry_id
+        ADR 0058 S2c (additive): id of the geometry whose scene the
+        box candidates were sourced from — the ACTIVE geometry under
+        concurrent rendering (multi-geometry box picking is deferred
+        to S3). ``None`` for single-scene installs.
     """
     kind: str
     ids: "ndarray"
@@ -102,6 +114,7 @@ class BoxPickResult:
     gp_indices: "ndarray"
     box: tuple
     crossing: bool
+    geometry_id: Optional[str] = None
 
 
 class ResultsPickController:
@@ -178,6 +191,7 @@ def install_results_pick(
     gp_candidates: Optional[GpCandidates] = None,
     drag_threshold_px: int = 4,
     pick_backend: Any = None,
+    scene_resolver: Optional[Callable[[Optional[int]], Optional[tuple]]] = None,
 ) -> ResultsPickController:
     """Install plain-LMB click + drag picking on *plotter* via a PickBackend.
 
@@ -192,7 +206,8 @@ def install_results_pick(
         :class:`FEMSceneData` whose ``cell_to_element_id`` / ``node_ids``
         resolve VTK indices to FEM IDs, whose ``grid`` projects points for
         box-pick, and whose ``pick_engine`` (a :class:`PickInventory`)
-        resolves GP-marker hits.
+        resolves GP-marker hits. With a ``scene_resolver`` this is the
+        FALLBACK scene; without one every pick resolves against it.
     on_box_pick
         Invoked with a :class:`BoxPickResult` on every drag release whose
         rectangle has positive area. ``None`` disables the box-pick path.
@@ -204,6 +219,15 @@ def install_results_pick(
     pick_backend
         Injectable :class:`PickBackend` (for headless tests). Defaults to a
         :class:`PyVistaPickBackend` over ``plotter``.
+    scene_resolver
+        ADR 0058 S2c — ``resolver(prop_id) -> (geometry_id, scene) | None``.
+        Maps a hit's ``prop_id`` (``id(actor)``) to the geometry whose
+        substrate actor was hit and THAT geometry's scene, so concurrent
+        geometries resolve cell→element / coordinates against the hit
+        grid (its deformed points), not the install-time scene. Called
+        with ``None`` at box-gesture time (no single hit actor) —
+        implementations return the ACTIVE geometry's scene there. A
+        ``None`` return (or ``None`` resolver) falls back to ``scene``.
 
     Returns
     -------
@@ -213,15 +237,21 @@ def install_results_pick(
     """
     controller = ResultsPickController()
     inventory = getattr(scene, "pick_engine", None)
-    cell_to_element_id = scene.cell_to_element_id
-    node_ids_arr = np.asarray(scene.node_ids, dtype=np.int64)
-    grid = scene.grid
-    # Per-cell element dims for the dim-pick gate (ADR 0045 S4b). Empty
-    # when the scene carries no cell_dim (older builds) → gate is inert.
-    cell_dim = np.asarray(getattr(scene, "cell_dim", np.array([], dtype=np.int8)))
-    # element_id -> representative substrate cell, for highlighting an
-    # element reached via a GP marker (which has no substrate cell).
-    element_id_to_cell = getattr(scene, "element_id_to_cell", {}) or {}
+    _empty_dim = np.array([], dtype=np.int8)
+
+    def _scene_for_hit(prop_id: Optional[int]) -> tuple:
+        """``(geometry_id, scene)`` a pick resolves against (ADR 0058
+        S2c). The viewer-injected resolver wins when it recognises the
+        prop; otherwise the install-time scene (single-geometry
+        behaviour, ``geometry_id=None``)."""
+        if scene_resolver is not None:
+            try:
+                resolved = scene_resolver(prop_id)
+                if resolved is not None and resolved[1] is not None:
+                    return (resolved[0], resolved[1])
+            except Exception:
+                pass
+        return (None, scene)
 
     # ------------------------------------------------------------------
     # Click resolution (geometric hit -> FEM result, routed by mode)
@@ -234,9 +264,14 @@ def install_results_pick(
         world = hit.world
         prop_id = hit.prop_id
         mode = controller.mode
+        # Hit-scene resolution (ADR 0058 S2c): index arrays + grid come
+        # from the geometry whose actor was hit, read at resolve time.
+        geom_id, hit_scene = _scene_for_hit(prop_id)
 
         if mode == MODE_NODE:
-            return PickResult(kind=MODE_NODE, world=world)
+            return PickResult(
+                kind=MODE_NODE, world=world, geometry_id=geom_id,
+            )
 
         if mode == MODE_ELEMENT:
             # GP markers are always pickable (ADR 0047 R-D.2b), so an
@@ -249,15 +284,27 @@ def install_results_pick(
             )
             if gp is not None:
                 element_id = int(gp[0])
-                hl_cell = element_id_to_cell.get(element_id)
+                # GP glyphs are overlay actors, not substrate — the hit
+                # scene fell back, so ``geometry_id`` stays None (the
+                # inventory carries no geometry).
+                hl_cell = (
+                    getattr(hit_scene, "element_id_to_cell", {}) or {}
+                ).get(element_id)
                 return PickResult(
                     kind=MODE_ELEMENT,
                     world=world,
                     element_id=element_id,
                     cell_id=int(hl_cell) if hl_cell is not None else None,
                 )
+            # Per-cell element dims for the dim-pick gate (ADR 0045
+            # S4b). Empty when the scene carries no cell_dim (older
+            # builds) → gate is inert.
+            cell_dim = np.asarray(
+                getattr(hit_scene, "cell_dim", _empty_dim),
+            )
             if not _accept_cell_dim(cell_dim, cell_id, controller.active_dims):
                 return None
+            cell_to_element_id = hit_scene.cell_to_element_id
             if not (0 <= cell_id < cell_to_element_id.size):
                 return None
             return PickResult(
@@ -265,6 +312,7 @@ def install_results_pick(
                 world=world,
                 element_id=int(cell_to_element_id[cell_id]),
                 cell_id=int(cell_id),
+                geometry_id=geom_id,
             )
 
         if mode == MODE_GP:
@@ -296,6 +344,11 @@ def install_results_pick(
             return None    # Degenerate rectangle — nothing to pick.
         crossing = x1 < x0
         mode = controller.mode
+        # A box has no single hit actor — candidates come from the
+        # ACTIVE geometry's scene, resolved at gesture time (ADR 0058
+        # S2c; multi-geometry box picking is deferred to S3).
+        geom_id, box_scene = _scene_for_hit(None)
+        grid = box_scene.grid
 
         if mode == MODE_NODE:
             try:
@@ -304,6 +357,7 @@ def install_results_pick(
                 return None
             display = pick_backend.project_points(pts)
             mask = _inside_box(display, x0, y0, x1, y1)
+            node_ids_arr = np.asarray(box_scene.node_ids, dtype=np.int64)
             return BoxPickResult(
                 kind=MODE_NODE,
                 ids=node_ids_arr[mask],
@@ -311,6 +365,7 @@ def install_results_pick(
                 gp_indices=np.zeros(0, dtype=np.int64),
                 box=(x0, y0, x1, y1),
                 crossing=crossing,
+                geometry_id=geom_id,
             )
 
         if mode == MODE_ELEMENT:
@@ -332,6 +387,9 @@ def install_results_pick(
             except (KeyError, IndexError):
                 pass
             # Dim-pick gate: keep only cells whose dim is active (S4b).
+            cell_dim = np.asarray(
+                getattr(box_scene, "cell_dim", _empty_dim),
+            )
             if (
                 controller.active_dims is not None
                 and cell_dim.size == mask.size
@@ -339,7 +397,7 @@ def install_results_pick(
                 mask = mask & np.isin(cell_dim, list(controller.active_dims))
             cell_idx = np.nonzero(mask)[0].astype(np.int64)
             element_ids = (
-                cell_to_element_id[cell_idx]
+                box_scene.cell_to_element_id[cell_idx]
                 if cell_idx.size else np.zeros(0, dtype=np.int64)
             )
             return BoxPickResult(
@@ -349,6 +407,7 @@ def install_results_pick(
                 gp_indices=np.zeros(0, dtype=np.int64),
                 box=(x0, y0, x1, y1),
                 crossing=crossing,
+                geometry_id=geom_id,
             )
 
         if mode == MODE_GP:

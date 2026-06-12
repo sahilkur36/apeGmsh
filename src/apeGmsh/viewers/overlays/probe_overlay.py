@@ -52,6 +52,9 @@ class PointProbeResult:
     distance: float              # Euclidean distance pick → snapped node
     step_index: int
     field_values: dict[str, float]   # component name -> scalar value
+    # ADR 0058 S2c (additive): id of the Geometry whose scene the snap
+    # resolved against; None when the pick wasn't geometry-attributed.
+    geometry_id: Optional[str] = None
 
     def summary(self) -> str:
         head = (
@@ -122,7 +125,11 @@ class ProbeOverlay:
         director: "ResultsDirector",
     ) -> None:
         self._plotter = plotter
-        self._scene = scene
+        # ADR 0058 S2c: the construction scene is only the FALLBACK —
+        # ``self._scene`` resolves the ACTIVE geometry's scene at use
+        # time (see the property below), and per-pick reads take an
+        # explicit ``scene=`` (the hit geometry's).
+        self._boot_scene = scene
         self._director = director
 
         # Make sure we have a node tree for nearest-node lookups
@@ -149,19 +156,54 @@ class ProbeOverlay:
         self.on_plane_result: Optional[Callable[[PlaneProbeResult], None]] = None
 
     # ------------------------------------------------------------------
+    # Scene resolution (ADR 0058 S2c)
+    # ------------------------------------------------------------------
+
+    @property
+    def _scene(self) -> "FEMSceneData":
+        """The ACTIVE geometry's scene, resolved at use time.
+
+        ADR 0058 S2c closes the S2a gap: the overlay was constructed
+        with the BOOT scene, but under concurrent geometries
+        coordinate reads must follow the scene being probed. Falls
+        back to the construction scene for headless / stub directors
+        (or before the director binds a plotter).
+        """
+        director = self._director
+        try:
+            geoms = getattr(director, "geometries", None)
+            active = geoms.active if geoms is not None else None
+            scene = (
+                director.scene_for(active) if active is not None else None
+            )
+        except Exception:
+            scene = None
+        return scene if scene is not None else self._boot_scene
+
+    # ------------------------------------------------------------------
     # Programmatic probes (no Qt event loop required)
     # ------------------------------------------------------------------
 
     def probe_at_point(
-        self, position: "ndarray | tuple[float, float, float]",
+        self,
+        position: "ndarray | tuple[float, float, float]",
+        *,
+        scene: "Optional[FEMSceneData]" = None,
+        geometry_id: Optional[str] = None,
     ) -> PointProbeResult:
         """Sample at one world position; snap to nearest mesh node.
 
         Field values come from the Director — one per component used
-        by any active diagram, evaluated at the current step.
+        by any active diagram, evaluated at the current step. ``scene``
+        selects whose grid the snap reads (ADR 0058 S2c — the HIT
+        geometry's deformed points); the active geometry's scene by
+        default. ``geometry_id`` is carried on the result for pick
+        reporting; element-id-free, purely informational.
         """
         pos = np.asarray(position, dtype=np.float64).ravel()[:3]
-        node_id, snapped, distance = self._snap_to_nearest_node(pos)
+        node_id, snapped, distance = self._snap_to_nearest_node(
+            pos, scene=scene,
+        )
         components = self._collect_active_components()
         values = self._director.read_at_pick(node_id, components)
         result = PointProbeResult(
@@ -171,6 +213,7 @@ class ProbeOverlay:
             distance=distance,
             step_index=self._director.step_index,
             field_values=values,
+            geometry_id=geometry_id,
         )
         self.point_results.append(result)
         self._add_point_marker(pos, f"P{len(self.point_results)}")
@@ -497,10 +540,13 @@ class ProbeOverlay:
     # ------------------------------------------------------------------
 
     def _snap_to_nearest_node(
-        self, world: ndarray,
+        self, world: ndarray, *, scene: "Optional[FEMSceneData]" = None,
     ) -> tuple[int, ndarray, float]:
-        """Return ``(fem_node_id, snapped_coord, distance)``."""
-        scene = self._scene
+        """Return ``(fem_node_id, snapped_coord, distance)``.
+
+        ``scene`` selects whose grid the snap reads (ADR 0058 S2c);
+        the active geometry's scene by default."""
+        scene = scene if scene is not None else self._scene
         coords = np.asarray(scene.grid.points)
         node_tree = scene.ensure_node_tree()
         if node_tree is not None:

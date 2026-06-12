@@ -1197,8 +1197,18 @@ class ResultsViewer:
         )
         # geometry id -> (fill_actor, wireframe_actor).
         self._scene_actors: dict = {}
+        # ADR 0058 S2c — pick disambiguation: ``id(substrate actor) ->
+        # (geometry_id, scene)``. A pick hit carries ``prop_id ==
+        # id(actor)`` (ADR 0047), so this map resolves any geometry's
+        # substrate hit against THAT geometry's grid (its deformed
+        # points) + index arrays. Maintained in lockstep with
+        # ``_scene_actors``: boot pair here, clone pairs in
+        # ``_materialize_scene``, dropped in ``_on_geometry_removed``.
+        self._actor_scenes: dict = {}
         if boot_geom is not None:
             self._scene_actors[boot_geom.id] = (actor, wireframe_actor)
+            for a in (actor, wireframe_actor):
+                self._actor_scenes[id(a)] = (boot_geom.id, scene)
 
         from .core.element_visibility import (
             apply_dim_filter as _apply_dim_f,
@@ -1244,6 +1254,8 @@ class ResultsViewer:
             except Exception:
                 pass
             self._scene_actors[geom.id] = (fill, wf)
+            for a in (fill, wf):
+                self._actor_scenes[id(a)] = (geom.id, new_scene)
             return new_scene
 
         def _sync_substrate_visibility() -> None:
@@ -1291,6 +1303,7 @@ class ResultsViewer:
             pair = self._scene_actors.pop(payload, None)
             if pair is not None:
                 for a in pair:
+                    self._actor_scenes.pop(id(a), None)
                     try:
                         plotter.remove_actor(a)
                     except Exception:
@@ -1443,6 +1456,7 @@ class ResultsViewer:
             on_box_pick=self._on_results_box_pick,
             gp_candidates=self._collect_gp_candidates,
             scene=scene,
+            scene_resolver=self._resolve_pick_scene,
         )
         plotter.add_key_event(
             "n", lambda: self._set_pick_mode(MODE_NODE),
@@ -1898,6 +1912,62 @@ class ResultsViewer:
         if boot is not None and all(s is not boot for s in scenes):
             scenes.append(boot)
         return scenes
+
+    def _resolve_pick_scene(self, prop_id) -> tuple:
+        """``(geometry_id, scene)`` a pick hit resolves against (ADR
+        0058 S2c).
+
+        ``prop_id`` is the hit actor's ``id()`` (``PickHit.prop_id``):
+
+        * a registered substrate actor → its owning geometry + THAT
+          geometry's scene (the hit grid, with its own deformed
+          points);
+        * ``None`` (box gesture — no single hit actor) → the ACTIVE
+          geometry + its scene;
+        * an unregistered actor (GP glyphs, overlay props) → the
+          active scene for coordinate reads, but ``geometry_id=None``
+          (the geometry is not actually known).
+        """
+        if prop_id is not None:
+            entry = (
+                getattr(self, "_actor_scenes", None) or {}
+            ).get(int(prop_id))
+            if entry is not None:
+                return entry
+        director = self._director
+        active = (
+            director.geometries.active if director is not None else None
+        )
+        active_scene = self._scene
+        if prop_id is None and active is not None:
+            return (active.id, active_scene)
+        return (None, active_scene)
+
+    def _scene_for_geometry_id(self, geometry_id):
+        """Scene carried by a pick's ``geometry_id``; falls back to the
+        active scene (ADR 0058 S2c — coordinate reads must follow the
+        hit geometry's grid, not the boot scene)."""
+        director = self._director
+        if geometry_id is not None and director is not None:
+            geom = director.geometries.find(geometry_id)
+            if geom is not None:
+                g_scene = director.scene_for(geom)
+                if g_scene is not None:
+                    return g_scene
+        return self._scene
+
+    def _pick_geometry_label(self, geometry_id) -> "Optional[str]":
+        """Geometry name for pick reporting — only while MORE than one
+        geometry is visible (mirrors the S2b scalar-bar prefix rule);
+        ``None`` otherwise."""
+        director = self._director
+        if geometry_id is None or director is None:
+            return None
+        geoms = director.geometries
+        if sum(1 for g in geoms.geometries if g.visible) <= 1:
+            return None
+        geom = geoms.find(geometry_id)
+        return geom.name if geom is not None else None
 
     def _sync_diagram_substrate_points(
         self, deformed_pts, *, geometry=None, scene=None,
@@ -2446,14 +2516,21 @@ class ResultsViewer:
             log_action(
                 "pick", "node",
                 world=tuple(round(c, 3) for c in result.world),
+                geometry_id=result.geometry_id,
             )
-            self._on_node_pick(result.world)
+            self._on_node_pick(
+                result.world, geometry_id=result.geometry_id,
+            )
         elif result.kind == MODE_ELEMENT:
             log_action(
                 "pick", "element",
                 element_id=result.element_id, cell_id=result.cell_id,
+                geometry_id=result.geometry_id,
             )
-            self._on_element_pick(result.element_id, result.cell_id)
+            self._on_element_pick(
+                result.element_id, result.cell_id,
+                geometry_id=result.geometry_id,
+            )
         elif result.kind == MODE_GP:
             log_action(
                 "pick", "gp",
@@ -2463,14 +2540,21 @@ class ResultsViewer:
                 result.element_id, result.gp_index, result.world,
             )
 
-    def _on_node_pick(self, world_pos) -> None:
-        """Drop a probe marker at the nearest node + refresh the HUD."""
+    def _on_node_pick(self, world_pos, *, geometry_id=None) -> None:
+        """Drop a probe marker at the nearest node + refresh the HUD.
+
+        ADR 0058 S2c: the snap reads coordinates off the HIT
+        geometry's scene (its deformed grid), not the boot/active
+        scene — ``geometry_id`` arrives from the pick result.
+        """
         if self._probe_overlay is None:
             return
         try:
             import numpy as np
             point = self._probe_overlay.probe_at_point(
                 np.asarray(world_pos),
+                scene=self._scene_for_geometry_id(geometry_id),
+                geometry_id=geometry_id,
             )
         except Exception as exc:
             from ._failures import report
@@ -2484,14 +2568,25 @@ class ResultsViewer:
                 from ._failures import report
                 report("ResultsViewer._on_node_pick.on_point_result", exc)
 
-    def _on_element_pick(self, element_id, cell_id) -> None:
-        """Highlight the picked element + post a status message."""
+    def _on_element_pick(self, element_id, cell_id, *, geometry_id=None) -> None:
+        """Highlight the picked element + post a status message.
+
+        ADR 0058 S2c: the highlight extracts the cell from the HIT
+        geometry's grid (its deformed points); the status names the
+        geometry while more than one is visible.
+        """
         if element_id is None or cell_id is None:
             return
-        self._highlight_element_cell(int(cell_id))
+        self._highlight_element_cells(
+            [int(cell_id)],
+            scene=self._scene_for_geometry_id(geometry_id),
+        )
         if self._win is not None:
+            label = self._pick_geometry_label(geometry_id)
+            suffix = f" on {label}" if label else ""
             self._win.set_status(
-                f"Picked element {int(element_id)} (cell {int(cell_id)}).",
+                f"Picked element {int(element_id)} "
+                f"(cell {int(cell_id)}){suffix}.",
                 timeout=4000,
             )
 
@@ -2623,7 +2718,10 @@ class ResultsViewer:
         """Dispatch a :class:`BoxPickResult` based on its ``kind``."""
         from .core.results_pick import MODE_NODE, MODE_ELEMENT, MODE_GP
         if box_result.kind == MODE_ELEMENT:
-            self._highlight_element_cells(box_result.cell_ids)
+            self._highlight_element_cells(
+                box_result.cell_ids,
+                scene=self._scene_for_geometry_id(box_result.geometry_id),
+            )
             count = int(box_result.ids.size)
             if self._win is not None:
                 self._win.set_status(
@@ -2686,14 +2784,17 @@ class ResultsViewer:
         """
         self._highlight_element_cells([int(cell_id)])
 
-    def _highlight_element_cells(self, cell_ids) -> None:
+    def _highlight_element_cells(self, cell_ids, *, scene=None) -> None:
         """Render a wireframe overlay around one or more picked cells.
 
         ``cell_ids`` may be a sequence or numpy array; empty ⇒ clear
         the current highlight. Each call replaces the prior highlight
-        — picks don't accumulate. ``Esc`` also clears.
+        — picks don't accumulate. ``Esc`` also clears. ``scene``
+        selects whose grid the cells extract from (ADR 0058 S2c —
+        the hit geometry's); the active scene by default.
         """
-        if self._scene is None or self._plotter is None:
+        scene = scene if scene is not None else self._scene
+        if scene is None or self._plotter is None:
             return
         try:
             import numpy as np
@@ -2704,7 +2805,7 @@ class ResultsViewer:
         if ids.size == 0:
             return
         try:
-            sub = self._scene.grid.extract_cells(ids)
+            sub = scene.grid.extract_cells(ids)
         except Exception:
             return
         try:
