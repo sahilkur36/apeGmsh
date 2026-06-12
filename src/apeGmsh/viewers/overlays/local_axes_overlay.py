@@ -64,15 +64,36 @@ class LocalAxesOverlay:
         director: "ResultsDirector",
     ) -> None:
         self._plotter = plotter
-        self._scene = scene
+        # ADR 0058 S2c: construction scene is the FALLBACK only —
+        # ``self._scene`` resolves the ACTIVE geometry's scene at use
+        # time so triads read the grid that is actually being edited.
+        self._boot_scene = scene
         self._director = director
         self._visible = False
         # FEM node id -> substrate row, so endpoints read off the live
-        # (possibly deformed) ``scene.grid.points``.
+        # (possibly deformed) ``scene.grid.points``. The index arrays
+        # are shared across per-geometry scenes (clone_scene), so the
+        # map built once here is valid for every resolved scene.
         self._node_row = {
             int(nid): i for i, nid in enumerate(scene.node_ids)
         }
         self._actor_names: list[str] = []
+
+    @property
+    def _scene(self) -> "FEMSceneData":
+        """The ACTIVE geometry's scene, resolved at use time (ADR 0058
+        S2c — mirrors :class:`ProbeOverlay`). Falls back to the
+        construction scene for headless / stub directors."""
+        director = self._director
+        try:
+            geoms = getattr(director, "geometries", None)
+            active = geoms.active if geoms is not None else None
+            scene = (
+                director.scene_for(active) if active is not None else None
+            )
+        except Exception:
+            scene = None
+        return scene if scene is not None else self._boot_scene
 
     # ------------------------------------------------------------------
     # Public API

@@ -194,12 +194,30 @@ class PickReadoutHUD:
             node_id=int(result.closest_node_id),
             coord=tuple(float(c) for c in result.closest_coord),
             field_values=dict(result.field_values),
+            geometry=self._geometry_label(
+                getattr(result, "geometry_id", None),
+            ),
         )
         if self._chain_point is not None:
             try:
                 self._chain_point(result)
             except Exception:
                 pass
+
+    def _geometry_label(self, geometry_id) -> Optional[str]:
+        """Owning-geometry name for the header (ADR 0058 S2c) — only
+        while MORE than one geometry is visible (mirrors the S2b
+        scalar-bar prefix rule); ``None`` otherwise."""
+        if geometry_id is None:
+            return None
+        try:
+            geoms = self._director.geometries
+            if sum(1 for g in geoms.geometries if g.visible) <= 1:
+                return None
+            geom = geoms.find(geometry_id)
+            return geom.name if geom is not None else None
+        except Exception:
+            return None
 
     def _on_step_changed(self, _step_index: int) -> None:
         self._refresh_values_for_last_pick()
@@ -231,8 +249,12 @@ class PickReadoutHUD:
         node_id: int,
         coord: tuple[float, float, float],
         field_values: dict[str, float],
+        geometry: Optional[str] = None,
     ) -> None:
-        self._header.setText(f"node {node_id}")
+        self._header.setText(
+            f"node {node_id} — {geometry}" if geometry
+            else f"node {node_id}"
+        )
         self._coords.setText(
             f"({coord[0]:.4g}, {coord[1]:.4g}, {coord[2]:.4g})"
         )
