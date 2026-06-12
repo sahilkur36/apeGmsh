@@ -50,13 +50,31 @@ def test_node_pair_payload_fields() -> None:
     assert dt["offset"].shape == (3,)
 
 
+# CouplingControl columns shared by node_group + interpolation payloads
+# (neutral schema 2.12.0; host auto-scalers 2.13.0).
+_CPL_FIELDS = (
+    "cpl_has", "cpl_k", "cpl_kr", "cpl_enforce", "cpl_dtcr", "cpl_absolute",
+    "cpl_k_auto", "cpl_k_alpha", "cpl_host", "cpl_wcap",
+)
+
+#: Default (control=None) values for the _CPL_FIELDS tail when building
+#: payload rows by hand.
+_CPL_NONE = (
+    np.uint8(0), float("nan"), float("nan"), np.uint8(0), float("nan"),
+    np.uint8(0), np.uint8(0), float("nan"), np.int64(-1), float("nan"),
+)
+
+
 def test_node_group_payload_fields() -> None:
     dt = node_group_payload_dtype()
     assert dt.names == (
         "master_node", "slave_nodes", "dofs", "offsets", "plane_normal",
         "name",
+        # Fork coupling knobs (neutral schema 2.12.0 / 2.13.0)
+        *_CPL_FIELDS,
     )
     assert dt["plane_normal"].shape == (3,)
+    assert dt["cpl_host"] == np.dtype(np.int64)
 
 
 def test_interpolation_payload_fields() -> None:
@@ -68,6 +86,8 @@ def test_interpolation_payload_fields() -> None:
         # ASDEmbeddedNodeElement options (neutral schema 2.8.0)
         "stiffness", "stiffness_p", "has_stiffness_p",
         "rotational", "pressure", "excess",
+        # Fork coupling knobs (neutral schema 2.12.0 / 2.13.0)
+        *_CPL_FIELDS,
     )
     assert dt["projected_point"].shape == (3,)
     assert dt["parametric_coords"].shape == (2,)
@@ -218,7 +238,7 @@ def test_node_group_vlen_offsets_packed_flat() -> None:
     dofs = np.array([1, 2, 3], dtype=np.int64)
     rows[0] = (
         "node", "10", "rigid_diaphragm",
-        (10, slaves, dofs, offsets_flat, (nan, nan, 1.0), ""),
+        (10, slaves, dofs, offsets_flat, (nan, nan, 1.0), "", *_CPL_NONE),
     )
     out = _h5_roundtrip(rows)
     payload = out[0]["payload"]

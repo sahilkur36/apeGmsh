@@ -145,10 +145,21 @@ __all__ = [
 #: additions and decode cleanly with ``composed_from=()`` and no
 #: ``module_label`` plumbed.
 #:
+#: v2.13.0 (June 2026, fork-coupling host auto-scalers — handoff item A):
+#: additive — extends the ``cpl_*`` coupling-control lane on
+#: ``node_group_payload_dtype`` / ``interpolation_payload_dtype`` with
+#: four columns: ``cpl_k_auto`` (uint8, ``k="auto"``), ``cpl_k_alpha``
+#: (float64, ``-kAlpha``), ``cpl_host`` (int64 **FEM element id**,
+#: ``-1`` = none — deliberately NOT the emit-time ops tag) and
+#: ``cpl_wcap`` (float64, ``-bipenalty -wcap``).  Per ADR 0023's
+#: two-version reader window, readers tolerate 2.12.x and 2.13.x;
+#: 2.12.x files probe ``cpl_k_auto`` via ``p.dtype.names`` and decode
+#: with the v1 knobs only.
+#:
 #: Broker-only files (no `/opensees/...`) still stamp the current
 #: minor — the field is additive and old readers tolerate its
 #: absence.
-NEUTRAL_SCHEMA_VERSION: str = "2.12.0"
+NEUTRAL_SCHEMA_VERSION: str = "2.13.0"
 
 #: Inner schema-version stamp written on the ``/composed_from/`` group
 #: when ``fem.composed_from`` is non-empty.  Independent of the
@@ -1024,37 +1035,62 @@ def _encode_node_pair(rec: Any) -> tuple[Any, ...]:
 
 
 def _encode_control(ctrl: Any) -> tuple[Any, ...]:
-    """Encode a :class:`CouplingControl` (or ``None``) into the six
-    ``cpl_*`` columns (schema 2.12.0).  ``cpl_has`` is the presence flag;
-    unset numeric knobs encode as NaN; ``enforce`` encodes 0=penalty/1=al.
+    """Encode a :class:`CouplingControl` (or ``None``) into the ``cpl_*``
+    columns (schema 2.12.0; host auto-scalers 2.13.0).  ``cpl_has`` is the
+    presence flag; unset numeric knobs encode as NaN; ``enforce`` encodes
+    0=penalty/1=al.  ``k="auto"`` encodes as ``cpl_k_auto=1`` + ``cpl_k``
+    NaN; ``cpl_host`` carries the **FEM element id** (``-1`` = none) — the
+    eid is stable across emits, ops tags are not.
     """
     nan = float("nan")
     if ctrl is None:
-        return (np.uint8(0), nan, nan, np.uint8(0), nan, np.uint8(0))
+        return (
+            np.uint8(0), nan, nan, np.uint8(0), nan, np.uint8(0),
+            np.uint8(0), nan, np.int64(-1), nan,
+        )
+    k_auto = ctrl.k == "auto"
     return (
         np.uint8(1),
-        float(ctrl.k) if ctrl.k is not None else nan,
+        float(ctrl.k) if ctrl.k is not None and not k_auto else nan,
         float(ctrl.kr) if ctrl.kr is not None else nan,
         np.uint8(1 if ctrl.enforce == "al" else 0),
         float(ctrl.bipenalty_dtcr) if ctrl.bipenalty_dtcr is not None else nan,
         np.uint8(1 if ctrl.absolute else 0),
+        np.uint8(1 if k_auto else 0),
+        float(ctrl.k_alpha) if ctrl.k_alpha is not None else nan,
+        np.int64(ctrl.host) if ctrl.host is not None else np.int64(-1),
+        float(ctrl.bipenalty_wcap) if ctrl.bipenalty_wcap is not None else nan,
     )
 
 
 def _decode_control(p: Any) -> Any:
     """Reconstruct a :class:`CouplingControl` from the ``cpl_*`` columns,
     or ``None`` (pre-2.12.0 files lack the columns → probe ``dtype.names``;
-    ``cpl_has == 0`` means the record carried no control)."""
+    ``cpl_has == 0`` means the record carried no control).  The 2.13.0
+    host auto-scaler columns are presence-probed independently
+    (``cpl_k_auto``) so 2.12.0 files decode with the v1 knobs only."""
     names = set(p.dtype.names or ())
     if "cpl_has" not in names or not int(p["cpl_has"]):
         return None
     from apeGmsh._kernel._coupling_control import CouplingControl
+    k: Any = _opt_scalar(p["cpl_k"])
+    extras: dict[str, Any] = {}
+    if "cpl_k_auto" in names:
+        if int(p["cpl_k_auto"]):
+            k = "auto"
+        host = int(p["cpl_host"])
+        extras = dict(
+            k_alpha=_opt_scalar(p["cpl_k_alpha"]),
+            host=host if host >= 0 else None,
+            bipenalty_wcap=_opt_scalar(p["cpl_wcap"]),
+        )
     return CouplingControl(
-        k=_opt_scalar(p["cpl_k"]),
+        k=k,
         kr=_opt_scalar(p["cpl_kr"]),
         enforce=("al" if int(p["cpl_enforce"]) else "penalty"),
         bipenalty_dtcr=_opt_scalar(p["cpl_dtcr"]),
         absolute=bool(int(p["cpl_absolute"])),
+        **extras,
     )
 
 

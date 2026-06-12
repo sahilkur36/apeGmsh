@@ -168,7 +168,8 @@ def interpolation_payload_dtype() -> np.dtype:
 
 
 def _coupling_control_fields() -> list[tuple]:
-    """Structured-dtype columns for :class:`CouplingControl` (schema 2.12.0).
+    """Structured-dtype columns for :class:`CouplingControl` (schema 2.12.0;
+    host auto-scalers added in 2.13.0).
 
     Carries the explicit fork-coupling knobs so they round-trip:
     ``cpl_has`` (uint8 presence flag — distinguishes "no control / use
@@ -178,6 +179,13 @@ def _coupling_control_fields() -> list[tuple]:
     ``cpl_enforce`` (uint8: 0=penalty, 1=al), ``cpl_absolute`` (uint8
     0/1). Pre-2.12.0 files lack these columns; the reader probes
     ``p.dtype.names`` and falls back to ``control=None``.
+
+    Schema 2.13.0 adds the host auto-scalers: ``cpl_k_auto`` (uint8 0/1 —
+    ``k="auto"``; ``cpl_k`` is NaN then), ``cpl_k_alpha`` (float64, NaN
+    when unset), ``cpl_host`` (int64 **FEM element id** — stable across
+    emits, deliberately NOT the emit-time ops tag; ``-1`` = none) and
+    ``cpl_wcap`` (float64, NaN when unset). 2.12.0 files lack these four;
+    the reader probes ``cpl_k_auto`` and falls back to the v1 knobs only.
     """
     return [
         ("cpl_has", np.uint8),
@@ -186,6 +194,11 @@ def _coupling_control_fields() -> list[tuple]:
         ("cpl_enforce", np.uint8),
         ("cpl_dtcr", np.float64),
         ("cpl_absolute", np.uint8),
+        # Host auto-scalers (schema 2.13.0).
+        ("cpl_k_auto", np.uint8),
+        ("cpl_k_alpha", np.float64),
+        ("cpl_host", np.int64),
+        ("cpl_wcap", np.float64),
     ]
 
 
