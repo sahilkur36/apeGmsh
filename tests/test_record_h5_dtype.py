@@ -74,6 +74,8 @@ def test_node_group_payload_fields() -> None:
         *_CPL_FIELDS,
     )
     assert dt["plane_normal"].shape == (3,)
+    assert dt["cpl_has"] == np.dtype(np.uint8)
+    assert dt["cpl_k"] == np.dtype(np.float64)
     assert dt["cpl_host"] == np.dtype(np.int64)
 
 
@@ -110,6 +112,11 @@ def test_surface_coupling_payload_fields() -> None:
         # ASDEmbeddedNodeElement options per slave (neutral schema 2.8.0)
         "sr_stiffness", "sr_stiffness_p", "sr_has_stiffness_p",
         "sr_rotational", "sr_pressure", "sr_excess",
+        # CouplingControl knobs per slave (neutral schema 2.12.0;
+        # host auto-scalers 2.13.0)
+        "sr_cpl_has", "sr_cpl_k", "sr_cpl_kr", "sr_cpl_enforce",
+        "sr_cpl_dtcr", "sr_cpl_absolute",
+        "sr_cpl_k_auto", "sr_cpl_k_alpha", "sr_cpl_host", "sr_cpl_wcap",
     )
     assert dt["mortar_operator_shape"].shape == (2,)
 
@@ -238,6 +245,8 @@ def test_node_group_vlen_offsets_packed_flat() -> None:
     dofs = np.array([1, 2, 3], dtype=np.int64)
     rows[0] = (
         "node", "10", "rigid_diaphragm",
+        # Trailing values = the cpl_* CouplingControl columns
+        # (neutral schema 2.12.0 / 2.13.0), encoded here as "no control".
         (10, slaves, dofs, offsets_flat, (nan, nan, 1.0), "", *_CPL_NONE),
     )
     out = _h5_roundtrip(rows)

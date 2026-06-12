@@ -96,19 +96,21 @@ GLOBAL_EXEMPT: frozenset[str] = frozenset({"kind", "name"})
 # relying on (and the contract a reviewer can hold the author to).
 PAYLOAD_WHITELIST: dict[type, dict[str, str]] = {
     NodeGroupRecord: {
-        # The CouplingControl object is persisted FLATTENED into the
-        # ``cpl_*`` column lane (cpl_has presence flag + one column
-        # per knob; schema 2.12.0, host auto-scalers 2.13.0) by
-        # _femdata_h5_io._encode_control / _decode_control — there is
-        # no single ``control`` column.
+        # The CouplingControl object is persisted decomposed into the
+        # cpl_* columns (cpl_has / cpl_k / cpl_kr / cpl_enforce /
+        # cpl_dtcr / cpl_absolute, schema 2.12.0; + cpl_k_auto /
+        # cpl_k_alpha / cpl_host / cpl_wcap host auto-scalers, schema
+        # 2.13.0); _encode_control / _decode_control in
+        # apeGmsh.mesh._femdata_h5_io reconstruct the object (or None)
+        # on round-trip.
         "control":
-            "persisted flattened via the cpl_* column lane "
-            "(_encode_control / _decode_control)",
+            "persisted decomposed into the cpl_* columns "
+            "(see _encode_control / _decode_control)",
     },
     InterpolationRecord: {
         "control":
-            "persisted flattened via the cpl_* column lane "
-            "(_encode_control / _decode_control)",
+            "persisted decomposed into the cpl_* columns "
+            "(see _encode_control / _decode_control)",
     },
     SurfaceCouplingRecord: {
         # The list of per-slave-node InterpolationRecord objects is
@@ -237,6 +239,18 @@ SR_TO_INTERP_COLUMN: dict[str, str] = {
     "sr_rotational":      "rotational",
     "sr_pressure":        "pressure",
     "sr_excess":          "excess",
+    # CouplingControl knobs (schema 2.12.0; host auto-scalers 2.13.0)
+    # — per-slave vlen mirror of the scalar cpl_* columns.
+    "sr_cpl_has":         "cpl_has",
+    "sr_cpl_k":           "cpl_k",
+    "sr_cpl_kr":          "cpl_kr",
+    "sr_cpl_enforce":     "cpl_enforce",
+    "sr_cpl_dtcr":        "cpl_dtcr",
+    "sr_cpl_absolute":    "cpl_absolute",
+    "sr_cpl_k_auto":      "cpl_k_auto",
+    "sr_cpl_k_alpha":     "cpl_k_alpha",
+    "sr_cpl_host":        "cpl_host",
+    "sr_cpl_wcap":        "cpl_wcap",
 }
 
 # sr_* columns that exist purely to let the decoder un-flatten the
@@ -246,20 +260,6 @@ SR_CSR_BOOKKEEPING: frozenset[str] = frozenset({
     "sr_master_counts",
     "sr_dof_counts",
 })
-
-# interpolation_payload_dtype columns deliberately NOT mirrored into
-# the sr_* lane.  The cpl_* lane flattens a CouplingControl (fork
-# coupling knobs, schema 2.12.0 / 2.13.0) — only ``distributing``
-# (RBE3) records carry one, set by resolve_distributing.  tied_contact
-# / mortar slave_records are synthetic tie-shaped records that flow
-# out as ASDEmbeddedNodeElement and never carry a control, so the
-# sr_* lane has nothing to persist for them (decode reconstructs
-# slave records with control=None).
-INTERP_NOT_MIRRORED: frozenset[str] = frozenset({
-    "cpl_has", "cpl_k", "cpl_kr", "cpl_enforce", "cpl_dtcr",
-    "cpl_absolute", "cpl_k_auto", "cpl_k_alpha", "cpl_host", "cpl_wcap",
-})
-
 
 def test_surface_coupling_sr_lane_mirrors_interpolation_dtype() -> None:
     """Every InterpolationRecord field column in
@@ -303,9 +303,8 @@ def test_surface_coupling_sr_lane_mirrors_interpolation_dtype() -> None:
     # ``name`` is intentionally not carried per-slave: the parent
     # SurfaceCouplingRecord stamps its own name, and the resolver
     # never sets a per-slave name on the tied_contact slave records
-    # (they're synthetic, not user-declared).  The cpl_* control lane
-    # is RBE3-only — see INTERP_NOT_MIRRORED.
-    expected = interp_names - {"name"} - INTERP_NOT_MIRRORED
+    # (they're synthetic, not user-declared).
+    expected = interp_names - {"name"}
 
     missing_from_sr = expected - covered_interp
     assert not missing_from_sr, (
