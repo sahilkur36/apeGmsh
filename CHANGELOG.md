@@ -8,6 +8,14 @@ Every geometry with `visible=True` now renders concurrently — its substrate fi
 
 *(Merge note: the `## Unreleased` header items for P5.2+P5.3 (#634) and the coupling host auto-scalers (#635) keep being dropped by CHANGELOG conflict resolutions on other tracks — restored above again; their sections were never lost.)*
 
+### CHANGED — partitioned deck emission drops its O(model × ranks) rescans (~2.5× at 512k hexes / 64 ranks)
+
+Authoring-side emission wall-time — named by ADR 0061 as the next ceiling after the per-rank layout shipped — had three hidden O(model × ranks) terms in `_emit_partitioned`: the node-id → index lookup dict was rebuilt inside the per-rank loop, `emit_element_spec_partitioned` skip-scanned the FULL pre-allocated element plan once per rank (twice — owned-list build + main loop), and the global fix/mass passes re-ran the PG → nodes broker expansion per rank. Measured on a 512k-hex / 531k-node box at 64 ranks: `ops.tcl` 29.2 s → **11.7 s** (`ops.py` 28.2 s → 11.3 s); 64k hexes / 16 ranks: 2.5 s → 1.7 s.
+
+- **Rank-independent work now happens once, before the per-rank loop**: the node-index lookup is hoisted; each element spec's plan is grouped by owner rank (`bucket_pre_allocated_by_rank`) and every rank walks only its own bucket (base loop + staged per-rank blocks); global fix/mass record targets are resolved once and bucketed by rank (`_bucket_fix_targets_by_rank` / `_bucket_mass_targets_by_rank` — fixes replicate on every owning rank, masses land on the primary rank only, semantics unchanged).
+- The staged per-rank pass also stops rebuilding each rank's owned-node set per stage (stage-invariant — computed once by the caller).
+- **Decks are byte-identical** — verified by diffing 100 MB Tcl + Py decks (flat-partitioned and staged-partitioned fixtures) emitted before/after; bucket construction preserves plan order and record/node order per rank.
+
 ### ADDED — per-rank Tcl deck emission (`apeSees.tcl(per_rank=True)`, ADR 0061)
 
 Partitioned decks were monolithic: every MPI rank parsed the entire file and executed only its own `if {[getPID] == K} { ... }` blocks — per-rank parse cost and resident deck text were O(model) regardless of ownership (the measured Amdahl serial term of the emit → push → solve pipeline: ~5 s at 66k hexes, projected minutes/rank + node-RAM pressure at multi-M hexes).
