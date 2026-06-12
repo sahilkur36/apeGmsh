@@ -112,7 +112,11 @@ class ResultsViewer:
 
         # Populated in show()
         self._director: "ResultsDirector | None" = None
-        self._scene: "FEMSceneData | None" = None
+        # ADR 0058 S2a — the scene built at show() for the boot
+        # geometry. Construction-time code (before the director binds)
+        # reads this directly; everything display-level goes through
+        # the ``_scene`` property (the ACTIVE geometry's scene).
+        self._boot_scene: "FEMSceneData | None" = None
         self._win: Any = None
         self._plotter: Any = None
         self._settings_tab: "DiagramSettingsTab | None" = None
@@ -167,6 +171,27 @@ class ResultsViewer:
     @property
     def scene(self) -> "Optional[FEMSceneData]":
         return self._scene
+
+    @property
+    def _scene(self) -> "Optional[FEMSceneData]":
+        """The ACTIVE geometry's substrate scene (ADR 0058 S2a).
+
+        Every display-level consumer (status line, label overlays,
+        probe radius, pick-extract, node cloud) reads ``self._scene``
+        — making it a property over ``director.scene_for(active)``
+        keeps them all correct unchanged when scenes become
+        per-geometry. Falls back to the boot scene before the director
+        binds (construction-time reads) and to ``None`` pre-show.
+        """
+        director = getattr(self, "_director", None)
+        if director is not None:
+            try:
+                scene = director.scene_for(director.geometries.active)
+            except Exception:
+                scene = None
+            if scene is not None:
+                return scene
+        return getattr(self, "_boot_scene", None)
 
     @property
     def plotter(self) -> Any:
@@ -301,7 +326,7 @@ class ResultsViewer:
         assert fem is not None    # validated in __init__
         view = self._build_viewer_data()
         scene = build_fem_scene(view)
-        self._scene = scene
+        self._boot_scene = scene
         # Pick actor inventory — set on the scene before any diagram
         # attaches so GaussPointDiagram (and future fiber/etc.) can
         # register their actor in their own attach() instead of the
@@ -583,44 +608,58 @@ class ResultsViewer:
         win.set_session_widget(session.widget)
         self._session_panel = session
 
-        # Substrate fill — drawn first; edges are rendered separately
-        # by the wireframe actor below so they stay on top of any
-        # contour diagram added later.
-        actor = plotter.add_mesh(
-            scene.grid,
-            color=palette.substrate_color,
-            show_edges=False,
-            opacity=prefs.mesh_surface_opacity,
-            lighting=True,
-            smooth_shading=False,
-            name="results_substrate",
-            reset_camera=True,
+        # ── Substrate actor pair builder (ADR 0058 S2a) ────────────
+        # One fill + wireframe pair per scene. The fill is drawn
+        # first; edges render separately (style='wireframe') so the
+        # lines stay on top of any contour / deformed-shape diagram
+        # that draws polygons at the same z-depth. Polygon-offset on
+        # the line mapper resolves coincident topology by pulling
+        # lines toward the camera, eliminating z-fighting between the
+        # wireframe and the substrate / diagram polygons. Called once
+        # here for the boot scene and again from the scene factory for
+        # every materialized per-geometry scene (unique actor names —
+        # pyvista replaces same-named actors).
+        def _add_substrate_actors(
+            g_scene: "FEMSceneData",
+            *,
+            name_suffix: str = "",
+            reset_camera: bool = False,
+        ):
+            p = THEME.current
+            fill = plotter.add_mesh(
+                g_scene.grid,
+                color=p.substrate_color,
+                show_edges=False,
+                opacity=prefs.mesh_surface_opacity,
+                lighting=True,
+                smooth_shading=False,
+                name=f"results_substrate{name_suffix}",
+                reset_camera=reset_camera,
+            )
+            wf = plotter.add_mesh(
+                g_scene.grid,
+                style="wireframe",
+                color=p.substrate_edge_color,
+                line_width=prefs.mesh_line_width,
+                opacity=1.0,
+                lighting=False,
+                pickable=False,
+                name=f"results_wireframe{name_suffix}",
+            )
+            try:
+                wf_mapper = wf.GetMapper()
+                wf_mapper.SetResolveCoincidentTopologyToPolygonOffset()
+                wf_mapper.SetResolveCoincidentTopologyLineOffsetParameters(
+                    -1.0, -1.0,
+                )
+            except Exception:
+                pass
+            return fill, wf
+
+        actor, wireframe_actor = _add_substrate_actors(
+            scene, reset_camera=True,
         )
         self._substrate_actor = actor
-
-        # ── Wireframe overlay ──────────────────────────────────────
-        # Separate actor (style='wireframe') so the lines render on top
-        # of any contour / deformed-shape diagram that draws polygons at
-        # the same z-depth. Polygon-offset on the line mapper resolves
-        # coincident topology by pulling lines toward the camera, which
-        # eliminates z-fighting between the wireframe and the substrate
-        # / diagram polygons.
-        wireframe_actor = plotter.add_mesh(
-            scene.grid,
-            style="wireframe",
-            color=palette.substrate_edge_color,
-            line_width=prefs.mesh_line_width,
-            opacity=1.0,
-            lighting=False,
-            pickable=False,
-            name="results_wireframe",
-        )
-        try:
-            wf_mapper = wireframe_actor.GetMapper()
-            wf_mapper.SetResolveCoincidentTopologyToPolygonOffset()
-            wf_mapper.SetResolveCoincidentTopologyLineOffsetParameters(-1.0, -1.0)
-        except Exception:
-            pass
         self._wireframe_actor = wireframe_actor
 
         # ── Node-cloud overlay (matches the pre-solve mesh viewer) ─
@@ -745,11 +784,14 @@ class ResultsViewer:
                 plotter.remove_actor(old)
             except Exception:
                 pass
+            # Rebuild against the ACTIVE geometry's scene (ADR 0058
+            # S2a — the node cloud is an active-only display overlay).
+            g_scene = self._scene or scene
             try:
                 _, new_actor = _build(
                     plotter,
-                    scene.grid.points,
-                    model_diagonal=scene.model_diagonal,
+                    g_scene.grid.points,
+                    model_diagonal=g_scene.model_diagonal,
                     marker_size=float(value),
                     color=THEME.current.node_accent,
                 )
@@ -1001,13 +1043,19 @@ class ResultsViewer:
             """
             # Re-attach through the registry's RenderBackend (ADR 0042
             # R-B.final) — attach injects a backend, not a raw plotter.
+            # ADR 0058 S2a: resolve each diagram's scene through its
+            # owning geometry so a restack doesn't re-bind a layer to
+            # the wrong substrate.
             backend = director.registry.backend
             for d in list(director.registry.diagrams()):
                 if not d.is_attached:
                     continue
                 try:
                     d.detach()
-                    d.attach(backend, director.view, scene)
+                    d.attach(
+                        backend, director.view,
+                        director._scene_for_diagram(d),  # noqa: SLF001
+                    )
                 except Exception:
                     continue
 
@@ -1022,6 +1070,7 @@ class ResultsViewer:
             DIAGRAM_DETACHED, DIAGRAM_MODIFIED,
             LAYER_VISIBILITY_CHANGED, LAYER_REORDERED, PICK_CLEARED,
             GEOMETRIES_CHANGED,
+            GEOMETRY_ACTIVE_CHANGED, GEOMETRY_REMOVED, Lane,
         )
         # ADR 0056 Part 3: the director constructed its dispatcher at
         # __init__ (no-op pumps); rebind the real pumps now that the
@@ -1100,11 +1149,137 @@ class ResultsViewer:
         self._time_scrubber = scrubber
         win.set_bottom_widget(scrubber.widget)
 
+        # ── Per-geometry scenes + active switching (ADR 0058 S2a) ──
+        # Each geometry's scene owns its substrate fill + wireframe
+        # actor pair, added once at materialization; "which geometry
+        # renders" is actor VISIBILITY, never actor churn. In S2a
+        # exactly the active geometry's pair is visible (S2b widens
+        # this to a per-geometry ``visible`` flag).
+        boot_geom = director.geometries.active or (
+            director.geometries.geometries[0]
+            if director.geometries.geometries else None
+        )
+        # geometry id -> (fill_actor, wireframe_actor).
+        self._scene_actors: dict = {}
+        if boot_geom is not None:
+            self._scene_actors[boot_geom.id] = (actor, wireframe_actor)
+
+        from .core.element_visibility import (
+            apply_dim_filter as _apply_dim_f,
+        )
+        from .data._stage_activation import LAYER_STAGE as _LAYER_STAGE
+
+        def _materialize_scene(geom) -> "FEMSceneData":
+            """``scene_factory`` for ``director.bind_plotter``.
+
+            Clones the boot scene (born undeformed, index arrays
+            shared — see ``clone_scene``) and wires the render side
+            per the S2 plan's disposition table: per-scene
+            ElementVisibility (+ dispatcher), shared plotter-scoped
+            pick inventory and opacity controller, the CURRENT
+            dim-filter and stage-activation state, and a hidden actor
+            pair (active-only rendering — the GEOMETRY_ACTIVE_CHANGED
+            subscriber flips visibility).
+            """
+            from .scene.fem_scene import clone_scene
+            new_scene = clone_scene(scene)
+            new_scene.pick_engine = scene.pick_engine
+            new_scene.opacity_controller = scene.opacity_controller
+            ev = _ElementVis(new_scene.grid)
+            ev.dispatcher = dispatcher
+            new_scene.element_visibility = ev
+            # View-global state, applied at materialization (it is
+            # re-applied to every materialized scene on change below).
+            flt = getattr(self, "_results_filter", None)
+            if flt is not None and flt.dims:
+                _apply_dim_f(ev, new_scene.cell_dim, flt.active, flt.dims)
+            ctrl = getattr(self, "_stage_activation", None)
+            if ctrl is not None:
+                mask = ctrl.current_mask()
+                if mask is not None:
+                    ev.set_layer(_LAYER_STAGE, mask)
+            fill, wf = _add_substrate_actors(
+                new_scene, name_suffix=f"@{geom.id}",
+            )
+            try:
+                fill.SetVisibility(0)
+                wf.SetVisibility(0)
+            except Exception:
+                pass
+            self._scene_actors[geom.id] = (fill, wf)
+            return new_scene
+
+        def _sync_substrate_visibility() -> None:
+            """Show exactly the active geometry's substrate actors.
+
+            Idempotent: hides every non-active pair, re-points
+            ``self._substrate_actor`` / ``self._wireframe_actor`` at
+            the active pair (so the theme / display / line-width
+            paths keep working unchanged), re-applies the active
+            geometry's display state + the current palette, and
+            rebuilds the label overlays against the new active scene
+            when they are visible. Materializes the active scene on
+            demand. The node cloud needs no work here — the DEFORM
+            pump (which runs before this RENDER-lane subscriber in
+            the same fire) already re-synced it against the new
+            active geometry.
+            """
+            active_geom = director.geometries.active
+            if active_geom is None:
+                return
+            director.scene_for(active_geom)   # materialize on demand
+            for gid, pair in list(self._scene_actors.items()):
+                if gid == active_geom.id:
+                    continue
+                for a in pair:
+                    try:
+                        a.SetVisibility(0)
+                    except Exception:
+                        pass
+            pair = self._scene_actors.get(active_geom.id)
+            if pair is not None:
+                self._substrate_actor, self._wireframe_actor = pair
+            self._apply_geometry_display()
+            _refresh_substrate_colors(THEME.current)
+            if self._node_label_actor is not None:
+                self._set_node_id_labels(True)
+            if self._element_label_actor is not None:
+                self._set_element_id_labels(True)
+
+        # Stashed so _apply_session can run it once after its
+        # suppressed batch flushes (RENDER-lane subscribers don't
+        # replay on batch exit).
+        self._sync_substrate_visibility = _sync_substrate_visibility
+
+        def _on_geometry_active_changed(_kind, _payload) -> None:
+            _sync_substrate_visibility()
+
+        def _on_geometry_removed(_kind, payload) -> None:
+            # The director already dropped its cached scene (typed
+            # observer, registered first); remove the actors here.
+            pair = self._scene_actors.pop(payload, None)
+            if pair is not None:
+                for a in pair:
+                    try:
+                        plotter.remove_actor(a)
+                    except Exception:
+                        pass
+            _sync_substrate_visibility()
+
+        dispatcher.subscribe(
+            GEOMETRY_ACTIVE_CHANGED, _on_geometry_active_changed,
+            lane=Lane.RENDER,
+        )
+        dispatcher.subscribe(
+            GEOMETRY_REMOVED, _on_geometry_removed, lane=Lane.RENDER,
+        )
+
         # ── Bind director to plotter ────────────────────────────────
         director.bind_plotter(
             plotter,
             scene=scene,
             render_callback=lambda: plotter.render() if plotter else None,
+            scene_factory=_materialize_scene,
         )
 
         # ── Wire any pending section cuts (programmatic ingress) ────
@@ -1248,13 +1423,17 @@ class ResultsViewer:
             self._pick_controller.active_dims = frozenset(active)
             # Visual ghost-hide: hide cells whose dim is inactive via the
             # dedicated dim layer (composes with manual/isolate hides).
-            ev = scene.element_visibility
-            if ev is not None:
-                apply_dim_filter(ev, scene.cell_dim, active, _dim_vals)
-                try:
-                    plotter.render()
-                except Exception:
-                    pass
+            # ADR 0058 S2a: the filter is view-global — re-apply to
+            # every materialized per-geometry scene (scenes not yet
+            # materialized pick it up at materialization).
+            for g_scene in self._iter_scenes():
+                ev = g_scene.element_visibility
+                if ev is not None:
+                    apply_dim_filter(ev, g_scene.cell_dim, active, _dim_vals)
+            try:
+                plotter.render()
+            except Exception:
+                pass
             # A filter change can leave a stale element highlight on cells
             # the new filter excludes; clear it so the on-screen selection
             # never contradicts the active filter (review nit).
@@ -1296,6 +1475,7 @@ class ResultsViewer:
         # consumer). Vanilla files (no program stages) skip all of
         # this — no controller, no toolbar button.
         from .data._stage_activation import (
+            LAYER_STAGE,
             StageActivationController,
             build_from_model,
         )
@@ -1318,8 +1498,25 @@ class ResultsViewer:
 
             _hinted_unmatched: set = set()
 
+            def _sync_stage_layers() -> None:
+                """Mirror the controller's LAYER_STAGE mask onto every
+                materialized per-geometry scene (ADR 0058 S2a — the
+                controller itself owns only the boot scene's
+                ElementVisibility). Scenes not yet materialized pick
+                the current mask up at materialization."""
+                mask = _ctrl.current_mask()
+                for g_scene in self._iter_scenes():
+                    ev = g_scene.element_visibility
+                    if ev is None or ev is scene.element_visibility:
+                        continue
+                    if mask is None:
+                        ev.clear_layer(LAYER_STAGE)
+                    else:
+                        ev.set_layer(LAYER_STAGE, mask)
+
             def _apply_stage_activation(sid) -> None:
                 _ctrl.on_stage_changed(sid)
+                _sync_stage_layers()
                 if (
                     _ctrl.enabled
                     and sid is not None
@@ -1352,6 +1549,7 @@ class ResultsViewer:
 
             def _apply_stage_toggle(checked: bool) -> None:
                 _ctrl.set_enabled(bool(checked))
+                _sync_stage_layers()
                 try:
                     plotter.render()
                 except Exception:
@@ -1618,6 +1816,23 @@ class ResultsViewer:
             return []
         geom = self._director.geometries.active
         return [geom] if geom is not None else []
+
+    def _iter_scenes(self) -> list:
+        """Every materialized per-geometry scene (ADR 0058 S2a).
+
+        View-global state (dim filter, stage activation) loops this
+        to re-apply on change. Includes the boot scene; never
+        materializes anything.
+        """
+        director = self._director
+        scenes: list = (
+            list(director.materialized_scenes())
+            if director is not None else []
+        )
+        boot = self._boot_scene
+        if boot is not None and all(s is not boot for s in scenes):
+            scenes.append(boot)
+        return scenes
 
     def _sync_diagram_substrate_points(
         self, deformed_pts, *, geometry=None, scene=None,
@@ -2012,6 +2227,16 @@ class ResultsViewer:
             _batch_cm.__exit__(None, None, None)
         except Exception:
             pass
+
+        # ADR 0058 S2a — an active-geometry change inside the
+        # suppressed batch never reaches the RENDER-lane substrate
+        # visibility subscriber; run the idempotent sync once now.
+        sync = getattr(self, "_sync_substrate_visibility", None)
+        if sync is not None:
+            try:
+                sync()
+            except Exception:
+                pass
 
         try:
             msg = f"Restored {n_added} diagram(s)"
