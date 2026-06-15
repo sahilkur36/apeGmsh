@@ -127,6 +127,39 @@ def test_deserialize_spec_unknown_kind_raises():
         })
 
 
+def test_deserialize_spec_retired_deformed_shape_raises():
+    """A retired kind (ADR 0058 S4) raises with a migration hint, not a
+    bare 'unknown kind' — so the catch-and-skip drops just that spec."""
+    with pytest.raises(KeyError, match="retired"):
+        deserialize_spec({
+            "kind": "deformed_shape",
+            "selector": {"component": "displacement"},
+            "style": {},
+        })
+
+
+def test_legacy_session_with_deformed_shape_drops_it_keeps_rest():
+    """ADR 0058 S4 — a legacy session carrying a retired
+    ``deformed_shape`` diagram loads with the spec dropped and the rest
+    of its hierarchy intact (the retirement is fail-soft, no schema
+    bump)."""
+    payload = {
+        "schema_version": 1,
+        "results_path": "/x/y.h5",
+        "fem_snapshot_id": None,
+        "saved_at": "",
+        "diagrams": [
+            serialize_spec(_make_contour_spec()),
+            {"kind": "deformed_shape", "selector": {"component": "displacement"}},
+            serialize_spec(_make_line_force_spec()),
+        ],
+    }
+    session = deserialize_session(payload)
+    # The retired deformed_shape spec is dropped; the other two survive.
+    assert len(session.diagrams) == 2
+    assert {d.kind for d in session.diagrams} == {"contour", "line_force"}
+
+
 # =====================================================================
 # Session round-trip
 # =====================================================================
