@@ -54,6 +54,8 @@ from __future__ import annotations
 import numpy as np
 from numpy import ndarray
 
+from ._inverse_map import HOST_KINDS, _hex8_dN, _quad4_dN
+
 
 __all__ = [
     "unit_moment_tensor",
@@ -63,6 +65,9 @@ __all__ = [
     "to_mesh_frame",
     "moment_tensor",
     "MESH_FRAMES",
+    "shape_gradient_phys",
+    "consistent_nodal_forces",
+    "dipole_nodal_forces",
 ]
 
 #: Accepted ``frame`` values for :func:`moment_tensor` /
@@ -218,3 +223,118 @@ def moment_tensor(
                 "tensor has no net torque)."
             )
     return to_mesh_frame(float(M0) * m, frame=frame)
+
+
+# ---------------------------------------------------------------------------
+# MT-2 — equivalent nodal forces F^a_i = M_ij ∂N_a/∂x_j
+# ---------------------------------------------------------------------------
+
+# Constant reference-coord gradients ∂N/∂ξ for the linear simplex kinds
+# (their physical gradient is constant over the element). Node order
+# matches _inverse_map's barycentric free-coord convention:
+# tri3 N = [1-ξ-η, ξ, η]; tet4 N = [1-ξ-η-ζ, ξ, η, ζ].
+_TRI3_DN = np.array([[-1.0, -1.0], [1.0, 0.0], [0.0, 1.0]])
+_TET4_DN = np.array(
+    [[-1.0, -1.0, -1.0], [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+)
+
+
+def _dN_ref(kind: str, xi: ndarray) -> ndarray:
+    """Reference-coord shape gradients ``∂N/∂ξ`` (``n_nodes × ndm``)."""
+    if kind == "hex8":
+        return _hex8_dN(np.asarray(xi, dtype=float))
+    if kind == "quad4":
+        return _quad4_dN(np.asarray(xi, dtype=float))
+    if kind == "tet4":
+        return _TET4_DN
+    if kind == "tri3":
+        return _TRI3_DN
+    raise ValueError(
+        f"_dN_ref: unsupported host kind {kind!r} (supported: "
+        f"{sorted(HOST_KINDS)})."
+    )
+
+
+def shape_gradient_phys(kind: str, X: ndarray, xi: ndarray) -> ndarray:
+    """Physical shape-function gradient ``∂N_a/∂x_j`` at natural coord ``ξ``.
+
+    ``X`` is the host's ``(n_nodes, ≥ndm)`` corner coordinates (only the
+    first ``ndm`` columns are used — a 2D host's coords may carry a
+    redundant ``z``), ``xi`` the natural coordinate from
+    :func:`~apeGmsh._kernel.geometry._inverse_map.inverse_map_single`.
+
+    Computes ``∂N/∂x = ∂N/∂ξ · J⁻¹`` with the Jacobian ``J = ∂x/∂ξ =
+    Xᵀ·∂N/∂ξ`` — the projection the inverse map does **not** expose
+    (ADR 0062 open-Q #3). Fails loud on a singular / degenerate host.
+    """
+    ndm = HOST_KINDS[kind][1]
+    X = np.asarray(X, dtype=float)[:, :ndm]
+    dN = _dN_ref(kind, xi)                      # (n_nodes, ndm)
+    J = X.T @ dN                                # (ndm, ndm)
+    detJ = float(np.linalg.det(J))
+    span = float(np.linalg.norm(X.max(axis=0) - X.min(axis=0))) or 1.0
+    if abs(detJ) < 1e-12 * span ** ndm:
+        raise ValueError(
+            f"shape_gradient_phys: {kind} host is degenerate / singular "
+            f"(det(J)={detJ:.3e}); cannot evaluate ∂N/∂x. The moment-tensor "
+            f"source point must sit in a non-degenerate continuum element."
+        )
+    return dN @ np.linalg.inv(J)               # (n_nodes, ndm)
+
+
+def consistent_nodal_forces(
+    M: ndarray, X: ndarray, kind: str, xi: ndarray,
+) -> ndarray:
+    """Consistent nodal forces ``F^a_i = M_ij ∂N_a/∂x_j`` on a host element.
+
+    ``M`` is the full moment tensor (3×3, mesh frame); only its leading
+    ``ndm × ndm`` block is used for a 2D host. Returns ``(n_nodes, ndm)``.
+
+    The net force ``Σ_a F^a`` is identically zero (``Σ_a ∂N_a/∂x = 0`` for
+    a complete shape-function set) — a physical seismic source carries no
+    net force; :func:`net_force` asserts it.
+    """
+    ndm = HOST_KINDS[kind][1]
+    grad = shape_gradient_phys(kind, X, xi)    # (n_nodes, ndm)
+    Msub = np.asarray(M, dtype=float)[:ndm, :ndm]
+    # F[a, i] = Σ_j grad[a, j] · M[i, j] = (grad @ Mᵀ)[a, i]
+    return grad @ Msub.T
+
+
+def dipole_nodal_forces(
+    M: ndarray,
+    *,
+    plus_spacings: ndarray,
+    minus_spacings: ndarray,
+) -> tuple[ndarray, ndarray]:
+    """Force-dipole equivalent of ``M`` on a node's ±axis neighbours.
+
+    For each axis ``j`` the ``+j`` neighbour (at distance ``h_j``) carries
+    ``+M[:, j]/(2 h_j)`` and the ``-j`` neighbour ``−M[:, j]/(2 h_j)``.
+    Net force is zero and the first moment reproduces ``M`` exactly. The
+    central node carries nothing (the couple lives entirely on the
+    neighbours).
+
+    ``plus_spacings`` / ``minus_spacings`` are length-``ndm`` distances to
+    the ``+`` and ``−`` neighbour along each axis. Returns
+    ``(forces_plus, forces_minus)`` each ``(ndm, ndm)`` — row ``j`` is the
+    force vector on the ``±j`` neighbour.
+    """
+    M = np.asarray(M, dtype=float)
+    ndm = int(plus_spacings.shape[0])
+    Msub = M[:ndm, :ndm]
+    fp = np.zeros((ndm, ndm))
+    fm = np.zeros((ndm, ndm))
+    for j in range(ndm):
+        hp = float(plus_spacings[j])
+        hm = float(minus_spacings[j])
+        if hp <= 0 or hm <= 0:
+            raise ValueError(
+                "dipole_nodal_forces: every ±axis neighbour spacing must be "
+                f"> 0 (axis {j}: +{hp:g}, -{hm:g}). The dipole fallback "
+                "needs all 2·ndm neighbours; place the source on an "
+                "interior grid node."
+            )
+        fp[j] = Msub[:, j] / (2.0 * hp)
+        fm[j] = -Msub[:, j] / (2.0 * hm)
+    return fp, fm
