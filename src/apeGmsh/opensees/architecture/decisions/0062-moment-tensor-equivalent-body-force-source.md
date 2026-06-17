@@ -1,15 +1,18 @@
 # ADR 0062 — Moment-tensor equivalent body-force source (embedded seismic source)
 
-**Status:** Proposed (2026-06-17; design draft). Pairs with
-[0054](0054-asd-absorbing-boundary.md) (the absorbing skin the source radiates
-into), rides the load/pattern machinery of [0005](0005-patterns-explicit.md) /
+**Status:** Proposed (2026-06-17; design draft). **MT-1 → MT-3 SHIPPED
+(2026-06-17)** — the MT math core, the point→host→nodal-force build with the
+`p.moment_tensor` authoring surface, and the `S(t)` moment-function helpers
+are on `feat/mt-source-adr`. MT-4 (ShakerMaker adapter) + MT-5 (validation
+example) remain. Pairs with [0054](0054-asd-absorbing-boundary.md) (the
+absorbing skin the source radiates into), rides the load/pattern machinery of
+[0005](0005-patterns-explicit.md) /
 [0007](0007-time-series-separated-from-pattern.md) /
 [0051](0051-bridge-load-consumption.md), and reuses the point-in-host
 shape-function machinery of [0036](0036-embedded-host-decomposition.md). The
 ShakerMaker adapter consumes `FaultSource` / `FFSPSource.get_subfaults()` and
 mirrors the Aki & Richards convention already in ShakerMaker's
-`core/radiats.c`. **Design-stage: the apeGmsh-internal source citations below
-are owed verification during MT-1/MT-2 (marked ⚠owed).**
+`core/radiats.c` — **verified term-for-term against `nmtensor` during MT-1.**
 
 ## Context
 
@@ -90,8 +93,10 @@ integrator-agnostic, fork-change-free path.
 2. **Two force-build methods, both mesh-objective.**
    - **`"consistent"`** — locate the host element, evaluate the trilinear/tet
      shape-function gradients at $\xi$, emit $F^a = M\!\cdot\!\nabla N_a$ on the
-     host's corner nodes. Reuses the **point-in-host + corner-node decomposition
-     of ADR 0036** (`embedded` host finder) ⚠owed-verification.
+     host's corner nodes. Reuses ADR 0036's **point-in-host finder**
+     (`_inverse_map.locate_point`) but adds its own $\partial N/\partial x$
+     projection (`shape_gradient_phys`; the finder exposes only $\xi$ / weights
+     — open-Q #3, resolved).
    - **`"dipole"`** — place the source at the nearest mesh node and apply
      force-dipoles on its $\pm$ axis neighbours ($F^a_i \mathrel{+}= \pm
      M_{ij}/(2h_j)$). Trivial on a structured `add_plane_wave_box` grid; the
@@ -220,19 +225,32 @@ run-verified example:
    at $P\ge6$; (c) absorbing late-time energy small (the ADR 0054 quiet-base
    check). Register under `docs/examples/` + mkdocs, like `plane-wave-ssi.md`.
 
-## Slice plan (Proposed)
+## Slice plan
 
-- **MT-1 — MT math + frame contract (pure).** $m_{ij}$ from $(\phi,\delta,\lambda)$,
-  the A&R-down↔mesh-up flip, $M_0$ from $M_w$ or $\mu A\bar D$. Unit-tested
-  against hand-computed values (e.g. $\phi{=}350,\delta{=}40,\lambda{=}113$ →
-  $m=[-0.113,-0.793,0.906;-0.391,0.323,0.105]$, trace 0).
-- **MT-2 — point→host→nodal force.** `"consistent"` (reuse ADR 0036 host finder
-  + shape-function gradients ⚠owed) and `"dipole"` fallback; `p.moment_tensor`
-  authoring surface; net-force/torque + interior-source guards.
-- **MT-3 — moment-function helpers → `Path`.** Error-function ramp + modified-Yoffe;
-  band-limit warn.
+- **MT-1 — MT math + frame contract (pure). ✅ SHIPPED.**
+  `_kernel/geometry/_moment_tensor.py`: $m_{ij}$ from $(\phi,\delta,\lambda)$,
+  the A&R-down↔mesh-up flip (required `frame`), $M_0$ from $M_w$ (SI Hanks &
+  Kanamori) or $\mu A\bar D$. Unit-tested against the hand-computed value
+  ($\phi{=}350,\delta{=}40,\lambda{=}113$ →
+  $m=[-0.113,-0.793,0.906;-0.391,0.323,0.105]$, trace 0) **and** the
+  ShakerMaker `nmtensor` oracle (the ⚠owed convention check — done).
+- **MT-2 — point→host→nodal force. ✅ SHIPPED.** `"consistent"` (host finder
+  `_inverse_map.locate_point` + the new `shape_gradient_phys` Jacobian-inverse
+  projection — see open-Q #3) and `"dipole"` fallback;
+  `Plain.moment_tensor(position, frame, M0, mech|m_ij, method)` authoring
+  surface; bridge emit (`_emit_moment_tensor_record`); interior-source +
+  **exact** net-force-zero guard. Decisive test: emitted forces recover the
+  moment tensor as their first moment ($\sum_a x_a\otimes F_a = M$), unit +
+  e2e on a real meshed hex box. **`t0 \neq 0` fails loud — per-source onset
+  delay is MT-4.**
+- **MT-3 — moment-function helpers → `Path`. ✅ SHIPPED.**
+  `ops.timeSeries.MomentStep` (erf ramp) + `Yoffe` (regularized modified-Yoffe,
+  Tinti 2005) façades; shared spectral band-limit warn
+  (`WarnMomentFunctionBandwidth`).
 - **MT-4 — ShakerMaker adapter.** `from_shakermaker(fault)` / `from_ffsp(subfaults, crust)`;
   per-subfault $\mu A\bar D$, $t_0$ delays, the km→m / N·m→kN·m units contract.
+  ⚠ `PointSource.angles` returns **radians** (`pointsource.py:39`) despite its
+  degrees docstring — convert in the adapter.
 - **MT-5 — validation example.** FK-vs-FEM overlay + radiation lobes, run-verified, mkdocs.
 - **Deferred:** `/opensees/sources` provenance + viewer beachball; split-node
   kinematic fault (separate facility).
@@ -240,13 +258,22 @@ run-verified example:
 ## Open questions
 
 1. `p.moment_tensor` (pattern-scoped) vs a dedicated `ops.source.*` namespace —
-   does a source ever need to span patterns/series? (Lean: pattern-scoped, one
-   `Path` per distinct $S$; a finite fault with per-subfault $t_0$ shares one
-   $S$ shifted by the per-load time offset, or one series per unique rise time.)
+   does a source ever need to span patterns/series? **RESOLVED (MT-2):
+   pattern-scoped** — `p.moment_tensor` lives on `Plain` next to `p.load`
+   (it needs the pattern's `series` to carry $S(t)$); the `S(t)` helpers live
+   under `ops.timeSeries`. A finite fault with per-subfault $t_0$ (MT-4) will
+   share one $S$ shifted per-load, or one series per unique rise time.
 2. Per-subfault $t_0$ delay — a single `Path` with per-`load` time shift, or
-   N series? (Cost vs deck size; decide in MT-4.)
+   N series? (Cost vs deck size; decide in MT-4. MT-2 fails loud on $t_0\neq0$.)
 3. Does ADR 0036's host decomposition expose $\partial N/\partial x$ at an
-   arbitrary interior point, or only the corner-coupling weights? (Determines
-   how much of MT-2 "consistent" is reuse vs new.) ⚠owed.
+   arbitrary interior point, or only the corner-coupling weights?
+   **RESOLVED (MT-2): only the latter.** `_inverse_map` returns $\xi$, the
+   shape weights $N(\xi)$, and (internally) $\partial N/\partial\xi$
+   (`_hex8_dN`/`_quad4_dN`), but **not** $\partial N/\partial x$. MT-2 adds
+   `shape_gradient_phys` = $\partial N/\partial\xi\cdot J^{-1}$ (with
+   $J = X^\top\partial N/\partial\xi$, guarded on $\det J$). So MT-2
+   "consistent" reuses the host *finder* but the spatial-gradient projection
+   is new.
 4. Live (`ops.run`) support, or Tcl/py emit first? (Esmeralda path is Tcl;
-   lean emit-first, live as follow-up.)
+   lean emit-first, live as follow-up. MT-2 is emit-side — works in any
+   emit target.)
