@@ -1,10 +1,13 @@
 # ADR 0062 — Moment-tensor equivalent body-force source (embedded seismic source)
 
-**Status:** Proposed (2026-06-17; design draft). **MT-1 → MT-3 + MT-4a SHIPPED
-(2026-06-17)** — the MT math core, the point→host→nodal-force build with the
-`p.moment_tensor` authoring surface, the `S(t)` moment-function helpers, and
-the bridge-level `ops.fault.from_shakermaker` finite-fault adapter. **MT-4b
-(`from_ffsp`) is deferred to MT-5**: an adversarial review source-verified that
+**Status:** Proposed (2026-06-17; design draft). **MT-1 → MT-3, MT-4a, MT-5a/b
+SHIPPED (2026-06-17)** — the MT math core, the point→host→nodal-force build
+with the `p.moment_tensor` authoring surface, the `S(t)` moment-function
+helpers, the bridge-level `ops.fault.from_shakermaker` finite-fault adapter,
+the `region=` source-host guard, and the run-verified double-couple
+radiation-pattern validation. **Owed:** MT-4b/MT-5c `from_ffsp` (units verified
+but needs a real FFSP run) and the cross-venv FK-vs-FEM waveform overlay (the
+ShakerMaker-equipped acceptance gate). An adversarial review source-verified that
 FFSP `get_subfaults()` units differ from the original premise (coords are
 **metres** not km — `ffsp_wrapper.f90` ×1000; `peak_time` is the dimensionless
 ratio `pktm/(rstm+pktm)` not seconds — `spfield_n.f90:589,598`; `slip` is
@@ -287,9 +290,22 @@ run-verified example:
   validation against a real FFSP run. The corrected adapter (metres→deck
   coords, `peak_seconds = ratio·rise_time`, `is_moment==1` slip guard,
   `area_m2 = source.area·1e6`) lands with the MT-5 validation example.
-- **MT-5 — validation example.** FK-vs-FEM overlay + radiation lobes, run-verified, mkdocs.
+- **MT-5a — source-region guard. ✅ SHIPPED.** `region=` on `p.moment_tensor`
+  / `ops.fault.from_shakermaker` restricts the host search to a named PG/label,
+  so a source in the absorbing skin or outside the region fails loud.
+- **MT-5b — radiation-pattern validation. ✅ SHIPPED (run-verified).** A
+  double-couple in a homogeneous box, run as a live transient, reproduces the
+  four-lobe DC P-wave radiation pattern: the first-motion radial velocity on a
+  receiver ring correlates ≈0.90–0.97 with the analytic $\hat\gamma\cdot M\cdot
+  \hat\gamma$ (`tests/opensees/live/test_moment_tensor_radiation_live.py`;
+  `docs/examples/moment-tensor-source.md`). The full **layered-crust FK-vs-FEM
+  waveform overlay** is documented as the cross-venv acceptance procedure (FK
+  in `shakermaker_venv`, FEM in `opensees_venv`) — gate (b) owed to that run.
+- **MT-5c — corrected `from_ffsp`. ⏭ owed.** Re-add with the verified units
+  (metres→deck, `peak_s = ratio·rise`, `is_moment==1` guard,
+  `area_m2 = source.area·1e6`), validated against a real FFSP run.
 - **Deferred:** `/opensees/sources` provenance + viewer beachball; split-node
-  kinematic fault (separate facility).
+  kinematic fault (separate facility — see ADR 0063).
 
 ## Open questions
 
