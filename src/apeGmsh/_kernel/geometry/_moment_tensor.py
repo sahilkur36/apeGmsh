@@ -309,11 +309,14 @@ def dipole_nodal_forces(
 ) -> tuple[ndarray, ndarray]:
     """Force-dipole equivalent of ``M`` on a node's ±axis neighbours.
 
-    For each axis ``j`` the ``+j`` neighbour (at distance ``h_j``) carries
-    ``+M[:, j]/(2 h_j)`` and the ``-j`` neighbour ``−M[:, j]/(2 h_j)``.
-    Net force is zero and the first moment reproduces ``M`` exactly. The
-    central node carries nothing (the couple lives entirely on the
-    neighbours).
+    For each axis ``j`` (with ``+`` neighbour at distance ``h_+`` and
+    ``-`` neighbour at ``h_-``) the couple is placed with a
+    **compensating arm**: ``+M[:, j]/(h_+ + h_-)`` on the ``+`` neighbour
+    and ``−M[:, j]/(h_+ + h_-)`` on the ``-`` neighbour. This gives a net
+    force of **exactly zero** and a first moment that reproduces ``M``
+    even on a *graded* grid (``h_+ ≠ h_-``); for a uniform grid
+    (``h_+ = h_- = h``) it reduces to the textbook ``M[:, j]/(2h)``. The
+    central node carries nothing (the couple lives on the neighbours).
 
     ``plus_spacings`` / ``minus_spacings`` are length-``ndm`` distances to
     the ``+`` and ``−`` neighbour along each axis. Returns
@@ -335,6 +338,8 @@ def dipole_nodal_forces(
                 "needs all 2·ndm neighbours; place the source on an "
                 "interior grid node."
             )
-        fp[j] = Msub[:, j] / (2.0 * hp)
-        fm[j] = -Msub[:, j] / (2.0 * hm)
+        # Compensating arm: F·(arm) reproduces M[:, j] while the equal-and-
+        # opposite pair cancels the net force regardless of hp vs hm.
+        fp[j] = Msub[:, j] / (hp + hm)
+        fm[j] = -Msub[:, j] / (hp + hm)
     return fp, fm

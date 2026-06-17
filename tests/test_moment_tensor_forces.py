@@ -13,6 +13,7 @@ import pytest
 from apeGmsh._kernel.geometry._inverse_map import _HEX8_SIGNS
 from apeGmsh._kernel.geometry._moment_tensor import (
     consistent_nodal_forces,
+    dipole_nodal_forces,
     moment_tensor,
     shape_gradient_phys,
     unit_moment_tensor,
@@ -161,6 +162,53 @@ def test_resolver_dipole_recovers_moment_tensor():
     assert np.allclose(forces.sum(axis=0), 0.0, atol=1e-12)  # net force 0
     fm = _first_moment([coord_of[n] for n in nodes], forces)
     assert np.allclose(fm, M, atol=1e-10)                    # recovers M
+
+
+def test_dipole_nodal_forces_zero_net_on_graded_spacing():
+    """Compensating-arm couple: net force 0 + first moment M even when
+    the ± neighbour spacings differ (graded grid, hp != hm)."""
+    M = moment_tensor(strike=30, dip=45, rake=90, M0=1.0, frame="z-up")
+    plus = np.array([1.0, 1.0, 1.0])
+    minus = np.array([2.0, 0.5, 1.5])          # asymmetric arms
+    fp, fm = dipole_nodal_forces(M, plus_spacings=plus, minus_spacings=minus)
+    # net force exactly zero
+    assert np.allclose(fp.sum(axis=0) + fm.sum(axis=0), 0.0, atol=1e-13)
+    # first moment Σ x⊗f over the 6 neighbours recovers M
+    fmnt = np.zeros((3, 3))
+    for j in range(3):
+        fmnt += np.outer(plus[j] * np.eye(3)[j], fp[j])
+        fmnt += np.outer(-minus[j] * np.eye(3)[j], fm[j])
+    assert np.allclose(fmnt, M, atol=1e-12)
+
+
+def test_resolver_dipole_graded_grid_recovers_moment_tensor():
+    """End-to-end resolver dipole on a grid graded along x (hp != hm at the
+    interior node) — net force 0, first moment M, no spurious raise."""
+    M = moment_tensor(strike=350, dip=40, rake=113, M0=1.0, frame="z-up")
+    # x stations graded (0, 1, 3), y/z uniform (0, 2, 4)
+    xs, ys, zs = [0.0, 1.0, 3.0], [0.0, 2.0, 4.0], [0.0, 2.0, 4.0]
+    pts, ids, k = [], [], 1
+    id_map = {}
+    for z in zs:
+        for y in ys:
+            for x in xs:
+                pts.append((x, y, z))
+                ids.append(k)
+                id_map[k] = (x, y, z)
+                k += 1
+    coords = np.asarray(pts)
+    ids = np.asarray(ids)
+    center = np.array([1.0, 2.0, 2.0])         # interior node, hp=2 hm=1 on x
+    pairs = resolve_moment_tensor_source(
+        position=center, M=M, method="dipole",
+        host_node_ids=[], host_node_coords=[], host_kinds=["hex8"],
+        node_ids=ids, node_coords=coords,
+    )
+    nodes = [n for n, _ in pairs]
+    forces = np.vstack([f for _, f in pairs])
+    assert np.allclose(forces.sum(axis=0), 0.0, atol=1e-12)
+    fm = _first_moment([id_map[n] for n in nodes], forces)
+    assert np.allclose(fm, M, atol=1e-10)
 
 
 def test_resolver_dipole_missing_neighbour_fails_loud():

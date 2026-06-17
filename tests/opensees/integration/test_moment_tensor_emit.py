@@ -88,6 +88,56 @@ def test_dipole_emit_recovers_moment_tensor(box_fem):
     assert np.allclose(fm, M, rtol=1e-6, atol=1.0)
 
 
+def test_partitioned_emit_union_recovers_moment_tensor():
+    """Under OpenSeesMP the per-rank load lines must reproduce the flat deck
+    (Σ_a x_a⊗F_a = M over the union) — the SSI/wave-prop workload runs
+    partitioned, so a silently-dropped source would be a blocker."""
+    g = apeGmsh(model_name="mt_part", verbose=False)
+    g.begin()
+    try:
+        g.model.geometry.add_box(0.0, 0.0, 0.0, 2.0, 2.0, 2.0, label="soil")
+        g.physical.add(3, "soil", name="soil")
+        g.mesh.structured.set_transfinite("soil", n=3)
+        g.mesh.generation.generate(dim=3)
+        g.mesh.partitioning.partition(2)
+        fem = g.mesh.queries.get_fem_data()
+    finally:
+        g.end()
+
+    assert len(fem.partitions) == 2
+    M = 1.0e6 * unit_moment_tensor(strike=350, dip=40, rake=113)
+    ops = apeSees(fem)
+    ops.model(ndm=3, ndf=3)
+    mat = ops.register(ElasticIsotropic(E=1.0e7, nu=0.25, rho=2000.0))
+    ops.element.stdBrick(pg="soil", material=mat)
+    with ops.pattern.Plain(series=ops.timeSeries.Linear()) as p:
+        p.moment_tensor(
+            position=(0.5, 0.5, 0.5), frame="z-down", M0=1.0e6,
+            mech=dict(strike=350, dip=40, rake=113), method="consistent",
+        )
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+
+    # collect load lines and the rank bracket each sits in
+    loads, rank, any_in_partition = [], None, False
+    for name, args, _ in rec.calls:
+        if name == "partition_open":
+            rank = int(args[0])
+        elif name == "partition_close":
+            rank = None
+        elif name == "load":
+            loads.append(args)
+            if rank is not None:
+                any_in_partition = True
+
+    assert loads, "moment-tensor source dropped under partitioned emit"
+    assert any_in_partition, "load lines must sit inside partition blocks"
+    forces, fm = _first_moment_from_loads(fem, [("load", a) for a in loads])
+    scale = np.abs(forces).max()
+    assert np.allclose(forces.sum(axis=0), 0.0, atol=1e-6 * scale)
+    assert np.allclose(fm, M, rtol=1e-6, atol=1.0)
+
+
 def test_non_zero_t0_fails_loud(box_fem):
     ops = apeSees(box_fem)
     ops.model(ndm=3, ndf=3)

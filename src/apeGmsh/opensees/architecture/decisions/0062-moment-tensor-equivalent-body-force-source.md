@@ -203,7 +203,12 @@ integrator-agnostic, fork-change-free path.
 - **Interior-source requirement.** The source must sit inside the intact
   continuum, not in the absorbing skin and not on the free surface (the
   `"dipole"` fallback needs all six neighbours; `"consistent"` needs a
-  non-degenerate host). Fail-loud if the point lands in a skin cell.
+  non-degenerate host). A point *outside* every host fails loud (MT-2).
+  **Skin-cell detection is deferred to MT-5** (it needs the absorbing-PG /
+  element set threaded into the emit-time host walk; the skin is real hex/quad
+  geometry, so it is a geometrically valid host the current guard cannot
+  distinguish). Until MT-5, a skin-placed source emits silently — call it out
+  in the worked example.
 - **Net force/torque zero.** Assert $\sum_a F^a = 0$ and, for a symmetric $M$,
   zero net torque — a non-zero residual means a frame/winding bug.
 - **$\mu$ from the medium, per subfault.** $M_0=\mu A\bar D$ uses the *local*
@@ -236,13 +241,22 @@ run-verified example:
   ShakerMaker `nmtensor` oracle (the ⚠owed convention check — done).
 - **MT-2 — point→host→nodal force. ✅ SHIPPED.** `"consistent"` (host finder
   `_inverse_map.locate_point` + the new `shape_gradient_phys` Jacobian-inverse
-  projection — see open-Q #3) and `"dipole"` fallback;
+  projection — see open-Q #3) and `"dipole"` fallback (compensating-arm couple
+  — net-force-zero on *graded* grids too, not just uniform);
   `Plain.moment_tensor(position, frame, M0, mech|m_ij, method)` authoring
-  surface; bridge emit (`_emit_moment_tensor_record`); interior-source +
-  **exact** net-force-zero guard. Decisive test: emitted forces recover the
-  moment tensor as their first moment ($\sum_a x_a\otimes F_a = M$), unit +
-  e2e on a real meshed hex box. **`t0 \neq 0` fails loud — per-source onset
-  delay is MT-4.**
+  surface; bridge emit, **flat *and* partitioned (OpenSeesMP)** — the
+  per-rank load lines reproduce the flat deck (the SSI/wave-prop workload runs
+  partitioned). Out-of-continuum points fail loud (MT-flavoured `BridgeError`),
+  and the **exact** net-force-zero invariant is asserted. Decisive test:
+  emitted forces recover the moment tensor as their first moment
+  ($\sum_a x_a\otimes F_a = M$), unit + e2e on a real meshed hex box.
+  **`t0 \neq 0` fails loud — per-source onset delay is MT-4.** ⚠ The
+  *interior-source* guard rejects points outside the continuum but does **not**
+  yet detect a point that lands *inside the absorbing skin* (a valid host
+  geometrically) — that needs the absorbing-PG plumbing wired in **MT-5** when
+  the plane-wave-box integration lands; until then a skin-placed source emits
+  silently. Documented on `p.moment_tensor` ("must lie inside the intact
+  continuum").
 - **MT-3 — moment-function helpers → `Path`. ✅ SHIPPED.**
   `ops.timeSeries.MomentStep` (erf ramp) + `Yoffe` (regularized modified-Yoffe,
   Tinti 2005) façades; shared spectral band-limit warn

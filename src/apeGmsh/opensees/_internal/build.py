@@ -2475,22 +2475,22 @@ def _collect_continuum_hosts(
     return host_ids, host_coords, host_kinds, model_ndm, ids, coords
 
 
-def _emit_moment_tensor_record(
-    rec: "Any",
-    emitter: "Emitter",
-    fem: "FEMData",
-    ndf_of: "Callable[[int], int]",
-    ndm: int = 3,
-) -> None:
-    """Resolve a ``Plain.moment_tensor`` source into nodal ``load`` lines.
+def resolve_moment_tensor_pairs(
+    rec: "Any", fem: "FEMData",
+) -> list[tuple[int, np.ndarray]]:
+    """Resolve one ``Plain.moment_tensor`` source into ``(node, force_xyz)``.
 
     Builds the moment tensor in the mesh frame, locates the host (or grid
-    node) in ``fem``, turns the representation-theorem body force into
-    per-node forces, and emits each as a ``load`` line mapped onto the
-    node's effective ndf. The pattern's time series supplies ``S(t)``.
+    node) in ``fem``, and turns the representation-theorem body force into
+    per-node force vectors (length-3, padded). Shared by the flat emit
+    (:func:`_emit_moment_tensor_record`) and the partitioned emit
+    (``apeSees._owned_moment_tensor_lines``) so both paths agree.
+
+    Raises ``NotImplementedError`` for a non-zero rupture onset (MT-4),
+    and a clear MT-flavoured ``ValueError`` (not the reinforcement-worded
+    inverse-map message) when the source lies outside the continuum.
     """
     from apeGmsh._kernel.geometry._moment_tensor import moment_tensor
-    from apeGmsh._kernel.records._loads import NodalLoadRecord
     from apeGmsh._kernel.resolvers._moment_tensor import (
         resolve_moment_tensor_source,
     )
@@ -2516,17 +2516,46 @@ def _emit_moment_tensor_record(
     host_ids, host_coords, host_kinds, _model_ndm, all_ids, all_coords = (
         _collect_continuum_hosts(fem)
     )
-    pairs = resolve_moment_tensor_source(
-        position=np.asarray(rec.position, dtype=float),
-        M=M,
-        method=rec.method,
-        host_node_ids=host_ids,
-        host_node_coords=host_coords,
-        host_kinds=host_kinds,
-        node_ids=all_ids,
-        node_coords=all_coords,
-    )
-    for node, force in pairs:
+    try:
+        return resolve_moment_tensor_source(
+            position=np.asarray(rec.position, dtype=float),
+            M=M,
+            method=rec.method,
+            host_node_ids=host_ids,
+            host_node_coords=host_coords,
+            host_kinds=host_kinds,
+            node_ids=all_ids,
+            node_coords=all_coords,
+            label=f"moment_tensor @ {tuple(rec.position)}",
+        )
+    except ValueError as exc:
+        if rec.method == "consistent" and "outside every host" in str(exc):
+            raise BridgeError(
+                f"moment_tensor: the source at {tuple(rec.position)} lies "
+                f"outside the continuum mesh — every seismic source must sit "
+                f"inside an element. Move the point into the intact continuum "
+                f"(not on the free surface, not in the absorbing skin)."
+            ) from exc
+        raise
+
+
+def _emit_moment_tensor_record(
+    rec: "Any",
+    emitter: "Emitter",
+    fem: "FEMData",
+    ndf_of: "Callable[[int], int]",
+    ndm: int = 3,
+) -> None:
+    """Resolve a ``Plain.moment_tensor`` source into nodal ``load`` lines.
+
+    Locates the host (or grid node) in ``fem``, turns the
+    representation-theorem body force into per-node forces, and emits each
+    as a ``load`` line mapped onto the node's effective ndf. The pattern's
+    time series supplies ``S(t)``.
+    """
+    from apeGmsh._kernel.records._loads import NodalLoadRecord
+
+    for node, force in resolve_moment_tensor_pairs(rec, fem):
         nl = NodalLoadRecord(
             node_id=int(node),
             force_xyz=(float(force[0]), float(force[1]), float(force[2])),
