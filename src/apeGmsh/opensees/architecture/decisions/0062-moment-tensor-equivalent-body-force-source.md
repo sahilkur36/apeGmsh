@@ -1,10 +1,16 @@
 # ADR 0062 — Moment-tensor equivalent body-force source (embedded seismic source)
 
-**Status:** Proposed (2026-06-17; design draft). **MT-1 → MT-3 SHIPPED
+**Status:** Proposed (2026-06-17; design draft). **MT-1 → MT-3 + MT-4a SHIPPED
 (2026-06-17)** — the MT math core, the point→host→nodal-force build with the
-`p.moment_tensor` authoring surface, and the `S(t)` moment-function helpers
-are on `feat/mt-source-adr`. MT-4 (ShakerMaker adapter) + MT-5 (validation
-example) remain. Pairs with [0054](0054-asd-absorbing-boundary.md) (the
+`p.moment_tensor` authoring surface, the `S(t)` moment-function helpers, and
+the bridge-level `ops.fault.from_shakermaker` finite-fault adapter. **MT-4b
+(`from_ffsp`) is deferred to MT-5**: an adversarial review source-verified that
+FFSP `get_subfaults()` units differ from the original premise (coords are
+**metres** not km — `ffsp_wrapper.f90` ×1000; `peak_time` is the dimensionless
+ratio `pktm/(rstm+pktm)` not seconds — `spfield_n.f90:589,598`; `slip` is
+rescaled by `area_sub/μ` when `is_moment>1`), so a correct `M0` needs
+validation against a real FFSP run. MT-5 (FK-vs-FEM validation example +
+absorbing-skin guard + the corrected `from_ffsp`) remains. Pairs with [0054](0054-asd-absorbing-boundary.md) (the
 absorbing skin the source radiates into), rides the load/pattern machinery of
 [0005](0005-patterns-explicit.md) /
 [0007](0007-time-series-separated-from-pattern.md) /
@@ -118,7 +124,9 @@ integrator-agnostic, fork-change-free path.
    warn fires if $\dot S$ carries energy above the mesh's resolvable frequency
    (the P=3 dispersion lesson, ADR 0054 AB-4).
 
-5. **ShakerMaker adapter — a finite fault is a loop of sources.**
+5. **ShakerMaker adapter — a finite fault is a loop of sources.** *(Shipped as
+   bridge-level `ops.fault.*` returning one pattern per source, not `p.from_*` —
+   see open-Q #2 / the slice plan; the prose below predates that resolution.)*
    `p.from_shakermaker(fault)` ingests a ShakerMaker `FaultSource` (a list of
    `PointSource`, each with `x`, `angles=[φ,δ,λ]`, `tt`, `stf`); each becomes one
    `moment_tensor(...)`. `p.from_ffsp(subfaults, crust)` ingests
@@ -261,10 +269,24 @@ run-verified example:
   `ops.timeSeries.MomentStep` (erf ramp) + `Yoffe` (regularized modified-Yoffe,
   Tinti 2005) façades; shared spectral band-limit warn
   (`WarnMomentFunctionBandwidth`).
-- **MT-4 — ShakerMaker adapter.** `from_shakermaker(fault)` / `from_ffsp(subfaults, crust)`;
-  per-subfault $\mu A\bar D$, $t_0$ delays, the km→m / N·m→kN·m units contract.
-  ⚠ `PointSource.angles` returns **radians** (`pointsource.py:39`) despite its
-  degrees docstring — convert in the adapter.
+- **MT-4a — `ops.fault.from_shakermaker`. ✅ SHIPPED.** **Bridge-level**
+  (open-Q #2 resolved: **one `Plain` pattern per source**, since OpenSees binds
+  one `timeSeries` per pattern). Each source's rupture onset rides its own
+  `Yoffe(t0=tt)`; the `moment_tensor` record's own `t0` stays 0 (no clash with
+  the MT-2 guard). Duck-types the `FaultSource` (reads `.x`/`.angles`/`.tt`, no
+  import — **`.angles` is radians**, converted to degrees) and takes `M0`
+  +rise/peak directly (a `PointSource` carries none). Required `length_scale`
+  (km→deck). Guards: `WarnFaultSubfaultSkipped` (zero moment/rise/peak),
+  `WarnFaultPeakClamped` (peak_time clamped below rise/2 for the Yoffe bound),
+  `WarnFaultSubfaultTruncated` (onset/rise outside `t_total`). Per-subfault
+  patterns emit flat and partitioned.
+- **MT-4b — `ops.fault.from_ffsp`. ⏭ DEFERRED to MT-5.** The FFSP
+  `get_subfaults()` unit contract is source-verified to differ from the design
+  premise on all three axes (coords metres; `peak_time` ratio; `slip`
+  `is_moment`-rescaled), and a correct `M0=\mu A\bar D` needs end-to-end
+  validation against a real FFSP run. The corrected adapter (metres→deck
+  coords, `peak_seconds = ratio·rise_time`, `is_moment==1` slip guard,
+  `area_m2 = source.area·1e6`) lands with the MT-5 validation example.
 - **MT-5 — validation example.** FK-vs-FEM overlay + radiation lobes, run-verified, mkdocs.
 - **Deferred:** `/opensees/sources` provenance + viewer beachball; split-node
   kinematic fault (separate facility).
@@ -278,7 +300,11 @@ run-verified example:
    under `ops.timeSeries`. A finite fault with per-subfault $t_0$ (MT-4) will
    share one $S$ shifted per-load, or one series per unique rise time.
 2. Per-subfault $t_0$ delay — a single `Path` with per-`load` time shift, or
-   N series? (Cost vs deck size; decide in MT-4. MT-2 fails loud on $t_0\neq0$.)
+   N series? **RESOLVED (MT-4): one pattern + one `Yoffe` series per subfault**,
+   the series carrying the onset (`t0=rupture_time`). Cleanest mapping onto
+   OpenSees' one-series-per-pattern binding; deck size scales with subfault
+   count (inherent to a propagating finite-fault rupture). MT-2's
+   `moment_tensor` `t0` stays 0 — the delay lives in the series, not the load.
 3. Does ADR 0036's host decomposition expose $\partial N/\partial x$ at an
    arbitrary interior point, or only the corner-coupling weights?
    **RESOLVED (MT-2): only the latter.** `_inverse_map` returns $\xi$, the

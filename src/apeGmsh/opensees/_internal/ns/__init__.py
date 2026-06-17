@@ -20,6 +20,7 @@ from .analysis import (
 from .beam_integration import _BeamIntegrationNS
 from .damping import _DampingNS, _StageDampingNS
 from .element import _ElementNS
+from .fault import _FaultNS
 from .geom_transf import _GeomTransfNS
 from .nd import _NDMaterialNS
 from .pattern import _PatternNS
@@ -42,6 +43,7 @@ __all__ = [
     "_StageDampingNS",
     "_TimeSeriesNS",
     "_PatternNS",
+    "_FaultNS",
     "_ElementNS",
     "_ProfilerNS",
     "_RecorderNS",

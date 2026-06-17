@@ -90,6 +90,7 @@ from ._internal.ns import (
     _ConstraintsNS,
     _DampingNS,
     _ElementNS,
+    _FaultNS,
     _GeomTransfNS,
     _IntegratorNS,
     _NDMaterialNS,
@@ -4896,6 +4897,7 @@ class apeSees:
         self.beamIntegration  = _BeamIntegrationNS(self)
         self.timeSeries       = _TimeSeriesNS(self)
         self.pattern          = _PatternNS(self)
+        self.fault            = _FaultNS(self)
         self.element          = _ElementNS(self)
         self.recorder         = _RecorderNS(self)
         self.profiler         = _ProfilerNS(self)
