@@ -124,7 +124,8 @@ integrator-agnostic, fork-change-free path.
    and a per-subfault Yoffe `S` from `rise_time`/`peak_time`. The FK Green's
    functions are shared across an FFSP ensemble, but that amortization is
    ShakerMaker's; here every realization is just a different fault of point
-   sources.
+   sources. **The dependency direction is fixed by decision 8 — apeGmsh imports
+   nothing from ShakerMaker.**
 
 6. **Units contract (fail-loud).** ShakerMaker/FFSP author in **km** and
    **N·m**; the deck is **kN·m·s** (`baseUnits`). The adapter converts coords
@@ -136,6 +137,33 @@ integrator-agnostic, fork-change-free path.
    group (strike/dip/rake, $M_0$, position, $t_0$) is a **deferred follow-up**
    for `model.h5` so the viewer can draw beachballs and `Results` can label the
    source.
+
+8. **Dependency contract — ShakerMaker is NOT an apeGmsh dependency; the
+   interchange is plain data.** A general meshing/FEM library must not couple to
+   a niche FK-seismology package (most apeGmsh users never touch it), consistent
+   with the decoupling doctrine of [0001](0001-decouple-from-gmsh-session.md) /
+   [0009](0009-no-backwards-compat-with-solvers.md). **The dependency arrow never
+   points apeGmsh → ShakerMaker.** Concretely:
+   - **Neutral core.** `p.moment_tensor(...)` and the force / $S(t)$ builders
+     take only scalars and numpy arrays (`position`, `M0` or $\mu A\bar D$,
+     `strike/dip/rake` or `m_ij`, `rise/peak` times). They import nothing
+     seismological.
+   - **Primary path is the plain dict.** `p.from_ffsp(subfaults, crust)` consumes
+     the `get_subfaults()` **dict of aligned numpy arrays** + a plain crust
+     description, and imports **no** ShakerMaker symbol — the interchange is data,
+     not objects.
+   - **Live-object path is duck-typed.** `p.from_shakermaker(fault)` iterates the
+     object and reads each sub-source's documented public attributes
+     (`.x`, `.angles`, `.tt`) — no `import shakermaker`. A typed,
+     `isinstance`-validating variant, *if* ever wanted, hides behind an **optional
+     extra** `apeGmsh[shakermaker]` with a **lazy import inside the function**,
+     never at module top.
+   - **apeGmsh owns the STF.** `S(t)` is built by the decision-4 helpers from
+     `rise/peak` times; ShakerMaker's STF classes are not imported. A caller may
+     instead pass a pre-sampled `(t, S)` array, used verbatim.
+   - Net: the glue, if any, is a few lines the user owns (e.g. the Ladruno
+     project) or the optional lazy adapter — `core/test` apeGmsh has zero
+     seismology imports.
 
 ## Why not the alternatives
 
