@@ -287,6 +287,24 @@ class TestLadrunoFilterValidation:
         assert r.energy is True
         assert r.has_filter() is False
 
+    def test_energy_pg_alone_is_legal(self) -> None:
+        # energy_pg implies energy recording — no other channel needed.
+        r = Ladruno(file="run.ladruno", energy_pg="Core")
+        assert r.energy_pg == "Core"
+        assert r.has_filter() is False  # energy_pg is NOT a value filter
+
+    def test_energy_pg_with_independent_value_filter_is_legal(self) -> None:
+        # Decoupled: value channels over "Shell", energy over "Core".
+        r = Ladruno(
+            file="run.ladruno",
+            elem_responses=("stresses",),
+            elements_pg="Shell",
+            energy_pg="Core",
+        )
+        assert r.elements_pg == "Shell"
+        assert r.energy_pg == "Core"
+        assert r.has_filter() is True
+
 
 class TestLadrunoFilterEmit:
     def test_emit_with_region_tag_appends_R_flag(self) -> None:
@@ -349,6 +367,46 @@ class TestLadrunoFilterEmit:
         e = RecordingEmitter()
         r._emit(e, tag=1)
         assert e.calls[0][1] == ("ladruno", "run.ladruno", "-G", "energy")
+
+    def test_decoupled_energy_region_emits_energy_tag(self) -> None:
+        # energy_pg materialized into _energy_region_tags -> the energy
+        # tag trails ``-G energy`` (decoupled from any -R value filter).
+        r = Ladruno(
+            file="run.ladruno",
+            nodal_responses=("displacement",),
+            _energy_region_tags=(7,),
+        )
+        e = RecordingEmitter()
+        r._emit(e, tag=1)
+        assert e.calls[0][1] == (
+            "ladruno", "run.ladruno", "-N", "displacement", "-G", "energy", 7,
+        )
+
+    def test_decoupled_energy_takes_precedence_over_filter_tag(self) -> None:
+        # When BOTH a value filter (_region_tag) and a decoupled energy
+        # region (_energy_region_tags) are present, -R uses the filter tag
+        # and -G energy uses the energy tag (not the filter tag).
+        r = Ladruno(
+            file="run.ladruno",
+            elem_responses=("stresses",),
+            elements=(5,),
+            energy=True,
+            _region_tag=3,
+            _energy_region_tags=(8,),
+        )
+        e = RecordingEmitter()
+        r._emit(e, tag=1)
+        assert e.calls[0][1] == (
+            "ladruno", "run.ladruno", "-E", "stresses",
+            "-R", 3, "-G", "energy", 8,
+        )
+
+    def test_energy_pg_path_raises_not_implemented(self) -> None:
+        # Defense-in-depth — an unmaterialised energy_pg= must raise.
+        r = Ladruno(file="run.ladruno", energy_pg="Core")
+        e = RecordingEmitter()
+        with pytest.raises(NotImplementedError, match="build pipeline"):
+            r._emit(e, tag=1)
 
     def test_pg_path_raises_not_implemented(self) -> None:
         # Defense-in-depth — calling _emit directly with a pg= selector

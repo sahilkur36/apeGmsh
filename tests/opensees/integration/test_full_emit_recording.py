@@ -698,6 +698,51 @@ def test_ladruno_filter_plus_energy_emits_per_region_energy() -> None:
     assert lad_args[-3:] == ("-G", "energy", region_tag)
 
 
+def test_ladruno_energy_pg_emits_independent_energy_region() -> None:
+    """ADR 0064 §4 (decoupled): energy_pg= records energy over its OWN
+    region, independent of the value filter. With a value filter over one
+    PG and energy_pg over another, TWO distinct regions are emitted; the
+    ladruno line carries ``-R $filterTag`` and ``-G energy $energyTag``
+    with different tags."""
+    fem = make_two_column_frame()  # PG "Base" -> nodes (1,3); "Cols" -> eids
+
+    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+    ops.recorder.Ladruno(
+        file="run.ladruno",
+        nodal_responses=("displacement",),
+        nodes_pg="Base",       # value channels filtered to Base nodes
+        energy_pg="Cols",      # energy over the Cols elements (decoupled)
+    )
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+
+    region_calls = [c for c in rec.calls if c[0] == "region"]
+    lad_calls = [
+        c for c in rec.calls if c[0] == "recorder" and c[1][0] == "ladruno"
+    ]
+    # Two regions: the Base node filter + the Cols energy region.
+    assert len(region_calls) == 2
+    assert len(lad_calls) == 1
+
+    # Classify the two regions by their flag (-node vs -ele).
+    node_regions = [c for c in region_calls if "-node" in c[1]]
+    ele_regions = [c for c in region_calls if "-ele" in c[1]]
+    assert len(node_regions) == 1 and len(ele_regions) == 1
+    filter_tag = node_regions[0][1][0]
+    energy_tag = ele_regions[0][1][0]
+    assert filter_tag != energy_tag
+
+    lad_args = lad_calls[0][1]
+    assert lad_args[lad_args.index("-R") + 1] == filter_tag
+    assert lad_args[-3:] == ("-G", "energy", energy_tag)
+
+
 def test_ladruno_region_persists_to_model_h5() -> None:
     """ADR 0064: a region-filtered Ladruno archives into model.h5 like
     MPCO — ONE recorder group (type ``ladruno``) carrying ``-R <tag>``

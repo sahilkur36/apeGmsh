@@ -416,6 +416,61 @@ def test_ladruno_region_emitted_per_rank_under_partitioning() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Test 3c — Ladruno decoupled energy region per-rank (ADR 0064 §4)
+# ---------------------------------------------------------------------------
+
+def test_ladruno_energy_pg_region_emitted_per_rank() -> None:
+    """ADR 0064 §4: a decoupled `energy_pg` region gets its OWN per-rank
+    fan-out, exactly like the value-filter region. With a value filter
+    over "Base" nodes and `energy_pg="Cols"`, each rank emits TWO regions
+    (its owned Base nodes + its owned Cols elements), each with a shared
+    tag, and the recorder line carries `-R $filterTag -G energy $energyTag`.
+    """
+    fem = make_two_column_frame_partitioned()
+    ops = apeSees(cast("object", fem))  # type: ignore[arg-type]
+    ops.model(ndm=3, ndf=6)
+    transf = ops.geomTransf.Linear(vecxz=(1.0, 0.0, 0.0))
+    ops.element.elasticBeamColumn(
+        pg="Cols", transf=transf,
+        A=0.01, E=200e9, Iz=1e-4, Iy=1e-4, G=80e9, J=1e-4,
+    )
+    ops.recorder.Ladruno(
+        file="out/run.ladruno",
+        nodal_responses=("displacement",),
+        nodes_pg="Base",
+        energy_pg="Cols",
+    )
+
+    rec = RecordingEmitter()
+    ops.build().emit(rec)
+
+    lad_globals = _ladruno_recorder_calls(_global_calls(rec))
+    assert len(lad_globals) == 1
+    lad_args = lad_globals[0][1]
+    filter_tag = _scan_dash_R(lad_args)
+    assert filter_tag is not None
+    # -G energy <energyTag> trails; energyTag differs from the filter tag.
+    assert lad_args[-3:-1] == ("-G", "energy")
+    energy_tag = int(lad_args[-1])
+    assert energy_tag != filter_tag
+
+    # Each rank emits its filter region (-node) and energy region (-ele),
+    # both carrying the shared tags.
+    per_rank = _per_rank_calls(rec)
+    for rk in (0, 1):
+        regions = _region_calls(per_rank[rk])
+        tags_here = {int(c[1][0]) for c in regions}
+        assert filter_tag in tags_here, f"rank {rk} missing filter region"
+        assert energy_tag in tags_here, f"rank {rk} missing energy region"
+        # The energy region carries -ele (Cols), the filter region -node.
+        for c in regions:
+            if int(c[1][0]) == energy_tag:
+                assert "-ele" in c[1]
+            if int(c[1][0]) == filter_tag:
+                assert "-node" in c[1]
+
+
+# ---------------------------------------------------------------------------
 # Test 4 — H5 persistence under partitioning
 # ---------------------------------------------------------------------------
 

@@ -130,7 +130,7 @@ from ._internal.types import (
 )
 from .emitter.base import Emitter, StrategySpec
 from .node import Node, _NodeAccessor, _iter_tags
-from .recorder import FilterableRecorder
+from .recorder import FilterableRecorder, Ladruno
 from .transform import Cartesian, Orientation
 
 if TYPE_CHECKING:
@@ -326,32 +326,46 @@ def _fem_has_mp_constraints(fem: "FEMData") -> bool:
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
+class _RegionEmit:
+    """One auto-emitted ``region`` (a filter region or a Ladruno energy
+    region) plus its resolved members, for the partitioned per-rank pass.
+
+    ``elem_ids`` carries **FEM eids** (not OpenSees element tags): the
+    per-rank intersection in
+    :meth:`BuiltModel._emit_mpco_filter_regions_for_rank` is keyed by
+    ``element_owner`` which is FEM-eid keyed; the translation to OpenSees
+    tags happens at the final region-emit step on each rank. A filter
+    region carries node + element members; an energy region carries
+    elements only (the fork auto-derives its nodes).
+    """
+    tag: int
+    node_ids: tuple[int, ...]
+    elem_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class _MPCOFilterPlan:
-    """Pre-resolved filter ids + shared region tag for one MPCO recorder.
+    """Pre-resolved regions for one filter-bearing / energy-region recorder.
 
     Built once before the partitioned per-rank loop in
     :meth:`BuiltModel._emit_partitioned`; consumed by
     :meth:`BuiltModel._emit_mpco_filter_regions_for_rank` (inside each
     rank block) and by the global recorder emit pass after the loop.
 
-    The ``materialised_spec`` carries ``_region_tag`` populated and
-    ``nodes_pg`` / ``elements_pg`` cleared so the spec's ``_emit``
-    appends ``-R <region_tag>`` to the ``recorder`` line without
-    re-entering ``FilterableRecorder.materialize`` (which would otherwise
-    allocate a new region tag and re-emit the region globally — the buggy
-    pre-ADR-0027 INV-4 behaviour for the partitioned path). The spec is
-    any :class:`recorder.FilterableRecorder` (MPCO or Ladruno, ADR 0064).
+    The ``materialised_spec`` carries ``_region_tag`` (and, for a Ladruno
+    with ``energy_pg``, ``_energy_region_tags``) populated and the ``*_pg``
+    selectors cleared, so the spec's ``_emit`` appends ``-R <tag>`` /
+    ``-G energy <tag...>`` without re-entering ``materialize`` (which would
+    otherwise allocate fresh tags and re-emit regions globally — the buggy
+    pre-ADR-0027 INV-4 behaviour for the partitioned path). The spec is any
+    :class:`recorder.FilterableRecorder` (MPCO or Ladruno, ADR 0064).
 
-    ``elem_ids`` carries **FEM eids** (not OpenSees element tags).
-    Per-rank intersection in
-    :meth:`BuiltModel._emit_mpco_filter_regions_for_rank` is keyed by
-    ``element_owner`` which is FEM-eid keyed; the translation to
-    OpenSees tags happens at the final region-emit step on each rank.
+    ``regions`` holds every region the recorder needs — the value-channel
+    filter region (if any) followed by Ladruno energy regions (if any) —
+    each emitted per-rank with its owned-member intersection.
     """
-    region_tag: int
-    node_ids: tuple[int, ...]
-    elem_ids: tuple[int, ...]
     materialised_spec: "FilterableRecorder"
+    regions: tuple["_RegionEmit", ...]
 
 
 # ---------------------------------------------------------------------------
@@ -4101,26 +4115,26 @@ class BuiltModel:
         post_element: "list[Primitive]",
         tags: TagAllocator,
     ) -> "dict[int, _MPCOFilterPlan]":
-        """Pre-resolve filter ids + allocate one region tag per filter-bearing MPCO.
+        """Pre-resolve + allocate region tag(s) per region-bearing recorder.
 
-        Returns a dict keyed by ``id(spec)`` carrying the resolved
-        ``(node_ids, elem_ids)`` plus the shared region tag and the
-        materialised spec (with ``_region_tag`` populated, filters
-        cleared, ready for ``_emit``).  Non-MPCO recorders and
-        whole-model MPCO recorders are absent from the dict; the
-        caller routes them through the unchanged
+        Returns a dict keyed by ``id(spec)`` carrying the recorder's
+        regions (value-channel filter region + any Ladruno ``energy_pg``
+        energy region, each with resolved FEM-eid members) plus the
+        materialised spec (``_region_tag`` / ``_energy_region_tags``
+        populated, ``*_pg`` selectors cleared, ready for ``_emit``).
+        Recorders with neither a filter nor an energy region are absent
+        from the dict; the caller routes them through the unchanged
         :func:`emit_recorder_spec` global pass.
 
         The plan is built ONCE before the per-rank loop so:
 
-        1. The region tag is the SAME scalar across every rank that
+        1. Each region tag is the SAME scalar across every rank that
            emits its rank-intersection of the region (INV-4: stitching
            by tag identity).
         2. ``_emit`` is bypass-safe — the materialised spec carries the
-           shared ``_region_tag`` directly, so the global recorder pass
-           after the per-rank loop simply forwards ``-R <tag>`` onto the
-           ``recorder mpco`` line without re-allocating a tag or re-
-           emitting the region globally.
+           shared tags directly, so the global recorder pass after the
+           per-rank loop simply forwards ``-R <tag>`` / ``-G energy
+           <tag>`` without re-allocating tags or re-emitting regions.
         """
         plan: dict[int, _MPCOFilterPlan] = {}
         for p in post_element:
@@ -4129,23 +4143,42 @@ class BuiltModel:
             # so the per-rank region pass covers both recorder kinds.
             if not isinstance(p, FilterableRecorder):
                 continue
-            if not p.has_filter():
+            regions: list[_RegionEmit] = []
+            materialised: FilterableRecorder = p
+
+            # Value-channel filter region (-R), shared by MPCO + Ladruno.
+            if p.has_filter():
+                node_ids, elem_ids = p.resolve_filter_ids(self.fem)
+                region_tag = tags.allocate("region")
+                regions.append(_RegionEmit(region_tag, node_ids, elem_ids))
+                materialised = replace(
+                    materialised,
+                    nodes_pg=None,
+                    elements_pg=None,
+                    nodes=node_ids if node_ids else None,
+                    elements=elem_ids if elem_ids else None,
+                    _region_tag=region_tag,
+                )
+
+            # Decoupled energy region (-G energy $tag), Ladruno only
+            # (ADR 0064 §4). Independent of the value filter: its own tag,
+            # its own per-rank fan-out.
+            if isinstance(p, Ladruno) and p.energy_pg is not None:
+                e_eids = p.resolve_energy_ids(self.fem)
+                energy_tag = tags.allocate("region")
+                regions.append(_RegionEmit(energy_tag, (), e_eids))
+                assert isinstance(materialised, Ladruno)
+                materialised = replace(
+                    materialised,
+                    energy_pg=None,
+                    _energy_region_tags=(energy_tag,),
+                )
+
+            if not regions:
                 continue
-            node_ids, elem_ids = p.resolve_filter_ids(self.fem)
-            region_tag = tags.allocate("region")
-            materialised = replace(
-                p,
-                nodes_pg=None,
-                elements_pg=None,
-                nodes=node_ids if node_ids else None,
-                elements=elem_ids if elem_ids else None,
-                _region_tag=region_tag,
-            )
             plan[id(p)] = _MPCOFilterPlan(
-                region_tag=region_tag,
-                node_ids=node_ids,
-                elem_ids=elem_ids,
                 materialised_spec=materialised,
+                regions=tuple(regions),
             )
         return plan
 
@@ -4190,41 +4223,44 @@ class BuiltModel:
             return
         from ._internal.build import BridgeError
         for entry in plan.values():
-            # Per-rank node intersection — preserves original declaration order.
-            rank_node_ids = tuple(
-                n for n in entry.node_ids if int(n) in owned_nodes
-            )
-            # Per-rank element intersection — keep elements whose owner
-            # is this rank.  Element ownership is single-rank
-            # (build_element_partition_owner), so a missing key means
-            # the element isn't on any rank — skip silently.
-            rank_fem_eids = tuple(
-                e for e in entry.elem_ids
-                if element_owner.get(int(e)) == rank
-            )
-            if not rank_node_ids and not rank_fem_eids:
-                # INV-4: empty intersection on this rank → no region line.
-                continue
-            region_args: list[int | float | str] = []
-            if rank_node_ids:
-                region_args += ["-node", *rank_node_ids]
-            if rank_fem_eids:
-                rank_ops_tags: list[int] = []
-                for eid in rank_fem_eids:
-                    ops_tag = fem_eid_to_ops_tag.get(int(eid))
-                    if ops_tag is None:
-                        kind = type(entry.materialised_spec).__name__
-                        raise BridgeError(
-                            f"{kind} recorder filter (rank {rank}): "
-                            f"resolves to FEM eid {eid} but no element "
-                            "was emitted at that eid — declare an "
-                            "``ops.element.X(pg=...)`` primitive whose "
-                            f"pg includes the {kind} recorder's "
-                            "elements_pg."
-                        )
-                    rank_ops_tags.append(int(ops_tag))
-                region_args += ["-ele", *rank_ops_tags]
-            emitter.region(entry.region_tag, *region_args)
+            kind = type(entry.materialised_spec).__name__
+            # A recorder may carry several regions (value-channel filter +
+            # Ladruno energy region); emit each one's per-rank intersection.
+            for region in entry.regions:
+                # Per-rank node intersection — preserves declaration order.
+                rank_node_ids = tuple(
+                    n for n in region.node_ids if int(n) in owned_nodes
+                )
+                # Per-rank element intersection — keep elements whose owner
+                # is this rank.  Element ownership is single-rank
+                # (build_element_partition_owner), so a missing key means
+                # the element isn't on any rank — skip silently.
+                rank_fem_eids = tuple(
+                    e for e in region.elem_ids
+                    if element_owner.get(int(e)) == rank
+                )
+                if not rank_node_ids and not rank_fem_eids:
+                    # INV-4: empty intersection on this rank → no region.
+                    continue
+                region_args: list[int | float | str] = []
+                if rank_node_ids:
+                    region_args += ["-node", *rank_node_ids]
+                if rank_fem_eids:
+                    rank_ops_tags: list[int] = []
+                    for eid in rank_fem_eids:
+                        ops_tag = fem_eid_to_ops_tag.get(int(eid))
+                        if ops_tag is None:
+                            raise BridgeError(
+                                f"{kind} recorder region (rank {rank}): "
+                                f"resolves to FEM eid {eid} but no element "
+                                "was emitted at that eid — declare an "
+                                "``ops.element.X(pg=...)`` primitive whose "
+                                f"pg includes the {kind} recorder's "
+                                "elements_pg / energy_pg."
+                            )
+                        rank_ops_tags.append(int(ops_tag))
+                    region_args += ["-ele", *rank_ops_tags]
+                emitter.region(region.tag, *region_args)
 
     def _resolve_node_target(
         self, pg: str | None, nodes: tuple[int, ...] | None,
