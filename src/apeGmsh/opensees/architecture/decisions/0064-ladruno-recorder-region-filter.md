@@ -213,11 +213,15 @@ the energy flag.
   filter emits `-G energy $region_tag` (coupled, PE); `energy_pg=` emits
   `-G energy $energyTag` over an **independent** region (decoupled, EPG), with
   its own per-rank INV-4 fan-out — both run-verified on the deployed fork build.
-  The reader (`Results.energy(region=<tag>)`) was already in place. Residual
-  deferral is a **UX** item only (shared by all auto-region recorders, not
-  energy-specific): discovering the bridge-allocated region tag from a PG name to
-  pass to `Results.energy(region=…)` — today it surfaces via the reader's
-  "recorded region tags: […]" error and `/opensees/regions`.
+  The reader (`Results.energy(region=<tag>)`) was already in place.
+  **Tag discovery — SHIPPED:** `Results.energy_regions()` lists the recorded
+  per-region energy tags (read from `ON_REGIONS/energyBalance/ID`), so a user can
+  pick one for `energy(region=…)` without knowing the bridge-allocated integer.
+  The deeper PG-**name** lookup (`energy(region="Core")`) was scoped out: the
+  PG→tag link is destroyed at `materialize` time, so a name lookup would need
+  either a schema bump to persist `source_pg` or fragile read-time id-space
+  matching — deferred as not worth the cost vs. the discovery helper. (This UX is
+  shared by all auto-region recorders, not energy-specific.)
 
 - **Staged path.** `s.recorder` (ADR 0034) drives the same `emit_recorder_spec`
   → `materialize` → `_emit` pipeline, so a region-filtered `Ladruno` inside an
