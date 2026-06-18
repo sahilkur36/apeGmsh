@@ -39,9 +39,23 @@ exactly what makes per-region energy ride the existing flat / staged /
 partitioned region plumbing with zero new wiring. So `energy=True` + a filter now
 emits `-G energy $tag` over that region; `energy=True` alone stays whole-model.
 The consumer side (`Results.energy(region=<tag>)` reading `ON_REGIONS`) was
-already built. Remaining follow-up: a **decoupled** energy region (`energy_pg=`)
-for energy over a region *without* filtering the value channels to it — the fork
-supports the orthogonal list; the bridge does not yet expose it.
+already built.
+
+**Follow-up shipped — decoupled energy region (`energy_pg=`, EPG).** The
+remaining coupling (energy could only be recorded over the *value-filter*
+region) is now lifted: `energy_pg=` records energy over an **independent**
+region, orthogonal to the `-R` value filter (run-verified on the deployed build:
+`-E axialForce -R 5 -T nsteps 1 -G energy 10` — value channels over region 5,
+energy over region 10 — writes both `ON_DOMAIN` and `ON_REGIONS`). A Ladruno can
+now carry up to two auto-emitted regions (the value filter + the energy region);
+the partition planner (`_MPCOFilterPlan` → a list of `_RegionEmit`) and per-rank
+emit were generalized from one region per recorder to N, so the energy region
+gets its own per-rank INV-4 fan-out. `energy_pg` takes precedence over the
+coupled `energy=True` form and implies energy recording. The only residual
+deferral is a **UX** one (shared by all auto-region recorders, not energy-
+specific): discovering the bridge-allocated region tag from a PG name to pass to
+`Results.energy(region=…)` — today via the reader's "recorded region tags: […]"
+error and `/opensees/regions`.
 
 ## Context
 
@@ -195,15 +209,14 @@ the energy flag.
   refactor, verified before Ladruno touches anything (plan step RF0). The
   partition gates are widened only after the base lands and MPCO is green.
 
-- **Per-region energy — SHIPPED (PE follow-up).** `energy=True` + a filter now
-  emits `-G energy $region_tag` (run-verified on the deployed fork build); the
-  reader (`Results.energy(region=<tag>)`) was already in place. The remaining
-  deferral narrows to a **decoupled** energy region — energy over a region
-  without filtering the value channels to it (the fork's `-G energy <tag>` list
-  is orthogonal to `-R`; a future `energy_pg=` selector would expose it). A
-  related UX follow-up (shared by all auto-region recorders, not specific to
-  energy): discovering the bridge-allocated region tag from a PG name to pass to
-  `Results.energy(region=…)` — today it surfaces via the reader's
+- **Per-region energy — SHIPPED (PE + EPG follow-ups).** `energy=True` + a
+  filter emits `-G energy $region_tag` (coupled, PE); `energy_pg=` emits
+  `-G energy $energyTag` over an **independent** region (decoupled, EPG), with
+  its own per-rank INV-4 fan-out — both run-verified on the deployed fork build.
+  The reader (`Results.energy(region=<tag>)`) was already in place. Residual
+  deferral is a **UX** item only (shared by all auto-region recorders, not
+  energy-specific): discovering the bridge-allocated region tag from a PG name to
+  pass to `Results.energy(region=…)` — today it surfaces via the reader's
   "recorded region tags: […]" error and `/opensees/regions`.
 
 - **Staged path.** `s.recorder` (ADR 0034) drives the same `emit_recorder_spec`

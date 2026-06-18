@@ -855,26 +855,26 @@ class Ladruno(FilterableRecorder):
     flag, so ``-G energy -T nsteps 10`` is a parse error while
     ``-T nsteps 10 -G energy`` runs (run-verified on the fork build).
 
-    **Per-region energy.** When ``energy=True`` is combined with a region
-    filter (``nodes=`` / ``nodes_pg=`` / ``elements=`` / ``elements_pg=``),
-    the energy balance is emitted as ``-G energy $regionTag`` reusing the
-    same region the value-channel ``-R`` filter targets — the fork writes
-    **both** the whole-model balance (``RESULTS/ON_DOMAIN/energyBalance``)
-    **and** the per-region balance (``RESULTS/ON_REGIONS/energyBalance``)
-    in one shot (run-verified on the fork build, ADR 0064 §4). Because the
-    energy region is the filter's already-allocated tag, this rides the
-    flat / staged / partitioned region plumbing with no extra wiring. A
-    whole-model-only balance (``-G energy`` with no tag) is what you get
-    when ``energy=True`` is set without a filter.
+    **Energy balance.** Three forms, all run-verified on the fork build
+    (which always writes the whole-model balance,
+    ``RESULTS/ON_DOMAIN/energyBalance``, and adds a per-region balance,
+    ``RESULTS/ON_REGIONS/energyBalance``, whenever a region tag is given):
 
-    Deferred (recorder-plan follow-up)
-    ----------------------------------
-    * **Independent energy region** — energy over a region *without* also
-      filtering the value channels to it (``-G energy <tag>`` where the
-      energy region differs from, or exists without, the ``-R`` filter).
-      The fork supports an energy-region list orthogonal to ``-R``; the
-      bridge currently couples the two (one region serves both). A future
-      slice could add an ``energy_pg=`` selector for the decoupled case.
+    * ``energy=True`` alone → whole-model (``-G energy``, no tag).
+    * ``energy=True`` + a value filter → energy over the **same** region
+      the ``-R`` filter targets, reusing the filter's already-allocated
+      tag (``-G energy $filterTag``). The *coupled* form.
+    * ``energy_pg="X"`` → energy over an **independent** region X
+      (``-G energy $tagX``), decoupled from the ``-R`` value filter. X may
+      differ from (or exist without) the value-channel filter; it gets its
+      own region tag. The *decoupled* form. ``energy_pg`` takes precedence
+      over the coupled form, and implies energy recording (no need to also
+      set ``energy=True``).
+
+    All three ride the flat / staged / partitioned region plumbing — the
+    decoupled region gets its own per-rank fan-out under partitioning, just
+    like the value filter (ADR 0064 §4). Read any region's balance via
+    ``Results.energy(region=<tag>)``; whole-model via ``Results.energy()``.
 
     Parameters
     ----------
@@ -897,6 +897,12 @@ class Ladruno(FilterableRecorder):
         Record the energy balance (``-G energy``). Whole-model when no
         filter is set; per-region (over the ``-R`` filter region, plus
         whole-model) when combined with a ``nodes=``/``elements=`` filter.
+    energy_pg
+        Physical-group label for a **decoupled** energy region — records
+        energy over that PG (``-G energy $tag``) independent of the value
+        filter. Implies energy recording. Resolved by the bridge build
+        pipeline; gets its own auto-emitted region (per-rank under
+        partitioning).
     nodes
         Explicit tuple of node tags for the region filter. Mutually
         exclusive with ``nodes_pg``.
@@ -914,14 +920,25 @@ class Ladruno(FilterableRecorder):
     """
 
     # ``file`` + value-channel + filter fields are inherited from
-    # FilterableRecorder; Ladruno adds only the energy channel.
+    # FilterableRecorder; Ladruno adds the energy channel + an optional
+    # decoupled energy region.
     energy: bool = False
+    energy_pg: str | None = None
+    # Region tags for ``-G energy $tag...`` (decoupled energy regions),
+    # populated by ``materialize`` / the partition planner from
+    # ``energy_pg``. End users never set this directly.
+    _energy_region_tags: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
-        if not (self.nodal_responses or self.elem_responses or self.energy):
+        if not (
+            self.nodal_responses
+            or self.elem_responses
+            or self.energy
+            or self.energy_pg is not None
+        ):
             raise ValueError(
                 "Ladruno: at least one of nodal_responses, "
-                "elem_responses or energy required."
+                "elem_responses, energy or energy_pg required."
             )
         self._validate_cadence()
         self._validate_filter()
@@ -929,21 +946,118 @@ class Ladruno(FilterableRecorder):
     def dependencies(self) -> tuple[Primitive, ...]:
         return ()
 
+    def resolve_energy_ids(
+        self,
+        fem: "FEMData",
+        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    ) -> tuple[int, ...]:
+        """Resolve ``energy_pg`` to element ids for the energy region.
+
+        Mirrors the element side of :meth:`resolve_filter_ids`: returns
+        FEM eids verbatim when ``fem_eid_to_ops_tag is None`` (the
+        partition orchestrator intersects per-rank in FEM-eid space),
+        else translates to OpenSees element tags. Empty resolution →
+        :class:`BridgeError`. Energy is an element quantity, so the
+        region carries ``-ele`` only (the fork auto-derives the nodes).
+        """
+        from ._internal.build import BridgeError, expand_pg_to_elements
+
+        assert self.energy_pg is not None  # caller-guarded
+        fem_eids = tuple(
+            eid for eid, _conn in expand_pg_to_elements(fem, self.energy_pg)
+        )
+        if not fem_eids:
+            raise BridgeError(
+                f"Ladruno energy region: energy_pg={self.energy_pg!r} "
+                "resolved to zero elements against the FEM snapshot. "
+                "An empty region is rejected by OpenSees at runtime; check "
+                "the PG name spelling and that elements were registered "
+                "against it before get_fem_data."
+            )
+        if fem_eid_to_ops_tag is None:
+            return fem_eids
+        ops_tags: list[int] = []
+        for eid in fem_eids:
+            ops_tag = fem_eid_to_ops_tag.get(int(eid))
+            if ops_tag is None:
+                raise BridgeError(
+                    f"Ladruno energy region: energy_pg={self.energy_pg!r} "
+                    f"resolves to FEM eid {eid} but no element was emitted "
+                    "at that eid — declare an ``ops.element.X(pg=...)`` "
+                    f"primitive whose pg includes {self.energy_pg!r}."
+                )
+            ops_tags.append(int(ops_tag))
+        return tuple(ops_tags)
+
+    def materialize(
+        self,
+        emitter: "Emitter",
+        fem: "FEMData",
+        tags: "TagAllocator | None",
+        fem_eid_to_ops_tag: "dict[int, int] | None" = None,
+    ) -> "FilterableRecorder":
+        """Emit the value-filter region (base) **and** the decoupled
+        energy region (``energy_pg``), each as its own OpenSees ``region``.
+
+        The energy region is independent of the ``-R`` value filter (the
+        fork's ``-G energy <tag>`` list is orthogonal to ``-R``); it gets
+        its own tag, recorded in ``_energy_region_tags`` and referenced by
+        ``_emit`` as ``-G energy $tag``. Used by the flat path; the
+        partitioned path builds the equivalent spec in
+        :meth:`BuiltModel._plan_partitioned_mpco_recorders`.
+        """
+        # NOTE: explicit base call, not zero-arg ``super()`` — these are
+        # ``@dataclass(slots=True)`` classes, which the decorator rebuilds,
+        # leaving the ``super()`` ``__class__`` cell stale (TypeError).
+        spec = FilterableRecorder.materialize(
+            self, emitter, fem, tags, fem_eid_to_ops_tag,
+        )
+        if self.energy_pg is None:
+            return spec
+        from ._internal.build import BridgeError
+
+        if tags is None:
+            raise BridgeError(
+                "Ladruno energy_pg= requires a TagAllocator on "
+                "emit_recorder_spec(..., tags=); the bridge build pipeline "
+                "supplies one — tests bypassing the bridge must pass it."
+            )
+        assert isinstance(spec, Ladruno)
+        elem_ids = spec.resolve_energy_ids(fem, fem_eid_to_ops_tag)
+        energy_tag = tags.allocate("region")
+        emitter.region(energy_tag, "-ele", *elem_ids)
+        return replace(spec, energy_pg=None, _energy_region_tags=(energy_tag,))
+
+    def _require_materialized(self) -> None:
+        # Explicit base call (slots-dataclass ``super()`` caveat, see
+        # ``materialize`` above).
+        FilterableRecorder._require_materialized(self)
+        if self.energy_pg is not None:
+            raise NotImplementedError(
+                "Ladruno energy_pg= must be resolved by the bridge build "
+                "pipeline. Drive emission through apeSees(fem).tcl()/py()/"
+                "run() instead of calling _emit directly with an energy_pg= "
+                "spec."
+            )
+
     def _emit(self, emitter: "Emitter", tag: int) -> None:
         self._require_materialized()
         # ``_value_channel_args`` puts ``-R $tag`` last (when filtered);
         # the energy flag must trail it — the fork's ``-G`` parser eagerly
         # eats trailing ints and cannot rewind past a following flag, so
-        # ``-G energy [$tag]`` is always the final option.
+        # ``-G energy [$tag...]`` is always the final option.
         args: list[int | float | str] = [self.file, *self._value_channel_args()]
-        if self.energy:
+        if self.energy or self._energy_region_tags:
             args += ["-G", "energy"]
-            if self._region_tag is not None:
-                # Per-region energy over the SAME region as the value
-                # filter (run-verified on the fork build: writes both
-                # ON_DOMAIN and ON_REGIONS/energyBalance). Reuses the tag
-                # ``materialize`` already allocated, so this rides the
-                # flat / staged / partitioned region plumbing unchanged.
+            if self._energy_region_tags:
+                # Decoupled energy region(s) from ``energy_pg`` — energy
+                # over their own region(s), independent of the ``-R`` value
+                # filter (takes precedence over the coupled form below).
+                args += list(self._energy_region_tags)
+            elif self._region_tag is not None:
+                # Coupled: ``energy=True`` + a value filter records energy
+                # over the SAME region the ``-R`` filter targets (reuses
+                # the tag ``materialize`` already allocated).
                 args.append(self._region_tag)
         emitter.recorder("ladruno", *args)
 

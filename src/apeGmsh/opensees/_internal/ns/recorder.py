@@ -257,6 +257,7 @@ class _RecorderNS(_BridgeNamespace):
         dT: float | None = None,
         nsteps: int | None = None,
         energy: bool = False,
+        energy_pg: str | None = None,
         nodes: tuple[int, ...] | None = None,
         nodes_pg: str | None = None,
         elements: tuple[int, ...] | None = None,
@@ -265,21 +266,23 @@ class _RecorderNS(_BridgeNamespace):
         """Construct + register a ``recorder ladruno`` (fork-only).
 
         Value channels (``-N``/``-E``/``-T``) mirroring :meth:`MPCO`,
-        plus the whole-model energy balance (``energy=True`` → ``-G
-        energy``, read back via ``Results.energy()``). At least one of
-        ``nodal_responses``, ``elem_responses`` or ``energy`` must be
-        supplied; both ``dT`` and ``nsteps`` raises.
+        plus the energy balance (``-G energy``, read back via
+        ``Results.energy()``). At least one of ``nodal_responses``,
+        ``elem_responses``, ``energy`` or ``energy_pg`` must be supplied;
+        both ``dT`` and ``nsteps`` raises.
 
         ``nodes=`` / ``nodes_pg=`` and ``elements=`` / ``elements_pg=``
         are pairwise mutex; supplying any of the four triggers
         auto-emission of an OpenSees ``region`` plus ``-R $tag`` on the
         ladruno line at build time (flat and partitioned). Combining a
         filter with ``energy=True`` records the energy balance over that
-        same region (``-G energy $tag`` → both whole-model and per-region
-        balances); ``energy=True`` alone is whole-model. Emission works on
-        any build; the Ladruno fork is required only to *run* the deck.
-        See :class:`apeGmsh.opensees.recorder.Ladruno` for the full
-        contract.
+        same region (``-G energy $tag``); ``energy=True`` alone is
+        whole-model. ``energy_pg=`` records energy over an **independent**
+        region (decoupled from the ``-R`` value filter) — ``-G energy
+        $tag`` over that PG; the fork also writes the whole-model balance
+        alongside any per-region one. Emission works on any build; the
+        Ladruno fork is required only to *run* the deck. See
+        :class:`apeGmsh.opensees.recorder.Ladruno` for the full contract.
         """
         return self._bridge._register(
             Ladruno(
@@ -289,6 +292,7 @@ class _RecorderNS(_BridgeNamespace):
                 dT=dT,
                 nsteps=nsteps,
                 energy=energy,
+                energy_pg=energy_pg,
                 nodes=nodes,
                 nodes_pg=nodes_pg,
                 elements=elements,
