@@ -523,6 +523,22 @@ class LadrunoReader:
         values = data[t_idx][:, row, :]  # (T, nComp)
         return cols, values, time[t_idx]
 
+    def available_energy_regions(self, stage_id: str) -> list[int]:
+        """Region tags for which per-region energy was recorded.
+
+        Returns the ``RESULTS/ON_REGIONS/energyBalance/ID`` tags in
+        recording order (the recorder's ``-G energy <tag...>`` regions),
+        so a caller can discover which tag to pass to :meth:`read_energy`.
+        Empty when only the whole-model balance (``ON_DOMAIN``) was
+        recorded, or when energy was not recorded at all.
+        """
+        grp = self._resolve_stage_group(stage_id)
+        eg = _child(grp, "RESULTS/ON_REGIONS/energyBalance")
+        if eg is None:
+            return []
+        ids = np.asarray(eg["ID"][...], dtype=np.int64).flatten()
+        return [int(t) for t in ids]
+
     # -- node envelopes (recorder -envelope, Ladruno-only extension) ---
 
     def available_node_envelope_components(self, stage_id: str) -> list[str]:

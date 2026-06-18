@@ -596,6 +596,29 @@ class Results:
             values, columns=cols, index=pd.Index(time, name="time"),
         )
 
+    def energy_regions(self, *, stage: Optional[str] = None) -> "list[int]":
+        """OpenSees region tags with a recorded per-region energy balance.
+
+        The bridge auto-allocates an integer region tag when a Ladruno
+        recorder is given ``energy_pg=`` (or a value filter + ``energy``);
+        that tag is opaque to the author. This lists the tags actually
+        present in ``ON_REGIONS/energyBalance`` so you can pick one to pass
+        to :meth:`energy` — e.g. ``r.energy(region=r.energy_regions()[0])``.
+
+        Returns ``[]`` when only the whole-model balance was recorded
+        (read it with ``energy()``, no ``region=``). Ladruno-recorder
+        feature; raises :class:`TypeError` on MPCO / native results.
+        """
+        available = getattr(self._reader, "available_energy_regions", None)
+        if available is None:
+            raise TypeError(
+                "Results.energy_regions() is a Ladruno-recorder feature. "
+                "Open a .ladruno via Results.from_ladruno(...); MPCO / "
+                "native results carry no energy balance."
+            )
+        sid = self._resolve_stage(stage)
+        return available(sid)
+
     def node_envelope(
         self,
         component: str,
