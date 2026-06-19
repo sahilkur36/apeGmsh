@@ -2781,6 +2781,9 @@ class ResultsViewer:
 
     def _on_results_pick(self, result) -> None:
         """Dispatch a :class:`PickResult` based on its ``kind``."""
+        # Pause animation so the user can inspect the picked position.
+        if self._time_scrubber is not None:
+            self._time_scrubber.stop_animation()
         from .core.results_pick import MODE_NODE, MODE_ELEMENT, MODE_GP
         from ._log import log_action
         if result.kind == MODE_NODE:
