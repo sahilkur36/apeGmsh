@@ -199,6 +199,26 @@ class ModelViewer:
             sel.set_active_group(self._physical_group)
 
         def _on_close():
+            # Remove sel.on_changed subscribers registered by this viewer.
+            for _cb in (
+                _on_sel_changed,
+                _cb_sel_tree,
+                _cb_outline,
+                _cb_parts_tree,
+                _cb_active,
+            ):
+                if _cb is not None:
+                    try:
+                        sel.on_changed.remove(_cb)
+                    except ValueError:
+                        pass
+            # Remove win._theme_callbacks subscribers registered by this viewer.
+            # ViewerWindow has no off_theme_changed(), so we remove directly.
+            for _cb in (_cb_theme_sel, _cb_theme_tn):
+                try:
+                    win._theme_callbacks.remove(_cb)
+                except ValueError:
+                    pass
             try:
                 n = sel.flush_to_gmsh()
             except Exception as exc:
@@ -1477,15 +1497,22 @@ class ModelViewer:
 
         sel.on_changed.append(_on_sel_changed)
         # Repaint idle colors when the theme palette changes
-        win.on_theme_changed(lambda _p: _on_sel_changed())
-        win.on_theme_changed(lambda _p: tn_overlay.refresh_theme())
-        sel.on_changed.append(lambda: sel_tree.update(sel.picks))
-        sel.on_changed.append(lambda: outline.update_active())
+        _cb_theme_sel = lambda _p: _on_sel_changed()
+        win.on_theme_changed(_cb_theme_sel)
+        _cb_theme_tn = lambda _p: tn_overlay.refresh_theme()
+        win.on_theme_changed(_cb_theme_tn)
+        _cb_sel_tree = lambda: sel_tree.update(sel.picks)
+        sel.on_changed.append(_cb_sel_tree)
+        _cb_outline = lambda: outline.update_active()
+        sel.on_changed.append(_cb_outline)
         if parts_tree is not None:
-            sel.on_changed.append(
+            _cb_parts_tree = (
                 lambda: parts_tree.highlight_part_for_entity(sel.picks[-1])
                 if sel.picks else None
             )
+            sel.on_changed.append(_cb_parts_tree)
+        else:
+            _cb_parts_tree = None
         # ADR 0045 S3c-2: the active group's members are auto-materialised
         # into staging by the log reducer, so no per-pick commit is needed
         # (the old on_changed -> commit_active_group hook is gone).
@@ -1497,9 +1524,8 @@ class ModelViewer:
         # richer state, hold a viewer reference and inspect
         # ``viewer._selection_state``.
         _active_ref = self._active
-        sel.on_changed.append(
-            lambda: _active_ref.set_selection(tuple(sel.picks)),
-        )
+        _cb_active = lambda: _active_ref.set_selection(tuple(sel.picks))
+        sel.on_changed.append(_cb_active)
 
         # (No render subscriber on vis_mgr.on_changed — the dispatcher
         # renders once per MESH_ENTITY_VISIBILITY_CHANGED fire,

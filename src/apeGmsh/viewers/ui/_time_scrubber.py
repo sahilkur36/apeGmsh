@@ -316,6 +316,7 @@ class TimeScrubberDock:
         self._director.set_step(nxt)
 
     def _stop_animation(self) -> None:
+        self._anim_direction = 1
         if self._anim_timer.isActive():
             self._anim_timer.stop()
         # Releasing the button retriggers ``_toggle_play(False)``,

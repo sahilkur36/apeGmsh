@@ -522,8 +522,13 @@ class MeshViewer:
         # ── Browser tab (groups + element types visibility) ─────────
         from .ui.mesh_browser_tab import MeshBrowserTab
         if scene.group_to_breps or scene.brep_dominant_type:
+            def _browser_hidden_changed(hidden_set):
+                if self._explode_ctrl is not None and self._explode_ctrl._active:
+                    return
+                vis_mgr.set_hidden(hidden_set)
+
             self._browser_tab = MeshBrowserTab(
-                scene, on_hidden_changed=vis_mgr.set_hidden,
+                scene, on_hidden_changed=_browser_hidden_changed,
             )
             win.add_tab("Browser", self._browser_tab.widget)
 
@@ -736,6 +741,8 @@ class MeshViewer:
 
         # ── Run ─────────────────────────────────────────────────────
         win.exec()
+        if self._color_mode_ctrl is not None:
+            self._color_mode_ctrl.close()
         return self
 
     # ==================================================================

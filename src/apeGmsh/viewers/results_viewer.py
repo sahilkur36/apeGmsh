@@ -1255,7 +1255,12 @@ class ResultsViewer:
                         backend, director.view,
                         director._scene_for_diagram(d),  # noqa: SLF001
                     )
-                except Exception:
+                except Exception as exc:
+                    # d is now detached but failed to re-attach; log the
+                    # error so the broken state is visible rather than
+                    # silently swallowed.
+                    from ._log import log_error
+                    log_error("dispatch", "restack", exc, diagram=id(d))
                     continue
 
         # Stash for the rest of the file (probe overlay etc. still
@@ -2313,8 +2318,9 @@ class ResultsViewer:
         # from the still-open reader.
         try:
             self._results.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            from ._log import log_error
+            log_error("session", "results.close", exc)
         # Drop the strong ref pinned in show() so the viewer can be
         # garbage-collected after the window closes.
         _LIVE_VIEWERS.discard(self)

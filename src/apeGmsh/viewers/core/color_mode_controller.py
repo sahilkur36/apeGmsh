@@ -406,6 +406,15 @@ class ColorModeController:
         idx = zlib.crc32(dominant.encode("utf-8")) % len(_GROUP_PALETTE_RGB)
         return _GROUP_PALETTE_RGB[idx]
 
+    def close(self) -> None:
+        """Remove the on_changed subscription to avoid a reference cycle."""
+        on_changed = getattr(self._vis_mgr, "on_changed", None)
+        if on_changed is not None:
+            try:
+                on_changed.remove(self._on_vis_rebuild)
+            except ValueError:
+                pass
+
     def _on_vis_rebuild(self) -> None:
         """Re-install the Quality scalar mapper after a hide/reveal rebuild.
 
