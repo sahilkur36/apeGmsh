@@ -111,7 +111,7 @@ class ExplodeController:
     __slots__ = (
         "_registry", "_scene", "_view", "_plotter",
         "_mode", "_magnitudes", "_explode_actors", "_original_visibility",
-        "_active",
+        "_active", "_vis_mgr", "_color_mgr",
     )
 
     def __init__(
@@ -121,11 +121,15 @@ class ExplodeController:
         scene: Any,
         plotter: Any,
         view: Any = None,
+        vis_mgr: Any = None,
+        color_mgr: Any = None,
     ) -> None:
         self._registry = registry
         self._scene = scene
         self._view = view
         self._plotter = plotter
+        self._vis_mgr = vis_mgr
+        self._color_mgr = color_mgr
         self._mode: str = "Default"
         self._magnitudes: dict[str, float] = {"x": 0.0, "y": 0.0, "z": 0.0}
         self._explode_actors: list[Any] = []
@@ -167,7 +171,7 @@ class ExplodeController:
             return
 
         offsets = self._group_offsets(vol, groups)
-        surf_colors = _build_surf_elem_colors(self._scene)
+        elem_colors = self._build_elem_colors()
         vol_to_elem = self._scene.vol_cell_to_elem.get(3)
 
         # Read display style from dim=3 actor BEFORE hiding it so explode
@@ -190,7 +194,7 @@ class ExplodeController:
             idxs = np.asarray(cell_indices, dtype=np.int64)
             block = vol.extract_cells(idxs).copy()
             block.translate(offset, inplace=True)
-            _apply_block_colors(block, cell_indices, vol_to_elem, surf_colors)
+            _apply_block_colors(block, cell_indices, vol_to_elem, elem_colors)
             actor = self._plotter.add_mesh(
                 block,
                 scalars="colors",
@@ -209,6 +213,22 @@ class ExplodeController:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _build_elem_colors(self) -> dict[int, np.ndarray]:
+        """Build elem_tag → RGB from the active color mode's idle function.
+
+        Reads directly from ``scene.elem_to_brep`` + ``ColorManager._idle_fn``
+        so interior elements (not visible on the surface of the global mesh)
+        get their correct Physical-Group / Element-Type color.  Falls back to
+        the surface-mesh color array when no color manager is injected.
+        """
+        if self._color_mgr is not None:
+            idle_fn = self._color_mgr._idle_fn
+            result: dict[int, np.ndarray] = {}
+            for elem_tag, brep_dt in self._scene.elem_to_brep.items():
+                result[int(elem_tag)] = idle_fn(brep_dt)
+            return result
+        return _build_surf_elem_colors(self._scene)
 
     def enforce_hiding(self) -> None:
         """Re-assert actor hiding after an external visibility operation.
@@ -288,13 +308,25 @@ class ExplodeController:
         self._active = False
 
     def _cell_groups_vol(self) -> dict[Any, list[int]]:
-        """Map each volume cell index to its group key under the current mode."""
+        """Map each volume cell index to its group key under the current mode.
+
+        Cells belonging to hidden entities (via VisibilityManager) are
+        excluded so they don't reappear inside the exploded view.
+        """
         vol_to_elem = self._scene.vol_cell_to_elem.get(3)
         if vol_to_elem is None:
             return {}
 
+        hidden_entity_tags: set[int] = set()
+        if self._vis_mgr is not None:
+            hidden_entity_tags = {dt[1] for dt in self._vis_mgr.hidden if dt[0] == 3}
+
         groups: dict[Any, list[int]] = {}
         for cell_idx, elem_tag in enumerate(vol_to_elem):
+            if hidden_entity_tags:
+                brep = self._scene.elem_to_brep.get(int(elem_tag))
+                if brep is not None and brep[1] in hidden_entity_tags:
+                    continue
             key = self._elem_category_key(int(elem_tag))
             if key is None:
                 continue

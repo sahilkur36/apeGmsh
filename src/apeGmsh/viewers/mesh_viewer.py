@@ -516,6 +516,7 @@ class MeshViewer:
         from .core.explode_controller import ExplodeController
         self._explode_ctrl = ExplodeController(
             registry=registry, scene=scene, plotter=plotter, view=self._view,
+            vis_mgr=vis_mgr, color_mgr=color_mgr,
         )
 
         # ── Browser tab (groups + element types visibility) ─────────
@@ -1698,6 +1699,9 @@ class MeshViewer:
     def _act_hide(self) -> None:
         if self._vis_mgr is None or self._plotter is None:
             return
+        ctrl = self._explode_ctrl
+        if ctrl is not None and ctrl._active:
+            return  # hide during explosion not supported — actor ids conflict
         # Owner-fired (ADR 0056 V3): the mutator fires
         # MESH_ENTITY_VISIBILITY_CHANGED; the dispatcher rebuilds and
         # renders once — no call-site render.
@@ -1706,11 +1710,17 @@ class MeshViewer:
     def _act_isolate(self) -> None:
         if self._vis_mgr is None or self._plotter is None:
             return
+        ctrl = self._explode_ctrl
+        if ctrl is not None and ctrl._active:
+            return  # isolate during explosion not supported
         self._vis_mgr.isolate()
 
     def _act_reveal_all(self) -> None:
         if self._vis_mgr is None or self._plotter is None:
             return
+        ctrl = self._explode_ctrl
+        if ctrl is not None and ctrl._active:
+            return  # reveal_all during explosion not supported
         self._vis_mgr.reveal_all()
 
     def _act_screenshot(self) -> None:
