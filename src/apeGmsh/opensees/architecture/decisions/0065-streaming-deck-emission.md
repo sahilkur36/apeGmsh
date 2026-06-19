@@ -205,3 +205,45 @@ and `apesees.py` (the two writers + per-rank routing). Estimate: a focused
   `tracemalloc` ceiling test asserting stream-mode peak is O(1) in element
   count; (d) live `mpiexec -n 2/4` parity for streamed per-rank decks
   (reuse the `test_emit_partitioned_*` template).
+
+## Implementation note (2026-06-18) — profiling reframed the problem; `mass_from_model` shipped
+
+The reported ~30 GB was **in-RAM emit footprint** (the local run was killed
+mid-emit; no 30 GB file exists), measured on the real LOH.1 P10 model:
+**6.71M hex / 7.0M nodes, partitioned (np=256) + staged.** A scaled
+loh1-mirror profile (`add_plane_wave_box` → `masses.volume` per layer →
+`stdBrick` per PG → per-node `ops.mass` loop → `ops.tcl`) at 0.1M/0.5M
+elements gave stable linear coefficients; extrapolated to 6.7M/7M and
+cross-checked against the kill point: the dominant terms are the **build-time
+Python object graph**, not the deck text. Roughly: emit transient
+(`element_plan` tuples + ~54M boxed connectivity ints + line buffer) ~7.5 GB;
+FEMData incl. **7M per-node kernel `MassRecord`s** ~5.4 GB; **bridge mass
+double-store** (the `for m in fem.nodes.masses: ops.mass(...)` loop building a
+*second* 7M-object list) ~1.3 GB; ~1.9× heap-fragmentation/RSS multiplier on
+top. **Tier 1 (streaming write) addresses only the ~1.8 GB join string — a
+real but minor slice of this total.** The object graph is the event.
+
+**Shipped this slice: `ops.mass_from_model()`** (bridge entry + `BuiltModel`
+flag). It streams per-node masses straight from `fem.nodes.masses` at emit —
+replacing the user's 7M-call `ops.mass` loop — so the **bridge double-store is
+never built** (~1.3 GB + 7M objects). Wired through all three mass emit paths
+(flat `_emit_masses`, partitioned per-rank `_emit_masses_partitioned`, and the
+**bucketed partitioned path** that the real LOH.1 run uses — primary-owner
+bucketed, additive-under-MP-safe). Byte-identical to the explicit per-node
+loop (same `fit_dof_vector` + `emitter.mass` in `fem.nodes.masses` order),
+proven by flat **and** partitioned equivalence tests. Two fail-loud guards:
+overlap with explicit `ops.mass` (MP double-count) and H5-emitter rejection
+(masses already persist in `model.h5`; re-streaming would rebuild the 7M
+materialization). Verified: 4 new tests + full `tests/opensees` (4636 passed),
+ruff/mypy clean.
+
+**Deferred, with rationale:**
+- **Lazy `element_plan` + unboxed connectivity** (the larger ~7.5 GB term):
+  the lazy generator design is **flat-path-only** — staged / split /
+  partitioned all still materialize via `allocate_element_tags`. Because
+  LOH.1 is partitioned+staged, that slice would **not** help it; a
+  partitioned/per-rank-aware streaming design is a separate, larger item.
+- **numpy-backed `from_h5` mass read** (kills the 7M `MassRecord`
+  rehydration, ~2 GB): independent; helps the `emit_repro.py` load-and-profile
+  path, **not** the in-session meshing run (where `g.masses.volume` builds the
+  7M records). Sequenced after the in-session resolve is confirmed a hotspot.
