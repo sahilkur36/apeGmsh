@@ -1708,6 +1708,8 @@ class MeshViewer:
             return
         ctrl = self._explode_ctrl
         if ctrl is not None and ctrl._active:
+            if self._win is not None:
+                self._win.set_status("Not available while exploded")
             return  # hide during explosion not supported — actor ids conflict
         # Owner-fired (ADR 0056 V3): the mutator fires
         # MESH_ENTITY_VISIBILITY_CHANGED; the dispatcher rebuilds and
@@ -1719,6 +1721,8 @@ class MeshViewer:
             return
         ctrl = self._explode_ctrl
         if ctrl is not None and ctrl._active:
+            if self._win is not None:
+                self._win.set_status("Not available while exploded")
             return  # isolate during explosion not supported
         self._vis_mgr.isolate()
 
@@ -1727,6 +1731,8 @@ class MeshViewer:
             return
         ctrl = self._explode_ctrl
         if ctrl is not None and ctrl._active:
+            if self._win is not None:
+                self._win.set_status("Not available while exploded")
             return  # reveal_all during explosion not supported
         self._vis_mgr.reveal_all()
 
@@ -1785,6 +1791,11 @@ class MeshViewer:
                 pass
         if self._win is not None:
             self._win.set_status(f"Pick mode: {mode.upper()}")
+        # Clear both selection sets so stale picks don't show across a mode switch.
+        if self._sel is not None:
+            self._sel.clear()
+        if self._fe_sel is not None:
+            self._fe_sel.clear()
 
     # ==================================================================
     # Public API
