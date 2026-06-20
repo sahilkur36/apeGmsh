@@ -67,6 +67,14 @@ if TYPE_CHECKING:
     from ._slabs import GaussSlab
 
 
+# Module-level cache: (gmsh_type_code, nat_coords_bytes) → M matrix.
+# nat_e.tobytes() is unique per element type + GP count combination
+# (standard quadrature uses fixed GP positions per type), so this
+# cache effectively stores one matrix per element type — computed once
+# across all elements and all frames instead of O(E × T) times.
+_EXTRAP_MATRIX_CACHE: dict = {}
+
+
 # Parent dim per Gmsh type code — see catalog in apeGmsh.fem._shape_functions
 _PARENT_DIM: dict[int, int] = {
     1: 1,     # Line2
@@ -267,7 +275,12 @@ def extrapolate_gauss_slab_per_element(
                 gp_vals, (T, corner_nids.size),
             ).astype(np.float64, copy=True)
         else:
-            M = _build_extrapolation_matrix(nat_e, type_code)
+            _key = (int(type_code), nat_e.tobytes())
+            if _key not in _EXTRAP_MATRIX_CACHE:
+                _EXTRAP_MATRIX_CACHE[_key] = _build_extrapolation_matrix(
+                    nat_e, type_code,
+                )
+            M = _EXTRAP_MATRIX_CACHE[_key]
             if M is None or M.shape[0] != corner_nids.size:
                 mean_vals = gp_vals.mean(axis=1, keepdims=True)
                 per_corner = np.broadcast_to(
