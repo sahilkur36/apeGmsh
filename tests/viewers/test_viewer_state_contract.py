@@ -83,8 +83,10 @@ _RENDER_ALLOW: dict[str, int] = {
     # other 7 are V4-out-of-scope subsystems (dim filter, labels,
     # prefs point-size + pick-color, scene rebuild, hover recolor,
     # selection recolor). The 8 call-site mutator renders + the
-    # on_changed render subscriber were deleted at V4.
-    "model_viewer.py": 8,
+    # on_changed render subscriber were deleted at V4. +1 is the new
+    # _toggle_pg_color render (model_viewer.py:1028) — a V4-out-of-scope
+    # subsystem render per ADR 0056, same rationale as the others.
+    "model_viewer.py": 9,
     "overlays/clip_plane_overlay.py": 5,
     "overlays/local_axes_overlay.py": 1,
     "overlays/measure_overlay.py": 3,
@@ -109,7 +111,9 @@ _ARTIFACT_ALLOW: dict[str, int] = {
     "mesh_viewer.py": 16,
     # model_viewer.py — label-actor teardown + the _rebuild_scene
     # actor swap (its designated post-geometry-mutation reconciler).
-    "model_viewer.py": 3,
+    # +1 is the new label/scene-teardown remove_actor — a
+    # V4-out-of-scope teardown call per ADR 0056.
+    "model_viewer.py": 4,
     "overlays/glyph_helpers.py": 2,
     "overlays/local_axes_overlay.py": 2,
     "overlays/measure_overlay.py": 2,

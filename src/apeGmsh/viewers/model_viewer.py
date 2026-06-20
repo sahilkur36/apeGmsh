@@ -198,6 +198,15 @@ class ModelViewer:
         if self._physical_group is not None:
             sel.set_active_group(self._physical_group)
 
+        # Pre-init the on_close closure vars (mirrors the _cb_parts_tree
+        # pre-init below): the close handler references these before they
+        # are assigned ~1300 lines down, so bind them to None up front to
+        # stay NameError-safe if construction is ever reordered or aborts
+        # early. The real assignments / the _on_sel_changed def overwrite
+        # these.
+        _on_sel_changed = _cb_sel_tree = _cb_outline = _cb_parts_tree = None
+        _cb_active = _cb_theme_sel = _cb_theme_tn = None
+
         def _on_close():
             # Remove sel.on_changed subscribers registered by this viewer.
             for _cb in (

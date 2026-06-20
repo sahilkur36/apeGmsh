@@ -1,12 +1,12 @@
-"""VisualDataStore - eager float16 cache for the post-solve viewer.
+"""VisualDataStore - eager float32 cache for the post-solve viewer.
 
 Covers the pure-visual performance layer introduced to stop the time
 scrubber re-reading the full (T, N) HDF5 dataset every frame:
-  * load_stage materializes every node + gauss component as float16
+  * load_stage materializes every node + gauss component as float32
     and records per-component (vmin, vmax) in the same pass;
   * the byte budget gates only the eager pre-fetch (lazy access still
     serves a live request past the cap);
-  * ContourDiagram slices the cached float16 row on update_to_step
+  * ContourDiagram slices the cached float32 row on update_to_step
     and falls back to the per-step read path when no store is stamped.
 
 Headless: uses NativeWriter + an offscreen plotter, no Qt window.
@@ -82,18 +82,18 @@ def _make_spec(component="displacement_z") -> DiagramSpec:
 # ---------------------------------------------------------------------
 # Store unit tests
 # ---------------------------------------------------------------------
-def test_load_stage_materializes_float16_and_clim(results_with_known_disp):
+def test_load_stage_materializes_float32_and_clim(results_with_known_disp):
     store = VisualDataStore()
     sid = _stage_id(results_with_known_disp)
     store.load_stage(results_with_known_disp, sid)
 
     slab = store.nodes_slab(results_with_known_disp.stage(sid), sid, "displacement_z")
     assert slab is not None
-    # float16 resident (the whole point: half-width, slice-not-read).
-    assert slab.values.dtype == np.float16
+    # float32 resident (the whole point: half-width, slice-not-read).
+    assert slab.values.dtype == np.float32
     assert slab.values.shape == (4, len(results_with_known_disp.fem.nodes.ids))
 
-    # color limits match the global finite min/max of the float16 slab.
+    # color limits match the global finite min/max of the float32 slab.
     clim = store.color_limits(sid, "displacement_z")
     assert clim is not None
     finite = slab.values[np.isfinite(slab.values)]
@@ -110,7 +110,7 @@ def test_byte_budget_gates_eager_but_lazy_still_serves(results_with_known_disp):
     # A live request still loads (the cap never refuses a render).
     slab = store.nodes_slab(results_with_known_disp.stage(sid), sid, "displacement_z")
     assert slab is not None
-    assert slab.values.dtype == np.float16
+    assert slab.values.dtype == np.float32
     assert store.loaded_bytes > 0
 
 
@@ -128,6 +128,101 @@ def test_missing_component_returns_none(results_with_known_disp):
     store = VisualDataStore()
     sid = _stage_id(results_with_known_disp)
     assert store.nodes_slab(results_with_known_disp.stage(sid), sid, "nope") is None
+
+
+# ---------------------------------------------------------------------
+# Regression: large-magnitude demands (stress in Pa) must NOT overflow.
+#
+# The cache originally cast to float16, whose finite ceiling is 65504.
+# SI stress/force (concrete ~3e7, steel ~2.5e8) overflows to +inf, which
+# both corrupts the cached row AND collapses color_limits to None (all
+# values non-finite). float32 (range ~3.4e38) keeps them finite. These
+# tests pin that the cache stays finite on the default node AND gauss
+# paths at realistic stress magnitude — the exact case the float16/3030
+# happy-path fixture above cannot reach.
+# ---------------------------------------------------------------------
+_STRESS_PA = 2.5e8    # ~ steel yield in Pa — comfortably over the float16 cap
+
+
+def _all_element_ids(fem):
+    chunks = [np.asarray(grp.ids, dtype=np.int64) for grp in fem.elements]
+    return np.concatenate(chunks) if chunks else np.zeros(0, dtype=np.int64)
+
+
+@pytest.fixture
+def results_with_stress_magnitude(g, tmp_path: Path):
+    """Native HDF5 carrying a node AND a gauss component at ~2.5e8 Pa."""
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
+    g.physical.add_volume("cube", name="Body")
+    g.mesh.sizing.set_global_size(2.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    elem_ids = _all_element_ids(fem)
+    n_steps = 3
+
+    # Node component spanning up to ~2.5e8 (linear ramp so min != max).
+    pnode = np.zeros((n_steps, node_ids.size), dtype=np.float64)
+    for t in range(n_steps):
+        pnode[t] = np.linspace(_STRESS_PA * 0.5, _STRESS_PA, node_ids.size) + t
+
+    # Gauss component (1 GP / element) at the same magnitude.
+    sxx = np.zeros((n_steps, elem_ids.size, 1), dtype=np.float64)
+    for t in range(n_steps):
+        sxx[t, :, 0] = np.linspace(_STRESS_PA * 0.5, _STRESS_PA, elem_ids.size) + t
+    nat = np.array([[0.0, 0.0, 0.0]], dtype=np.float64)
+
+    path = tmp_path / "stress.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        sid = w.begin_stage(
+            name="push", kind="static",
+            time=np.arange(n_steps, dtype=np.float64),
+        )
+        w.write_nodes(
+            sid, "partition_0", node_ids=node_ids,
+            components={"pressure": pnode},
+        )
+        w.write_gauss_group(
+            sid, "partition_0", "group_0",
+            class_tag=4, int_rule=1,
+            element_index=elem_ids, natural_coords=nat,
+            components={"stress_xx": sxx},
+        )
+        w.end_stage()
+    return Results.from_native(path, model=_open_model_from_h5(path))
+
+
+def test_node_stress_stays_finite_and_clim_resolves(results_with_stress_magnitude):
+    store = VisualDataStore()
+    sid = _stage_id(results_with_stress_magnitude)
+    scoped = results_with_stress_magnitude.stage(sid)
+
+    slab = store.nodes_slab(scoped, sid, "pressure")
+    assert slab is not None
+    # float16 would have stamped +inf here (2.5e8 > 65504).
+    assert np.all(np.isfinite(slab.values)), "large node demand overflowed the cache"
+    clim = store.color_limits(sid, "pressure")
+    assert clim is not None, "color_limits collapsed to None (all-inf cache)"
+    lo, hi = clim
+    assert np.isfinite(lo) and np.isfinite(hi) and lo < hi
+    # float32 round-trip keeps ~6-7 sig figs at this magnitude.
+    np.testing.assert_allclose(hi, _STRESS_PA, rtol=1e-4)
+
+
+def test_gauss_stress_stays_finite_and_clim_resolves(results_with_stress_magnitude):
+    store = VisualDataStore()
+    sid = _stage_id(results_with_stress_magnitude)
+    scoped = results_with_stress_magnitude.stage(sid)
+
+    slab = store.gauss_slab(scoped, sid, "stress_xx")
+    assert slab is not None
+    assert np.all(np.isfinite(slab.values)), "large gauss demand overflowed the cache"
+    clim = store.color_limits(sid, "stress_xx")
+    assert clim is not None
+    lo, hi = clim
+    assert np.isfinite(lo) and np.isfinite(hi) and lo < hi
 
 
 # ---------------------------------------------------------------------
@@ -173,7 +268,7 @@ def test_contour_uses_visual_store_and_does_not_reread(
     finally:
         reader.read_nodes = orig
 
-    # No per-step HDF5 read: the cache path slices a float16 row.
+    # No per-step HDF5 read: the cache path slices a float32 row.
     assert reads["n"] == 0, f"expected 0 HDF5 reads during playback, got {reads['n']}"
 
     # And the painted values still match nid + t*1000 (correctness).
@@ -186,8 +281,8 @@ def test_contour_uses_visual_store_and_does_not_reread(
         diagram.update_to_step(step)
         expected = node_ids + step * 1000.0
         got = arr[pos[node_ids]]
-        # float16 round-trip tolerance (~1 part in 1000 for these magnitudes).
-        np.testing.assert_allclose(got, expected, rtol=2e-3, atol=1e-6)
+        # float32 round-trip tolerance (exact for these integer magnitudes).
+        np.testing.assert_allclose(got, expected, rtol=1e-6, atol=1e-6)
 
 
 def test_contour_falls_back_without_store(results_with_known_disp, headless_plotter):

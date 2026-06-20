@@ -10,8 +10,6 @@ def attach_bg_toggle(parent_widget, plotter) -> None:
     """
     from qtpy import QtCore, QtWidgets
 
-    _is_white = [False]
-
     btn = QtWidgets.QToolButton(parent_widget)
     btn.setText("⚙")
     btn.setToolTip("Background")
@@ -25,7 +23,6 @@ def attach_bg_toggle(parent_widget, plotter) -> None:
     btn.setFixedSize(16, 16)
 
     def _set_white():
-        _is_white[0] = True
         try:
             r = plotter.renderer
             r.SetTexturedBackground(False)
@@ -36,7 +33,6 @@ def attach_bg_toggle(parent_widget, plotter) -> None:
             pass
 
     def _set_dark():
-        _is_white[0] = False
         try:
             from apeGmsh.viewers.scene.background import apply_background
             from apeGmsh.viewers.ui.theme import THEME

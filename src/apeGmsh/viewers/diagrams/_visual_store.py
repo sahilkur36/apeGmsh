@@ -1,19 +1,21 @@
-"""VisualDataStore - eager float16 cache for the post-solve viewer.
+"""VisualDataStore - eager float32 cache for the post-solve viewer.
 
 Pure-visual performance layer for the post-solve viewer. Caches
-full-time slabs as float16 in RAM so the time scrubber slices a row
+full-time slabs as float32 in RAM so the time scrubber slices a row
 from memory instead of re-reading HDF5 every frame, and accumulates
 per-component vmin/vmax during the single load pass so color limits
 never need a rescan (ShakerMaker vmax-sidecar idea, computed
 live - no sidecar file).
 
-Why float16
+Why float32
 -----------
 The viewer per-step diagrams feed a VTK/PyVista mapper whose scalars
-are float32 anyway; three significant digits are plenty for colour
-mapping of demands (displacement / velocity / acceleration / stress).
-float16 halves the resident footprint versus the float64 the public
-readers return, so more components stay cached at once.
+are float32 anyway, so float32 is the native mapper width and is the
+exact precision the colour pipeline consumes. float32 halves the
+resident footprint versus the float64 the public readers return, so
+more components stay cached at once - while staying finite for the
+full demand range (stress in Pa overflows float16, which tops out at
+65504).
 
 What is NOT touched
 -------------------
@@ -73,11 +75,11 @@ def _env_cap() -> Optional[int]:
 
 
 class _Entry:
-    """One cached full-time slab (float16 values) + colour limits.
+    """One cached full-time slab (float32 values) + colour limits.
 
-    slab is the reader slab with .values replaced by a float16 array
+    slab is the reader slab with .values replaced by a float32 array
     (same shape, same metadata). vmin / vmax are the finite min/max of
-    that float16 array, computed once during the load pass.
+    that float32 array, computed once during the load pass.
     """
 
     __slots__ = ("slab", "vmin", "vmax", "kind", "nbytes")
@@ -91,7 +93,7 @@ class _Entry:
 
 
 def _finite_minmax(arr: ndarray) -> "tuple[float, float]":
-    """Finite min/max of a (possibly float16) array; (nan, nan) if none."""
+    """Finite min/max of a (possibly float32) array; (nan, nan) if none."""
     a = np.asarray(arr).ravel()
     finite = a[np.isfinite(a)]
     if finite.size == 0:
@@ -105,7 +107,7 @@ def _replace_values(slab: Any, values: ndarray) -> Any:
 
 
 class VisualDataStore:
-    """Eager float16 cache of full-time slabs, keyed by (stage, component).
+    """Eager float32 cache of full-time slabs, keyed by (stage, component).
 
     One instance lives on the ResultsDirector for the viewer session
     and is shared by every diagram (one Results -> one director -> one
@@ -187,7 +189,7 @@ class VisualDataStore:
     # Lazy accessors (the diagram hot path)
     # ------------------------------------------------------------------
     def nodes_slab(self, scoped: "Results", stage_id: str, component: str) -> Any:
-        """Full-time NodeSlab with float16 values, or None.
+        """Full-time NodeSlab with float32 values, or None.
 
         Lazily loads on first miss (a live request always renders, even
         past the eager budget). Returns None if the component is not
@@ -202,7 +204,7 @@ class VisualDataStore:
         return entry.slab if entry is not None else None
 
     def gauss_slab(self, scoped: "Results", stage_id: str, component: str) -> Any:
-        """Full-time GaussSlab with float16 values, or None."""
+        """Full-time GaussSlab with float32 values, or None."""
         key = (stage_id, component)
         entry = self._cache.get(key)
         if entry is None:
@@ -230,9 +232,9 @@ class VisualDataStore:
         slab = self._safe_read(lambda: scoped.nodes.get(component=component, time=None))
         if slab is None or np.asarray(slab.values).size == 0:
             return False
-        f16 = np.asarray(slab.values, dtype=np.float16)
-        new_slab = _replace_values(slab, f16)
-        vmin, vmax = _finite_minmax(f16)
+        f32 = np.asarray(slab.values, dtype=np.float32)
+        new_slab = _replace_values(slab, f32)
+        vmin, vmax = _finite_minmax(f32)
         self._store(stage_id, component, new_slab, vmin, vmax, "nodes")
         return True
 
@@ -240,9 +242,9 @@ class VisualDataStore:
         slab = self._safe_read(lambda: scoped.elements.gauss.get(component=component, time=None))
         if slab is None or np.asarray(slab.values).size == 0:
             return False
-        f16 = np.asarray(slab.values, dtype=np.float16)
-        new_slab = _replace_values(slab, f16)
-        vmin, vmax = _finite_minmax(f16)
+        f32 = np.asarray(slab.values, dtype=np.float32)
+        new_slab = _replace_values(slab, f32)
+        vmin, vmax = _finite_minmax(f32)
         self._store(stage_id, component, new_slab, vmin, vmax, "gauss")
         return True
 

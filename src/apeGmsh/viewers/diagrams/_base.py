@@ -311,21 +311,13 @@ class Diagram:
         except Exception:
             return None
 
-    def _visual_color_limits(self):
-        """Cached (vmin, vmax) for this diagram component, or None."""
-        store = getattr(self, "_visual_store", None)
-        if store is None:
-            return None
-        stage_id = self._visual_resolved_stage_id()
-        if stage_id is None:
-            return None
-        component = self.spec.selector.component
-        if not component:
-            return None
-        try:
-            return store.color_limits(stage_id, component)
-        except Exception:
-            return None
+    # NOTE: the store tracks per-component (vmin, vmax) during its load
+    # pass (VisualDataStore.color_limits) so a future "stable colour scale
+    # across the whole time history" feature can read global limits without
+    # a rescan. That feature is NOT wired yet — no diagram consumes it — so
+    # the former Diagram._visual_color_limits() wrapper was removed rather
+    # than shipped as dead code implying the feature exists. Re-add a thin
+    # accessor here when the contour clim path actually consumes it.
 
     # ------------------------------------------------------------------
     # Subclass hooks (override these)
