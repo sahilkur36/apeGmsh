@@ -311,13 +311,32 @@ class Diagram:
         except Exception:
             return None
 
-    # NOTE: the store tracks per-component (vmin, vmax) during its load
-    # pass (VisualDataStore.color_limits) so a future "stable colour scale
-    # across the whole time history" feature can read global limits without
-    # a rescan. That feature is NOT wired yet — no diagram consumes it — so
-    # the former Diagram._visual_color_limits() wrapper was removed rather
-    # than shipped as dead code implying the feature exists. Re-add a thin
-    # accessor here when the contour clim path actually consumes it.
+    def _visual_color_limits(self):
+        """Global (vmin, vmax) for this component across the whole time
+        history, from the visual store, or None.
+
+        Consumed by the contour's clim path to give a STABLE colour scale:
+        the per-step auto range is computed at attach against step 0, which
+        is often the undeformed/zero state and yields a degenerate (0, 1)
+        scale for the whole animation. The store tracks the finite min/max
+        over all steps during its single load pass (no rescan), so this
+        anchors the scale to the real demand range. None when no store is
+        stamped (headless / pre-bind) or the component is not cached, in
+        which case the caller falls back to the per-step range.
+        """
+        store = getattr(self, "_visual_store", None)
+        if store is None:
+            return None
+        stage_id = self._visual_resolved_stage_id()
+        if stage_id is None:
+            return None
+        component = self.spec.selector.component
+        if not component:
+            return None
+        try:
+            return store.color_limits(stage_id, component)
+        except Exception:
+            return None
 
     # ------------------------------------------------------------------
     # Subclass hooks (override these)

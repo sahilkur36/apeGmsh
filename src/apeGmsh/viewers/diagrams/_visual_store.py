@@ -32,9 +32,13 @@ Eager by default - load_stage materializes every node + gauss
 component for the requested stage. An optional
 APEGMSH_VIEWER_CACHE_BYTES cap (or byte_budget= ctor kwarg)
 stops further eager pre-fetch once the budget is hit; missing
-components then load lazily on first access (still no eviction - the
-cap only gates the eager pre-fetch, never a live request). Default
-(no env, no kwarg) = unbounded eager.
+components then load lazily on first access. A lazy (live) load always
+succeeds — after storing it, the cache evicts the LEAST-recently-used
+entries until back under the budget, but never the entry just loaded
+and never the last remaining entry, so a render is never refused. The
+LRU stamp is bumped on every slab access, so the hot (currently
+scrubbed) stage/component survives while cold ones are dropped first.
+Default (no env, no kwarg) = unbounded, no eviction.
 """
 from __future__ import annotations
 
@@ -124,6 +128,40 @@ class VisualDataStore:
         # (stage_id, component) -> _Entry  (kind recorded on the entry)
         self._cache: "dict[tuple[str, str], _Entry]" = {}
         self._loaded_bytes: int = 0
+        # LRU bookkeeping: monotone tick stamped on every slab access/store.
+        # Used only when a byte budget is set (default None = no eviction).
+        self._tick: int = 0
+        self._last_access: "dict[tuple[str, str], int]" = {}
+
+    def _touch(self, key: "tuple[str, str]") -> None:
+        self._tick += 1
+        self._last_access[key] = self._tick
+
+    def _evict_to_budget(self, protect: "tuple[str, str]") -> None:
+        """Evict least-recently-used entries until under the byte budget.
+
+        Never evicts ``protect`` (the entry a live request just loaded) and
+        never empties the cache — so a render is never refused, only older
+        cached stages/components are dropped. No-op when no budget is set.
+        """
+        if self._budget is None:
+            return
+        while (
+            self._loaded_bytes > self._budget
+            and len(self._cache) > 1
+        ):
+            victim = min(
+                (k for k in self._cache if k != protect),
+                key=lambda k: self._last_access.get(k, 0),
+                default=None,
+            )
+            if victim is None:
+                break
+            entry = self._cache.pop(victim)
+            self._last_access.pop(victim, None)
+            self._loaded_bytes -= entry.nbytes
+        if self._loaded_bytes < 0:
+            self._loaded_bytes = 0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -131,12 +169,14 @@ class VisualDataStore:
     def clear(self) -> None:
         """Drop every cached entry (full reset)."""
         self._cache.clear()
+        self._last_access.clear()
         self._loaded_bytes = 0
 
     def invalidate_stage(self, stage_id: str) -> None:
         """Drop only the entries belonging to stage_id."""
         for key in [k for k in self._cache if k[0] == stage_id]:
             entry = self._cache.pop(key)
+            self._last_access.pop(key, None)
             self._loaded_bytes -= entry.nbytes
         if self._loaded_bytes < 0:
             self._loaded_bytes = 0
@@ -201,6 +241,8 @@ class VisualDataStore:
             if not self._load_nodes(scoped, stage_id, component):
                 return None
             entry = self._cache.get(key)
+        if entry is not None:
+            self._touch(key)
         return entry.slab if entry is not None else None
 
     def gauss_slab(self, scoped: "Results", stage_id: str, component: str) -> Any:
@@ -211,6 +253,8 @@ class VisualDataStore:
             if not self._load_gauss(scoped, stage_id, component):
                 return None
             entry = self._cache.get(key)
+        if entry is not None:
+            self._touch(key)
         return entry.slab if entry is not None else None
 
     def color_limits(self, stage_id: str, component: str) -> "Optional[tuple[float, float]]":
@@ -259,6 +303,10 @@ class VisualDataStore:
         entry = _Entry(slab, vmin, vmax, kind)
         self._cache[key] = entry
         self._loaded_bytes += entry.nbytes
+        self._touch(key)
+        # Bound resident memory: drop LRU entries until under the budget,
+        # but never the one just stored and never the last entry.
+        self._evict_to_budget(protect=key)
 
     @staticmethod
     def _safe_read(fn: Any) -> Any:

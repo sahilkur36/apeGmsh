@@ -133,7 +133,9 @@ class ExplodeController:
         self._mode: str = "Default"
         self._magnitudes: dict[str, float] = {"x": 0.0, "y": 0.0, "z": 0.0}
         self._explode_actors: list[Any] = []
-        self._original_visibility: dict[Any, bool] = {}
+        # (actor-dict name, dim) -> visibility before explosion. Keyed by
+        # name+dim (not id(actor)) so swaps during explosion resolve live.
+        self._original_visibility: dict[tuple[str, int], bool] = {}
         self._active: bool = False
 
     # ------------------------------------------------------------------
@@ -230,6 +232,23 @@ class ExplodeController:
             return result
         return _build_surf_elem_colors(self._scene)
 
+    def _actor_dicts(self) -> "dict[str, dict]":
+        """The four per-dim actor dicts by stable name.
+
+        Saved visibility is keyed by ``(name, dim)`` rather than
+        ``id(actor)`` so that an actor SWAPPED in mid-explosion (e.g. a
+        point-size rebuild replacing the node cloud, or a fill re-add) is
+        resolved live from the registry at hide/restore time — id() identity
+        is fragile across swaps (and can even alias a freed object).
+        """
+        r = self._registry
+        return {
+            "fill": r.dim_actors,
+            "wire": getattr(r, "dim_wire_actors", {}),
+            "node": getattr(r, "dim_node_actors", {}),
+            "silhouette": getattr(r, "dim_silhouette_actors", {}),
+        }
+
     def enforce_hiding(self) -> None:
         """Re-assert actor hiding after an external visibility operation.
 
@@ -238,21 +257,16 @@ class ExplodeController:
         """
         if not self._active:
             return
-        registry = self._registry
-        for actor_dict in (
-            registry.dim_actors,
-            getattr(registry, "dim_wire_actors", {}),
-            getattr(registry, "dim_silhouette_actors", {}),
-        ):
-            for actor in actor_dict.values():
-                if actor is not None and id(actor) in self._original_visibility:
-                    actor.SetVisibility(False)
-        # Node-cloud actors are hidden UNCONDITIONALLY while exploded — the
-        # _original_visibility snapshot is keyed by id(actor), so a node actor
-        # swapped in after explosion began (e.g. a point-size rebuild) is not
-        # in the snapshot and would otherwise stay visible at original
-        # positions. Re-scan the live registry every call instead.
-        for actor in getattr(registry, "dim_node_actors", {}).values():
+        dicts = self._actor_dicts()
+        # Resolve each saved (name, dim) to the CURRENT actor and hide it —
+        # robust to swaps because we never hold a stale actor reference.
+        for name, dim in self._original_visibility:
+            actor = dicts.get(name, {}).get(dim)
+            if actor is not None:
+                actor.SetVisibility(False)
+        # Node-cloud actors are hidden unconditionally (covers a node dim that
+        # appeared only after the snapshot was taken).
+        for actor in dicts["node"].values():
             if actor is not None:
                 actor.SetVisibility(False)
 
@@ -265,27 +279,22 @@ class ExplodeController:
         """
         if not self._active:
             return
-        for actor in getattr(self._registry, "dim_node_actors", {}).values():
-            if actor is not None and id(actor) in self._original_visibility:
-                self._original_visibility[id(actor)] = visible
+        for key in list(self._original_visibility):
+            if key[0] == "node":
+                self._original_visibility[key] = visible
 
     def _should_explode(self) -> bool:
         return any(v > 0.0 for v in self._magnitudes.values())
 
     def _save_and_hide_actors(self) -> None:
-        registry = self._registry
         # Hide all fill, wire, node-cloud, and silhouette actors so nothing
-        # from the original mesh floats at its original position during explosion.
-        for actor_dict in (
-            registry.dim_actors,
-            getattr(registry, "dim_wire_actors", {}),
-            getattr(registry, "dim_node_actors", {}),
-            getattr(registry, "dim_silhouette_actors", {}),
-        ):
-            for actor in actor_dict.values():
+        # from the original mesh floats at its original position during
+        # explosion. Saved by (name, dim) — see _actor_dicts.
+        for name, actor_dict in self._actor_dicts().items():
+            for dim, actor in actor_dict.items():
                 if actor is None:
                     continue
-                self._original_visibility[id(actor)] = bool(actor.GetVisibility())
+                self._original_visibility[(name, dim)] = bool(actor.GetVisibility())
                 actor.SetVisibility(False)
 
     def _clear_explode(self) -> None:
@@ -297,18 +306,12 @@ class ExplodeController:
         self._explode_actors.clear()
 
         if self._active:
-            # Restore original visibility for every saved actor.
-            registry = self._registry
-            for actor_dict in (
-                registry.dim_actors,
-                getattr(registry, "dim_wire_actors", {}),
-                getattr(registry, "dim_node_actors", {}),
-                getattr(registry, "dim_silhouette_actors", {}),
-            ):
-                for actor in actor_dict.values():
-                    if actor is None:
-                        continue
-                    was = self._original_visibility.get(id(actor), True)
+            # Restore saved visibility, resolving each (name, dim) to the
+            # CURRENT actor so a swap during explosion restores correctly.
+            dicts = self._actor_dicts()
+            for (name, dim), was in self._original_visibility.items():
+                actor = dicts.get(name, {}).get(dim)
+                if actor is not None:
                     actor.SetVisibility(was)
 
         self._original_visibility.clear()

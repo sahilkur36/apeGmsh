@@ -226,6 +226,47 @@ def test_gauss_stress_stays_finite_and_clim_resolves(results_with_stress_magnitu
 
 
 # ---------------------------------------------------------------------
+# Memory budget: LRU eviction bounds resident bytes without refusing a
+# live request.
+# ---------------------------------------------------------------------
+def test_byte_budget_evicts_lru_keeps_live_request(results_with_stress_magnitude):
+    sid = _stage_id(results_with_stress_magnitude)
+    scoped = results_with_stress_magnitude.stage(sid)
+
+    # Size of a single node component.
+    probe = VisualDataStore()
+    probe.nodes_slab(scoped, sid, "pressure")
+    one = probe.loaded_bytes
+    assert one > 0
+
+    # Budget that holds ~1 node entry: loading a 2nd component must evict
+    # the colder one rather than growing unbounded.
+    store = VisualDataStore(byte_budget=one)
+    assert store.nodes_slab(scoped, sid, "pressure") is not None
+    assert store.gauss_slab(scoped, sid, "stress_xx") is not None
+
+    cached = {k[1] for k in store._cache}    # noqa: SLF001
+    assert "stress_xx" in cached, "the just-loaded live request must survive"
+    assert "pressure" not in cached, "the LRU entry should have been evicted"
+    # Bounded down to the single live entry: the cold component was dropped
+    # rather than letting the cache grow unbounded. (Eviction never empties
+    # the cache, so a lone entry larger than the budget is still kept — a
+    # render is never refused.)
+    assert len(store._cache) == 1
+    assert store.loaded_bytes == store._cache[(sid, "stress_xx")].nbytes  # noqa: SLF001
+
+
+def test_unbounded_store_never_evicts(results_with_stress_magnitude):
+    sid = _stage_id(results_with_stress_magnitude)
+    scoped = results_with_stress_magnitude.stage(sid)
+    store = VisualDataStore()    # default: unbounded
+    store.nodes_slab(scoped, sid, "pressure")
+    store.gauss_slab(scoped, sid, "stress_xx")
+    cached = {k[1] for k in store._cache}    # noqa: SLF001
+    assert {"pressure", "stress_xx"} <= cached
+
+
+# ---------------------------------------------------------------------
 # Contour integration: cache hit vs fallback
 # ---------------------------------------------------------------------
 def _attach_contour(results, headless_plotter, *, store=None):
@@ -300,3 +341,60 @@ def test_contour_falls_back_without_store(results_with_known_disp, headless_plot
         expected = node_ids + step * 1000.0
         got = arr[pos[node_ids]]
         np.testing.assert_allclose(got, expected, rtol=1e-9, atol=1e-9)
+
+
+# ---------------------------------------------------------------------
+# Stable colour scale: the contour's auto clim anchors to the store's
+# GLOBAL (vmin, vmax) over the whole history instead of step 0's range.
+# ---------------------------------------------------------------------
+@pytest.fixture
+def results_step0_zero(g, tmp_path: Path):
+    """displacement_z is 0 at step 0, then 1000*t — so step 0 is the
+    degenerate undeformed state that breaks a step-0-anchored clim."""
+    g.model.geometry.add_box(0, 0, 0, 1, 1, 1, label="cube")
+    g.physical.add_volume("cube", name="Body")
+    g.mesh.sizing.set_global_size(2.0)
+    g.mesh.generation.generate(dim=3)
+    fem = g.mesh.queries.get_fem_data(dim=3)
+    node_ids = np.asarray(fem.nodes.ids, dtype=np.int64)
+    n_steps = 4
+    values = np.zeros((n_steps, node_ids.size), dtype=np.float64)
+    for t in range(1, n_steps):
+        values[t] = float(t) * 1000.0    # step 0 stays all-zero
+    path = tmp_path / "step0zero.h5"
+    with NativeWriter(path) as w:
+        w.open(fem=fem)
+        sid = w.begin_stage(
+            name="grav", kind="static",
+            time=np.arange(n_steps, dtype=np.float64),
+        )
+        w.write_nodes(
+            sid, "partition_0", node_ids=node_ids,
+            components={"displacement_z": values},
+        )
+        w.end_stage()
+    return Results.from_native(path, model=_open_model_from_h5(path))
+
+
+def test_contour_stable_clim_uses_global_not_step0(
+    results_step0_zero, headless_plotter,
+):
+    sid = _stage_id(results_step0_zero)
+    store = VisualDataStore()
+    store.load_stage(results_step0_zero, sid)
+    diagram, _ = _attach_contour(results_step0_zero, headless_plotter, store=store)
+    lo, hi = diagram._initial_clim    # noqa: SLF001
+    # Global demand range is 0..3000; the scale must reflect it, not the
+    # degenerate step-0 (0, 1) it would collapse to without the store.
+    assert hi == pytest.approx(3000.0, rel=1e-3)
+    assert hi > 1.0
+
+
+def test_contour_clim_falls_back_to_step0_without_store(
+    results_step0_zero, headless_plotter,
+):
+    diagram, _ = _attach_contour(results_step0_zero, headless_plotter, store=None)
+    lo, hi = diagram._initial_clim    # noqa: SLF001
+    # No store -> per-step range -> step 0 is all-zero -> degenerate (0, 1).
+    # (This is exactly the washed-out animation the store fixes.)
+    assert (lo, hi) == (0.0, 1.0)
