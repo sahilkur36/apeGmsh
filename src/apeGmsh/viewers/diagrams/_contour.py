@@ -885,6 +885,13 @@ class ContourDiagram(ScalarColorSupport, Diagram):
         style: ContourStyle = self.spec.style    # type: ignore[assignment]
         if style.clim is not None:
             return (float(style.clim[0]), float(style.clim[1]))
+        # Stable colour scale: prefer the store's global (vmin, vmax) over the
+        # whole time history so the scale doesn't collapse to step 0's range
+        # (often the undeformed/zero state). Falls back to the per-step finite
+        # range when no store is stamped or the component is uncached.
+        global_clim = self._visual_color_limits()
+        if global_clim is not None:
+            return global_clim
         finite = data[np.isfinite(data)]
         if finite.size:
             lo = float(finite.min())
