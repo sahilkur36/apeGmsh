@@ -249,10 +249,27 @@ the recommended combination is `true_arc=True` + `embedded`.
 
 ```
 g.rebar.place(cage, into, *, coupling="conformal"|"embedded",
-              per_member_coupling=None, true_arc=False,
+              per_member_coupling=None,
+              # embedded-coupling forwarding (one regime per place(), applied to
+              # every embedded member; bond XOR perfect required):
+              bond=None, perfect=None, kt=None, kt_alpha=None,
+              enforce="penalty", bipenalty=False, dtcr=None,
+              tolerance=1e-6, snap=False,
+              host_dim=None, true_arc=False,
               on_conformal_infeasible="fail"|"embedded",
-              tolerance=None, name=None) -> RebarDef
+              name=None) -> RebarPlacement
 ```
+
+The embedded forwarding kwargs are a **single coupling regime per
+`place()`** (all embedded members share one bond/perfect law); per-member
+bond laws are a future extension (would add fields to `Bar`/`Stirrup`).
+`host_entities`/`bars_entities` are intentionally not exposed — `g.rebar`
+couples whole-label host/bars (drop down to `g.reinforce` directly for
+sub-entity restriction). Validation is **Pass-0** (entire cage + host
+checked before any gmsh mutation): unique member names, embedded bond-XOR-
+perfect + resolvable db, the `element="beam"` gate, stirrup ≥3 distinct
+corners, single + un-meshed + same-session host for conformal, PG host for
+embedded.
 
 `place()` runs at **geometry time** and calls `chain_phase_guard` at its
 own entry (the `g.reinforce` sub-call is *not* guarded; only the
@@ -394,8 +411,10 @@ also done eagerly at `place()` (both run pre-mesh; the chain-phase guard
 already blocks post-snapshot mutation via `Model._register →
 chain_phase_guard`).  Mutation guarding follows the established
 `LoadsComposite._add_def` pattern (`try_chain_phase_route` +
-`_bump_fem_counter`), not a bare `_check_chain_phase`.  `RebarDef` is the
-declare-side record (curve PGs + per-member coupling + spawned
+`_bump_fem_counter`), not a bare `_check_chain_phase`.  `RebarPlacement`
+(with `RebarMember` children carrying pg + resolved diameter/area +
+material + element + coupling) is the declare-side record (curve PGs +
+per-member coupling + spawned
 `ReinforceDef` refs); element/material realization happens at bridge
 time on resolved nodes.  **No H5 schema bump for the inline path**
 (`ReinforceDef`/`EmbeddedDef` are pre-mesh declarations, never
