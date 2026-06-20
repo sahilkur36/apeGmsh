@@ -98,6 +98,26 @@ def test_energy_absent_raises() -> None:
         Results.from_ladruno(TRUSS).energy()
 
 
+def test_energy_regions_lists_recorded_tags() -> None:
+    # The energy fixture recorded `-G energy 1` → ON_REGIONS for region 1.
+    tags = Results.from_ladruno(ENERGY).energy_regions()
+    assert tags == [1]
+
+
+def test_energy_regions_closes_the_loop() -> None:
+    # Discovered tag feeds energy(region=...) without the user knowing it.
+    r = Results.from_ladruno(ENERGY)
+    (tag,) = r.energy_regions()
+    df = r.energy(region=tag)
+    assert list(df.columns) == _ENERGY_COLS
+    assert len(df) == 5
+
+
+def test_energy_regions_empty_when_no_per_region() -> None:
+    # truss2d has no energy channel at all → no per-region tags.
+    assert Results.from_ladruno(TRUSS).energy_regions() == []
+
+
 # ---------------------------------------------------------------------------
 # Finding B — node envelopes (recorder -envelope) via the public API
 # ---------------------------------------------------------------------------
