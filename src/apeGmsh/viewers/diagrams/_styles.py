@@ -54,6 +54,14 @@ class ContourStyle(DiagramStyle):
         ``printf``-style format string for tick labels on the scalar
         bar (e.g. ``"%.3g"``, ``"%.2e"``, ``"%.4f"``). Live-editable
         via ``ContourDiagram.set_fmt(str)``.
+    scalar_bar_vertical
+        Bar orientation — ``True`` vertical, ``False`` horizontal,
+        ``None`` (default) = the viewer theme's default. Live-editable
+        via ``set_scalar_bar_vertical(bool)``.
+    scalar_bar_scale
+        On-screen size multiplier for the bar (``1.0`` = pyvista's
+        default size). Live-editable via ``set_scalar_bar_scale(float)``;
+        the bar can also be dragged / resized directly in the scene.
     topology
         ``"nodes"`` (default) forces the nodal-scalar path — values
         come from ``results.nodes.get`` and are painted as point data.
@@ -77,6 +85,8 @@ class ContourStyle(DiagramStyle):
     show_edges: bool = False
     show_scalar_bar: bool = True
     fmt: str = "%.3g"
+    scalar_bar_vertical: Optional[bool] = None
+    scalar_bar_scale: float = 1.0
     topology: str = "nodes"
     averaging: str = "averaged"
 
@@ -163,6 +173,11 @@ class VectorGlyphStyle(DiagramStyle):
         ``color``.
     arrow_tip_fraction
         Tip-cone length as a fraction of total arrow length.
+    scalar_bar_vertical
+        Bar orientation — ``True`` vertical, ``False`` horizontal,
+        ``None`` (default) = the viewer theme's default.
+    scalar_bar_scale
+        On-screen size multiplier for the bar (``1.0`` = default).
     """
     components: tuple[str, ...] = (
         "displacement_x", "displacement_y", "displacement_z",
@@ -176,6 +191,8 @@ class VectorGlyphStyle(DiagramStyle):
     arrow_tip_fraction: float = 0.25
     show_scalar_bar: bool = True
     fmt: str = "%.3g"
+    scalar_bar_vertical: Optional[bool] = None
+    scalar_bar_scale: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -209,6 +226,11 @@ class PrincipalGlyphStyle(DiagramStyle):
     plane, nu
         2-D out-of-plane recovery (see the derived-scalar layer):
         ``plane="strain"`` + ``nu`` fills σ_zz = ν(σ_xx+σ_yy).
+    scalar_bar_vertical
+        Bar orientation — ``True`` vertical, ``False`` horizontal,
+        ``None`` (default) = the viewer theme's default.
+    scalar_bar_scale
+        On-screen size multiplier for the bar (``1.0`` = default).
     """
     family: str = "stress"
     scale: Optional[float] = None
@@ -223,6 +245,8 @@ class PrincipalGlyphStyle(DiagramStyle):
     nu: Optional[float] = None
     show_scalar_bar: bool = True
     fmt: str = "%.3g"
+    scalar_bar_vertical: Optional[bool] = None
+    scalar_bar_scale: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -314,6 +338,11 @@ class GaussMarkerStyle(DiagramStyle):
         Screen-space marker size in pixels.
     show_scalar_bar
         Whether to render a colorbar.
+    scalar_bar_vertical
+        Bar orientation — ``True`` vertical, ``False`` horizontal,
+        ``None`` (default) = the viewer theme's default.
+    scalar_bar_scale
+        On-screen size multiplier for the bar (``1.0`` = default).
     """
     cmap: str = "viridis"
     clim: Optional[tuple[float, float]] = None
@@ -321,6 +350,8 @@ class GaussMarkerStyle(DiagramStyle):
     point_size: float = 12.0
     show_scalar_bar: bool = True
     fmt: str = "%.3g"
+    scalar_bar_vertical: Optional[bool] = None
+    scalar_bar_scale: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -354,6 +385,11 @@ class SandStyle(DiagramStyle):
     seed
         RNG seed for grain placement (and thresholds) — the same spec
         reproduces the same cloud.
+    scalar_bar_vertical
+        Bar orientation — ``True`` vertical, ``False`` horizontal,
+        ``None`` (default) = the viewer theme's default.
+    scalar_bar_scale
+        On-screen size multiplier for the bar (``1.0`` = default).
     """
     cmap: str = "viridis"
     clim: Optional[tuple[float, float]] = None
@@ -365,6 +401,8 @@ class SandStyle(DiagramStyle):
     weight_by_value: bool = False
     density_floor: float = 0.05
     seed: int = 0
+    scalar_bar_vertical: Optional[bool] = None
+    scalar_bar_scale: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -420,6 +458,11 @@ class FiberSectionStyle(DiagramStyle):
     panel_show_areas
         If ``True``, the 2-D scatter scales markers by fiber ``area``.
         If ``False``, all markers are drawn the same size.
+    scalar_bar_vertical
+        Bar orientation — ``True`` vertical, ``False`` horizontal,
+        ``None`` (default) = the viewer theme's default.
+    scalar_bar_scale
+        On-screen size multiplier for the bar (``1.0`` = default).
     """
     cmap: str = "coolwarm"
     clim: Optional[tuple[float, float]] = None
@@ -430,6 +473,8 @@ class FiberSectionStyle(DiagramStyle):
     fmt: str = "%.3g"
     panel_marker_scale: float = 60.0
     panel_show_areas: bool = True
+    scalar_bar_vertical: Optional[bool] = None
+    scalar_bar_scale: float = 1.0
 
 
 @dataclass(frozen=True)
@@ -450,6 +495,11 @@ class LayerStackStyle(DiagramStyle):
         sub-GP nearest the mid-thickness; ``"mean"`` averages all
         layers and sub-GPs of the cell's GPs; ``"max_abs"`` picks the
         signed value of largest magnitude.
+    scalar_bar_vertical
+        Bar orientation — ``True`` vertical, ``False`` horizontal,
+        ``None`` (default) = the viewer theme's default.
+    scalar_bar_scale
+        On-screen size multiplier for the bar (``1.0`` = default).
     """
     cmap: str = "coolwarm"
     clim: Optional[tuple[float, float]] = None
@@ -458,6 +508,8 @@ class LayerStackStyle(DiagramStyle):
     show_scalar_bar: bool = True
     fmt: str = "%.3g"
     aggregation: str = "mid_layer"
+    scalar_bar_vertical: Optional[bool] = None
+    scalar_bar_scale: float = 1.0
 
 
 @dataclass(frozen=True)
