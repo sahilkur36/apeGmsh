@@ -3463,6 +3463,50 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0098-7-s4-3-the-session-time-link" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §7 (S4-3): the session time link
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0098-96-s4-2-outline-select-all-the-plot-pane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §9/§6 (S4-2): outline select-all + the plot pane
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-one-selectionstate-gesture-was-quadratic-in-the-set-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — one SelectionState gesture was quadratic in the set size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0098-8-s4-1-the-selection-surface-pane-pick" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §8 (S4-1): the selection surface + pane pick
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -8147,6 +8191,50 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-adr-0098-7-s4-3-the-session-time-link" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §7 (S4-3): the session time link
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0098-96-s4-2-outline-select-all-the-plot-pane" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §9/§6 (S4-2): outline select-all + the plot pane
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-one-selectionstate-gesture-was-quadratic-in-the-set-size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — one SelectionState gesture was quadratic in the set size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-adr-0098-8-s4-1-the-selection-surface-pane-pick" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — ADR 0098 §8 (S4-1): the selection surface + pane pick
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -12813,6 +12901,169 @@ flag and the flat-deck <code>LadrunoContact</code> auto-emit (do not double-decl
      guarded by tests/test_changelog_structure.py.
      Workflow + rationale: internal_docs/changelog_workflow.md -->
 
+<h3 id="added-adr-0098-7-s4-3-the-session-time-link">ADDED — ADR 0098 §7 (S4-3): the session time link<a class="headerlink" href="#added-adr-0098-7-s4-3-the-session-time-link" title="Permanent link">&para;</a></h3>
+<p>The window gets its time back. <code>SessionScrubber</code> is the bottom-dock
+transport over the session's instant: slider, first/step/play/step/last,
+fps and loop mode, a stage selector, and the §7 <strong>link</strong> toggle. It is
+<code>TimeScrubberDock</code>'s machinery with the binding swapped — <code>session.time</code>
+and the change tick in place of <code>director.set_step</code> / <code>subscribe_step</code>
+— which is all the plan sized it as; the old dock is untouched until
+S6a. Drag it and every mesh view re-poses and every plot's playhead
+slides, which is §7's own test ("if the link is on and moving the plot
+does not move the meshes, the link is a lie") read forwards.</p>
+<p><strong>One stage at a time</strong> (plan decision 9, settled here). The slider
+spans the current stage's steps and a selector picks the stage; the
+director's concatenated multi-stage track is deferred. That way the
+scrubber's x-axis is the same axis every plot draws — the stage's own
+recorded time — so the cursor rides the curve literally rather than
+within-a-segment, and a history plot (resolved inside
+<code>results.stage(cursor.stage)</code>) swaps curves on an explicit stage change
+instead of mid-drag. Switching stage lands on step 0 rather than
+carrying a step that would mean a different time. Not a one-way door:
+<code>Instant</code> is <code>(stage, step)</code> under either traversal, so the IR and the
+S5 snapshot are identical.</p>
+<p><strong>Unlinked, each pane keeps its own instant</strong> (§7). The scrubber then
+disables itself and says why, because a live slider that changes no
+picture is a control pretending it can act; the per-pane instant badge
+<code>SessionPaneFrame</code> has carried built-and-hidden since S4-1 takes over.
+That badge renders only when it is news — link off, or a <strong>mode-posed</strong>
+view, which has no instant at all and is frozen under the link either
+way (§4/§7), and which without a badge just looks like a pane that
+stopped working. The inspector gains §9's pane-time row (stage + step +
+Clear), enabled even while linked because "set it here; the link
+ignores it" is literal: that value is the instant the pane adopts the
+moment you unlink.</p>
+<p><strong>The badge had to be taught it is chrome.</strong> Measured first: an
+unelided stage id took the pane frame's <code>minimumSizeHint</code> from 207 px
+to 593 against <code>LAYOUT.pane_min_width = 240</code>, which <code>required_extent()</code>
+and the Add gate both multiply by — so the gate would have admitted a
+column the splitter cannot fit, which is criterion 18's whole point. It
+now carries the title's squeeze policy and elides the stage id, with
+the full value in the tooltip: back to 209 px.</p>
+<p>Playback is the reconciler's first sustained-load test. The
+discriminating pane is a mode-posed one: it is frozen under the link,
+so a frame that costs a static pane a realize must cost it nothing.
+Counting only panes that DO move passes with the criterion-12 signature
+gate ripped out — which the mutation pass caught, and the test was
+rewritten around.</p>
+<h3 id="added-adr-0098-96-s4-2-outline-select-all-the-plot-pane">ADDED — ADR 0098 §9/§6 (S4-2): outline select-all + the plot pane<a class="headerlink" href="#added-adr-0098-96-s4-2-outline-select-all-the-plot-pane" title="Permanent link">&para;</a></h3>
+<p><strong>Select all.</strong> Right-clicking a physical group or an element type in
+the session outline offers <em>Select all nodes</em> / <em>Select all Gauss</em> —
+§8's fourth writer, over the same ADR 0045 store a click writes, so the
+nodes-XOR-Gauss law and the one-gesture undo apply to it unchanged. The
+subject is the checked names when the clicked row is one of them and
+that row alone otherwise; each entry carries its count and disables
+itself at zero. Selecting does <strong>not</strong> touch scope: scope is what the
+view draws, selection is what gets plotted. Node membership reads no
+results at all (pure model topology, resolved by the same <code>_scope</code>
+resolver a scope checkbox uses); Gauss membership costs one single-step
+probe slab, addressed through the encoding realize's pick targets share
+(<code>viewers/session/_gauss_addr.py</code>), so the outline and the highlight
+cannot disagree about which integration point is selected.</p>
+<p><strong>The plot pane.</strong> <code>PlotPanePlaceholder</code> is replaced by a real
+matplotlib-in-Qt chart. <code>SessionReconciler</code> serves mesh views only, so
+the chart gets its own <code>PlotReconciler</code> restating the same three
+disciplines: one gesture one redraw; a signature gate that includes the
+§7 instant (leaving it out is the S4-1 defect one layer up — the
+playhead would never move); and failures that report rather than
+vanish. The gate has a cheap half — a cursor move slides the playhead
+over cached arrays and reads nothing, but only while the STAGE holds:
+the arrays are a function of <code>cursor.stage</code>, so crossing a stage
+re-reads rather than painting one stage's record under another's
+playhead. A plot's chart deliberately does <strong>not</strong> follow the
+selection, because §6 copies the membership at creation. matplotlib is an optional dependency; without it the pane
+renders a named refusal instead of failing to build. Plot panes get a
+real inspector page too (the series are the occupants: list, clear one,
+clear all).</p>
+<p><strong>The loop closes.</strong> "New plot from selection" sits on the outline
+beside "New plot", labelled with what would be plotted and gated on the
+Add gate, on there being a selection, and on the curve cap. §8's own
+test — "if selection does not produce a plot without a Python snippet,
+selection is still broken" — is now two gestures.</p>
+<p><strong>Two S4-2 decisions recorded</strong> (plan decisions 10 / 10b). <code>path</code> / <code>xy</code>
+plot kinds stay refusals and now name the missing surface rather than a
+slice number: neither has a v1 authoring path and <code>xy</code> has nowhere in
+<code>PlotSeries(source, quantity)</code> to hold a second axis source.
+<code>label</code> / <code>physical_group</code> sources resolve as <strong>one curve per member</strong>,
+matching what <code>add_plot_from_selection</code> already does, expanded by ONE
+slab read (<code>pg=</code> is a first-class query filter) rather than one read per
+member — with a curve cap that refuses before reading, because outline
+select-all made a 100k-source plot one gesture away.</p>
+<h3 id="fixed-one-selectionstate-gesture-was-quadratic-in-the-set-size">FIXED — one <code>SelectionState</code> gesture was quadratic in the set size<a class="headerlink" href="#fixed-one-selectionstate-gesture-was-quadratic-in-the-set-size" title="Permanent link">&para;</a></h3>
+<p><code>SelectionState.select_batch</code> and <code>SelectionLog</code>'s reducer both deduped
+with <code>t not in &lt;list&gt;</code>, so a single SET gesture cost O(n²) equality
+comparisons: measured 0.10 s at 1k targets, 1.66 s at 4k, 26.7 s at
+16k — 100k extrapolated to about 17 minutes. It had never been
+exercised at scale because <code>ResultsViewer</code> never wrote <code>SelectionState</code>;
+"Select all nodes" on a physical group is the first writer that hands
+it a whole model. Both dedups are now set-backed and order-preserving
+(100k targets: 0.16 s), the <code>REMOVE</code> / <code>BOX_REMOVE</code> branch no longer
+scan-and-shifts, and <code>SelectionState.__len__</code> answers a count without
+copying the target list. Pinned by a comparison-count test (complexity,
+machine-independent) plus a whole-gesture budget that includes the two
+O(n) costs S4-1 rides on top — the reconciler's exact selection
+signature and the highlight's membership test.</p>
+<h3 id="added-adr-0098-8-s4-1-the-selection-surface-pane-pick">ADDED — ADR 0098 §8 (S4-1): the selection surface + pane pick<a class="headerlink" href="#added-adr-0098-8-s4-1-the-selection-surface-pane-pick" title="Permanent link">&para;</a></h3>
+<p>A click or a rubber-band in a mesh pane now writes the session's <strong>one</strong>
+selection set. Selection is <strong>nodes XOR Gauss points</strong> and nothing else
+(§8): element and fiber pick targets are retired in this window — an
+element is a membership query, not a hit — so <code>core/results_pick.py</code>
+(three modes, dim-gate, geometry resolver) is not extended but replaced
+on the session path by a slim <code>viewers/session/_pick.py</code>. Zero new VTK:
+the <code>vtkCellPicker</code> ray, the press/move/release machine and the
+rubber-band overlay are the shared <code>PyVistaPickBackend</code>, reused verbatim
+(ADR 0047 INV-3). The old file and <code>results_viewer.py</code> are untouched.</p>
+<p>The pick targets come out of <strong>realize</strong>: <code>RealizedPane.targets</code> carries
+the node ids / <code>(element_id, gp_index)</code> pairs the pane last put on
+screen, with their posed coordinates, so a hit can only resolve to a
+point that pane is drawing — right scope, right pose, right instant —
+and "window … scoped to this view's visible cells" needs no second
+derivation. <code>GaussSlab</code> carries no gp-index column, so the index WITHIN
+each element is derived here, matching what the plot resolver expects.
+Both glyph clouds are emitted <strong>pickable</strong> (they were not): §8 names
+them as what a click hits, and a Gauss point — inside its element — has
+no other prop that can answer for it. A click snaps from the RAY's world
+point, not from the pixel, which is what keeps a node hidden behind the
+model unselectable. Plain click/drag replaces the set, Ctrl extends
+(Ctrl+click toggles), a plain click on nothing clears, and a click with
+the matching style button off is a non-event — never a silent clear of
+a set filled from elsewhere.</p>
+<p>The set is <strong>painted</strong>: a <code>&lt;pane&gt;:selection</code> layer marks it over the
+same posed cloud the glyphs use, in every pane, over only the points
+that pane draws. Because the highlight is realize output, the S3
+reconciler's per-pane signature grows a <strong>selection term</strong> — without it
+a selection write ticks the session, the signature compares equal, and
+the repaint the user just asked for is skipped. The term is the
+membership (not a count) and is read only when a glyph button is on, so
+an outline "select all" with glyphs off still costs those panes nothing.</p>
+<p>The pane header gains the §8 <strong>pick-target radio</strong> (Nodes | Gauss),
+beside the style buttons and separated from them: it aims THIS pane's
+clicks and windows only — it neither owns nor clears the set, and two
+panes may aim differently over the one set. The Gauss side disables
+itself when the stage records no Gauss composite.</p>
+<p><code>SessionSelection</code> gains <code>toggle_node</code> / <code>toggle_gauss</code> (the Ctrl+click
+writers, XOR law intact), and a pane's pick installation now dies on
+<code>MeshPane.dispose</code> — the same path that closes its GL context, because
+its observers live on that interactor.</p>
+<p>Taking LEFT for selection means the panes finally need the navigation
+convention that expects it. <code>ViewerWindow.set_navigation_style</code> styles
+<code>_qt_interactor</code>, which the session window does not build (A1.1), so
+every pane applied VTK's stock trackball — where LEFT orbits — and the
+pick's priority-10 abort would have left the pane with <strong>no orbit
+gesture at all</strong>. Panes now apply the <code>mouse_navigation</code> preference
+themselves (<code>apecad</code>: LEFT selection, MIDDLE orbit, RIGHT pan), and
+<code>ViewerWindow</code> gains an optional <code>navigation_hook</code> so View → Navigation
+reaches viewports a window does not own — additive, <code>None</code> for every
+window that owns its interactor.</p>
+<p>Two more from the same review round: the pick-target radio's checked
+state is a translucent tint + a 2 px accent underline rather than a
+solid accent chip (the glyph is drawn in the palette's <code>icon</code> colour
+and nothing re-tints it per state, so a solid fill read 1.07:1 on
+<code>high_contrast</code> and under 3:1 on 8 of 10 palettes); and the pane title
+is squeezable with the full name on its tooltip, so the widened header
+keeps a pane frame's real minimum inside A1.4's 240 px floor — the
+number <code>required_extent</code> / the Add gate compute with, and which a
+<code>QSplitter</code> will not shrink a child below.</p>
 <h3 id="fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy">FIXED — M–κ partial-curve test was a fork-only guarantee; CI now runs the <code>live</code> surface on stock openseespy<a class="headerlink" href="#fixed-m-partial-curve-test-was-a-fork-only-guarantee-ci-now-runs-the-live-surface-on-stock-openseespy" title="Permanent link">&para;</a></h3>
 <p><code>tests/sections/test_mc_b7.py::test_partial_curve_when_the_section_goes_singular</code>
 passed on the Ladruno fork and failed on stock openseespy. The harness'
