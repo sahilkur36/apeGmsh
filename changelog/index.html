@@ -3583,6 +3583,50 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-strut-and-tie-overlays-name-their-opensees-backend-and-the-pushover-its-effective-increment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — strut-and-tie overlays name their OpenSees backend and the pushover its effective increment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-strut-and-tie-pushover-max_increment-005-mm-caps-the-displacement-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — strut-and-tie pushover: max_increment (0.05 mm) caps the displacement step
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-write_strut_tie_overlays-now-carries-fe_stress_paths-from-a-pushover-into-the-file-it-dropped-them-only-the-cliweb-lane-noticed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — write_strut_tie_overlays now carries fe_stress_paths from a pushover into the file (it dropped them; only the CLI/web lane noticed)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-strut-and-tie-pushover-materialasd-and-gauss-point-stress-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — strut-and-tie pushover: material="asd" and Gauss-point stress paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-strut-and-tie-pushover-extra-bars-line-search-with-bisection-impl-ex" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3700,6 +3744,50 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#added-strut-and-tie-overlays-name-their-opensees-backend-and-the-pushover-its-effective-increment" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — strut-and-tie overlays name their OpenSees backend and the pushover its effective increment
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#changed-strut-and-tie-pushover-max_increment-005-mm-caps-the-displacement-step" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CHANGED — strut-and-tie pushover: max_increment (0.05 mm) caps the displacement step
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#fixed-write_strut_tie_overlays-now-carries-fe_stress_paths-from-a-pushover-into-the-file-it-dropped-them-only-the-cliweb-lane-noticed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FIXED — write_strut_tie_overlays now carries fe_stress_paths from a pushover into the file (it dropped them; only the CLI/web lane noticed)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#added-strut-and-tie-pushover-materialasd-and-gauss-point-stress-paths" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ADDED — strut-and-tie pushover: material="asd" and Gauss-point stress paths
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#added-strut-and-tie-pushover-extra-bars-line-search-with-bisection-impl-ex" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3804,6 +3892,28 @@ today's behaviour on an older engine. Emitted last, after the IMPL-EX seam.
 ADR 0103 gains a 2026-09-18 amendment: re-run <code>tan_type != 0</code> results
 produced under a displacement-increment test, and cap substeps
 (<code>max_substeps=20000</code>) whenever <code>tan_type != 0</code>.</p>
+<h3 id="added-strut-and-tie-overlays-name-their-opensees-backend-and-the-pushover-its-effective-increment">ADDED — strut-and-tie overlays name their OpenSees backend and the pushover its effective increment<a class="headerlink" href="#added-strut-and-tie-overlays-name-their-opensees-backend-and-the-pushover-its-effective-increment" title="Permanent link">&para;</a></h3>
+<p><code>fe_summary.backend</code> and <code>fe_curve.backend</code> are <code>"ladruno-fork"</code> or <code>"stock-openseespy"</code> (the live emitter's own rule, <code>criticalTimeStep</code>); <code>fe_curve.steps</code> and <code>fe_curve.increment</code> (mm) record the step actually used. Two payloads from the same inputs differed by 18 % between the fork and stock on CT 115 with nothing in the file saying why; now the file says.</p>
+<h3 id="changed-strut-and-tie-pushover-max_increment-005-mm-caps-the-displacement-step">CHANGED — strut-and-tie pushover: <code>max_increment</code> (0.05 mm) caps the displacement step<a class="headerlink" href="#changed-strut-and-tie-pushover-max_increment-005-mm-caps-the-displacement-step" title="Permanent link">&para;</a></h3>
+<p><code>steps</code> is raised so <code>target / steps &lt;= max_increment</code>; <code>--max-increment</code> on the CLI, <code>None</code> disables. Without it the consumer's default target (diagonal/200) over 25 steps gave 0.34 mm increments on the Cook and Mitchell corbel and a 770 kN plateau where 0.05 mm gives 601 kN — the page defaults were quietly changing the answer. <code>fe_curve.control.reached</code> is the displacement reached in mm, not a flag.</p>
+<h3 id="fixed-write_strut_tie_overlays-now-carries-fe_stress_paths-from-a-pushover-into-the-file-it-dropped-them-only-the-cliweb-lane-noticed">FIXED — <code>write_strut_tie_overlays</code> now carries <code>fe_stress_paths</code> from a pushover into the file (it dropped them; only the CLI/web lane noticed)<a class="headerlink" href="#fixed-write_strut_tie_overlays-now-carries-fe_stress_paths-from-a-pushover-into-the-file-it-dropped-them-only-the-cliweb-lane-noticed" title="Permanent link">&para;</a></h3>
+<h3 id="added-strut-and-tie-pushover-materialasd-and-gauss-point-stress-paths">ADDED — strut-and-tie pushover: <code>material="asd"</code> and Gauss-point stress paths<a class="headerlink" href="#added-strut-and-tie-pushover-materialasd-and-gauss-point-stress-paths" title="Permanent link">&para;</a></h3>
+<p><code>strut_tie_pushover(..., material="ladruno"|"asd")</code> / <code>--material</code> runs the
+same model with stock <code>ASDConcrete3D</code> (same E, nu, f'c, ft, Gf, Gc and IMPL-EX
+switch) instead of the fork's <code>LadrunoConcrete3D</code>. <code>stress_paths={label:
+(x, y, z)}</code> records the nearest element's stress at every converged step as
+<code>fe_stress_paths</code> (<code>[delta, lambda, s11, s22, s12, sigma1, sigma3]</code> rows);
+by default one path per loaded plate, half a mesh size under its centre.
+<code>fe_curve.material</code> names the model.</p>
+<p>Cook and Mitchell corbel, welded plates + hoops + column bars, 40 mm:
+ASDConcrete3D implicit converges under plain Newton in ~20 s to a plateau
+of 601 kN per side (1.28 x the prediction, 1.20 x the measured 502 kN) where
+LadrunoConcrete3D implicit stalls at 410 kN with 21 million "return map did
+not converge" step-cuts; ASD IMPL-EX 627 kN. The two materials agree from
+above once Ladruno is allowed to run (its IMPL-EX sequence 683/614/574 kN),
+so the shared overshoot is the model (plane stress under a 50 mm plate,
+perfect bond) and the Ladruno implicit shortfall is its return map under
+the bearing state — the recorded path is where that investigation starts.</p>
 <h3 id="added-strut-and-tie-pushover-extra-bars-line-search-with-bisection-impl-ex">ADDED — strut-and-tie pushover: extra bars, line search with bisection, IMPL-EX<a class="headerlink" href="#added-strut-and-tie-pushover-extra-bars-line-search-with-bisection-impl-ex" title="Permanent link">&para;</a></h3>
 <p><code>strut_tie_pushover(..., extra_bars=[{"id", "points", "area"}, ...])</code> and
 <code>--bars file.json</code> place reinforcement the strut-and-tie model does not carry
