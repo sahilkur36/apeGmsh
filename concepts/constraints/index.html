@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/favicon.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -3926,7 +3926,10 @@ a node set with a per-set DOF selection, carrying the correct moment-arm
 transport so an <em>offset</em> reference couples rigidly. Its flexible counterpart is
 <code>distributing_coupling</code> — RBE3 — which distributes a force at a reference point
 over a node set as a statically equivalent pattern while the set stays
-deformable, with <code>weighting="area"</code> for a traction-like spread. Reach for RBE2
+deformable, with <code>weighting="area"</code> for a traction-like spread over the whole
+slave surface, or <code>weighting="footprint"</code> with a polygon <code>footprint=</code> for the
+spread of a uniform pressure over just that polygon (a column section on a
+slab or mat mesh whose edges do not follow it). Reach for RBE2
 when the region must move rigidly (a loading platen); RBE3 when you want to
 <em>introduce a load</em> without stiffening anything. Both emit dedicated Ladruno
 fork elements: the deck is written on any build, but running it needs the fork.
@@ -4179,7 +4182,7 @@ be coupled. Check the summary before blaming the solver.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>

@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../assets/favicon.svg">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -3759,9 +3759,13 @@ data came from MPCO.</p>
   each rank stores only its own elements' share.
   Pass <code>merge_partitions=False</code> to read only the named partition.</li>
 <li><strong>MPCO vs the default route:</strong> use MPCO for STKO interoperability and
-  parallel runs; use <code>spec.emit_default(...)</code> when one in-process script
-  should run on whatever build it finds: the fork's <code>.ladruno</code>, a stock
-  <code>.mpco</code>, or pip's <code>.out</code> files, all read with the same API.</li>
+  parallel runs; use <code>spec.emit_default(...)</code> for one in-process script
+  across builds: the fork's <code>.ladruno</code>, or pip's <code>.out</code> files, all read
+  with the same API. On a stock build with MPCO the default route converts
+  the <code>.mpco</code> to <code>.ladruno</code> when the program declares its stages with
+  <code>ops.stage(...)</code>, and refuses an unstaged program by name; it never
+  reads the <code>.mpco</code> with <code>from_mpco</code>. Run such a program as a deck emitted
+  with <code>analyze_steps</code> and read it with <code>read_deck_mpco</code>.</li>
 </ul>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
@@ -3832,7 +3836,7 @@ data came from MPCO.</p>
       <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tracking", "navigation.sections", "navigation.top", "navigation.indexes", "toc.follow", "content.code.copy", "content.code.annotate", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
     
   </body>
